@@ -93,6 +93,41 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+async function requestRaw<T>(path: string, opts: RequestOptions = {}): Promise<T> {
+  const timeout = opts.timeout ?? DEFAULT_TIMEOUT;
+  const { signal: timeoutSignal, cancel } = withTimeout(timeout);
+  const signal = opts.signal ? mergeSignals(opts.signal, timeoutSignal) : timeoutSignal;
+
+  const headers: Record<string, string> = {};
+  const token = getStoredToken();
+  if (token) headers['X-Zenless-Token'] = token;
+
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}${path}`, {
+      method: opts.method ?? 'POST',
+      headers,
+      body: opts.body as BodyInit,
+      signal,
+    });
+  } catch (err) {
+    cancel();
+    if (err instanceof DOMException && err.name === 'AbortError') {
+      throw new ApiError(0, 'Request timeout');
+    }
+    throw new ApiError(0, 'Bridge unreachable');
+  }
+  cancel();
+
+  const requestId = res.headers.get('X-Request-Id') ?? undefined;
+  if (!res.ok) {
+    let message = `HTTP ${res.status}`;
+    try { const body = await res.json(); message = body.error ?? message; } catch { /* ignore */ }
+    throw new ApiError(res.status, message, requestId);
+  }
+  return res.json() as Promise<T>;
+}
+
 function mergeSignals(a: AbortSignal, b: AbortSignal): AbortSignal {
   const controller = new AbortController();
   const onAbort = () => controller.abort();
@@ -149,7 +184,16 @@ export class RealZenlessAPI implements ZenlessAPI {
   async cancelJob(id: string): Promise<{ ok: boolean }> {
     return request(`/api/jobs/${id}`, { method: 'DELETE' });
   }
-  async sendMessage(content: string, jobId?: string): Promise<{ messageId: string; jobId?: string }> {
+  async sendMessage(content: string, jobId?: string, attachments?: ChatMessage['attachments']): Promise<{ messageId: string; jobId?: string }> {
+    if (attachments && attachments.length > 0) {
+      const formData = new FormData();
+      formData.append('content', content);
+      if (jobId) formData.append('jobId', jobId);
+      for (const att of attachments) {
+        if (att.file) formData.append('files', att.file, att.name);
+      }
+      return requestRaw(`/api/chat`, { method: 'POST', body: formData });
+    }
     return request('/api/chat', { method: 'POST', body: { content, jobId } });
   }
   async cancelGeneration(jobId: string): Promise<{ ok: boolean }> {
@@ -235,6 +279,15 @@ export class RealZenlessAPI implements ZenlessAPI {
   }
   async inspectStudio(nodeId: string): Promise<StudioNode> {
     return request(`/api/studio/${nodeId}`);
+  }
+  async lockStudioReference(nodeId: string): Promise<{ ok: boolean }> {
+    return request(`/api/studio/${nodeId}/lock`, { method: 'POST' });
+  }
+  async unlockStudioReference(nodeId: string): Promise<{ ok: boolean }> {
+    return request(`/api/studio/${nodeId}/unlock`, { method: 'POST' });
+  }
+  async useStudioAsContext(nodeId: string): Promise<{ ok: boolean }> {
+    return request(`/api/studio/${nodeId}/use`, { method: 'POST' });
   }
   async startTest(jobId: string): Promise<{ ok: boolean }> {
     return request(`/api/jobs/${jobId}/test`, { method: 'POST' });

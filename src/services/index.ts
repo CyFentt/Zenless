@@ -19,7 +19,7 @@ export function getApi(): ZenlessAPI {
   } else {
     apiInstance = new RealZenlessAPI();
   }
-  return apiInstance;
+  return apiInstance!;
 }
 
 export function getMockApi(): MockZenlessAPI | null {

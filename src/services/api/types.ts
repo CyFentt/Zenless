@@ -38,7 +38,7 @@ export interface ZenlessAPI {
   cancelJob(id: string): Promise<{ ok: boolean }>;
 
   // Chat
-  sendMessage(content: string, jobId?: string): Promise<{ messageId: string; jobId?: string }>;
+  sendMessage(content: string, jobId?: string, attachments?: ChatMessage['attachments']): Promise<{ messageId: string; jobId?: string }>;
   cancelGeneration(jobId: string): Promise<{ ok: boolean }>;
 
   // Context
@@ -79,6 +79,9 @@ export interface ZenlessAPI {
   searchStudio(query: string): Promise<StudioNode[]>;
   refreshStudio(): Promise<{ ok: boolean }>;
   inspectStudio(nodeId: string): Promise<StudioNode>;
+  lockStudioReference(nodeId: string): Promise<{ ok: boolean }>;
+  unlockStudioReference(nodeId: string): Promise<{ ok: boolean }>;
+  useStudioAsContext(nodeId: string): Promise<{ ok: boolean }>;
 
   // Test
   startTest(jobId: string): Promise<{ ok: boolean }>;

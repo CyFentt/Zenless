@@ -1,3 +1,9 @@
+import frontImage from '../../assets/images/image.png';
+import backImage from '../../assets/images/image copy.png';
+import leftImage from '../../assets/images/image copy 2.png';
+import rightImage from '../../assets/images/image copy 3.png';
+import topImage from '../../assets/images/image copy 4.png';
+import bottomImage from '../../assets/images/image copy 5.png';
 import type {
   AgentInfo,
   Asset,
@@ -10,6 +16,7 @@ import type {
   Job,
   ModelInfo,
   ModelSettings,
+  Review,
   Settings,
   StudioNode,
   TestLog,
@@ -178,19 +185,33 @@ export const mockChanges: ChangedFile[] = [
 ];
 
 export const mockViews: ViewTile[] = [
-  { name: 'FRONT', state: 'READY', version: 3 },
-  { name: 'BACK', state: 'READY', version: 3 },
-  { name: 'LEFT', state: 'READY', version: 2 },
-  { name: 'RIGHT', state: 'GENERATING', version: 4 },
-  { name: 'TOP', state: 'EMPTY' },
-  { name: 'BOTTOM', state: 'EMPTY' },
+  { name: 'FRONT', state: 'READY', version: 3, imageUrl: frontImage },
+  { name: 'BACK', state: 'READY', version: 3, imageUrl: backImage },
+  { name: 'LEFT', state: 'READY', version: 2, imageUrl: leftImage },
+  { name: 'RIGHT', state: 'GENERATING', version: 4, imageUrl: rightImage },
+  { name: 'TOP', state: 'READY', version: 1, imageUrl: topImage },
+  { name: 'BOTTOM', state: 'READY', version: 1, imageUrl: bottomImage },
 ];
+
+export const mockConceptPrompt = 'Industrial device with engraved metal, severe monochrome contrast, gothic technical details';
+
+export const mockReview: Review = {
+  decision: 'APPROVE' as const,
+  risk: 'LOW' as const,
+  criticalIssues: [],
+  warnings: ['Attachment fallback remains enabled during play test'],
+  suggestions: ['Keep the generated helper isolated from the service'],
+  summary: 'The change is ready for a controlled test.',
+  reviewer: 'DeepSeek',
+  timestamp: now - 1000 * 60 * 2,
+};
 
 export const mockModelInfo: ModelInfo = {
   state: 'READY',
   geometryStatus: 'READY',
   textureStatus: 'READY',
   modelUrl: '/mock/model.glb',
+  filename: 'impact-device.glb',
 };
 
 export const mockAssets: Asset[] = [

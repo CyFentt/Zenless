@@ -11,6 +11,7 @@ import type {
   Job,
   ModelInfo,
   ModelSettings,
+  Review,
   Settings,
   StudioNode,
   StudioState,
@@ -26,12 +27,14 @@ import {
   mockBootSteps,
   mockChanges,
   mockChatMessages,
+  mockConceptPrompt,
   mockConnections,
   mockContext,
   mockDiagnostics,
   mockJobs,
   mockModelInfo,
   mockModelSettings,
+  mockReview,
   mockSettings,
   mockStudioTree,
   mockTestLogs,
@@ -58,6 +61,28 @@ export class MockZenlessAPI implements ZenlessAPI {
   private agents: AgentInfo[] = clone(mockAgents);
   private testState: TestState = { status: 'IDLE', elapsedMs: 0, fixAttempt: 0, maxFixAttempts: 3 };
   private studioState: StudioState = 'ONLINE';
+  private conceptPrompt: string = mockConceptPrompt;
+  private review: Review = clone(mockReview);
+
+  private findStudioNode(nodeId: string): StudioNode | undefined {
+    const find = (nodes: StudioNode[]): StudioNode | undefined => {
+      for (const n of nodes) {
+        if (n.id === nodeId) return n;
+        if (n.children) { const f = find(n.children); if (f) return f; }
+      }
+    };
+    return find(this.studioTree);
+  }
+
+  private updateStudioNode(nodeId: string, patch: Partial<StudioNode>): void {
+    const update = (nodes: StudioNode[]): StudioNode[] =>
+      nodes.map((n) => {
+        if (n.id === nodeId) return { ...n, ...patch };
+        if (n.children) return { ...n, children: update(n.children) };
+        return n;
+      });
+    this.studioTree = update(this.studioTree);
+  }
 
   async bootstrap() {
     await delay(400);
@@ -112,7 +137,7 @@ export class MockZenlessAPI implements ZenlessAPI {
     this.jobs = this.jobs.filter((j) => j.id !== id);
     return { ok: true };
   }
-  async sendMessage(content: string, jobId?: string) {
+  async sendMessage(content: string, jobId?: string, attachments?: ChatMessage['attachments']) {
     await delay(120);
     const msg: ChatMessage = {
       id: uid('msg'),
@@ -120,6 +145,7 @@ export class MockZenlessAPI implements ZenlessAPI {
       content,
       timestamp: Date.now(),
       jobId,
+      attachments: attachments?.map((a) => ({ id: a.id, name: a.name, type: a.type, size: a.size, mime: a.mime })),
     };
     this.messages.push(msg);
     return { messageId: msg.id, jobId };
@@ -168,7 +194,7 @@ export class MockZenlessAPI implements ZenlessAPI {
   }
   async getReview(_jobId: string) {
     await delay(80);
-    return { files: clone(this.changes), ready: true };
+    return { files: clone(this.changes), review: clone(this.review), ready: true };
   }
   async approveChanges(_jobId: string) {
     await delay(100);
@@ -186,7 +212,7 @@ export class MockZenlessAPI implements ZenlessAPI {
     await delay(80);
     return {
       views: clone(this.views),
-      concept: { version: 3, status: 'READY', prompt: 'Industrial bomb device, dark metal, sci-fi' },
+      concept: { version: 3, status: 'READY', prompt: this.conceptPrompt },
     };
   }
   async approveVisual(_jobId: string) {
@@ -196,8 +222,10 @@ export class MockZenlessAPI implements ZenlessAPI {
   }
   async editConcept(_jobId: string, prompt: string) {
     await delay(80);
+    this.conceptPrompt = prompt;
     return { ok: true };
   }
+  getMockConceptPrompt() { return this.conceptPrompt; }
   async regenerateVisual(_jobId: string) {
     await delay(200);
     this.views = this.views.map((v) => ({ ...v, state: 'GENERATING' as const }));
@@ -257,18 +285,26 @@ export class MockZenlessAPI implements ZenlessAPI {
   }
   async inspectStudio(nodeId: string) {
     await delay(50);
-    const find = (nodes: StudioNode[]): StudioNode | undefined => {
-      for (const n of nodes) {
-        if (n.id === nodeId) return n;
-        if (n.children) {
-          const f = find(n.children);
-          if (f) return f;
-        }
-      }
-    };
-    const node = find(this.studioTree);
+    const node = this.findStudioNode(nodeId);
     if (!node) throw new Error('Node not found');
     return clone(node);
+  }
+  async lockStudioReference(nodeId: string) {
+    await delay(60);
+    this.updateStudioNode(nodeId, { locked: true });
+    return { ok: true };
+  }
+  async unlockStudioReference(nodeId: string) {
+    await delay(60);
+    this.updateStudioNode(nodeId, { locked: false });
+    return { ok: true };
+  }
+  async useStudioAsContext(nodeId: string) {
+    await delay(60);
+    const node = this.findStudioNode(nodeId);
+    if (!node) throw new Error('Node not found');
+    this.updateStudioNode(nodeId, { usedAsContext: !node.usedAsContext });
+    return { ok: true };
   }
   async startTest(_jobId: string) {
     await delay(100);
