@@ -11,6 +11,7 @@ import type {
   Job,
   ModelInfo,
   ModelSettings,
+  Review,
   Settings,
   StudioNode,
   StudioState,
@@ -178,7 +179,7 @@ export class RealZenlessAPI implements ZenlessAPI {
   async getChanges(jobId: string): Promise<ChangedFile[]> {
     return request(`/api/jobs/${jobId}/changes`);
   }
-  async getReview(jobId: string): Promise<{ files: ChangedFile[]; ready: boolean }> {
+  async getReview(jobId: string): Promise<{ files: ChangedFile[]; review: Review; ready: boolean }> {
     return request(`/api/jobs/${jobId}/review`);
   }
   async approveChanges(jobId: string): Promise<{ ok: boolean }> {

@@ -10,6 +10,7 @@ import type {
   Job,
   ModelInfo,
   ModelSettings,
+  Review,
   Settings,
   StudioNode,
   StudioState,
@@ -51,7 +52,7 @@ export interface ZenlessAPI {
 
   // Changes
   getChanges(jobId: string): Promise<ChangedFile[]>;
-  getReview(jobId: string): Promise<{ files: ChangedFile[]; ready: boolean }>;
+  getReview(jobId: string): Promise<{ files: ChangedFile[]; review: Review; ready: boolean }>;
   approveChanges(jobId: string): Promise<{ ok: boolean }>;
   rejectChanges(jobId: string): Promise<{ ok: boolean }>;
   editChanges(jobId: string, fileId: string, content: string): Promise<{ ok: boolean }>;

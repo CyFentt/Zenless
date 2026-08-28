@@ -126,6 +126,9 @@ export interface ChatAttachment {
   name: string;
   type: 'image' | 'file' | 'context';
   size?: number;
+  mime?: string;
+  previewUrl?: string;
+  file?: File;
 }
 
 // ── Context ───────────────────────────────────────────────────
@@ -151,6 +154,20 @@ export interface ChangedFile {
   additions: number;
   deletions: number;
   diff: DiffLine[];
+}
+
+export type ReviewDecision = 'APPROVE' | 'REVISE' | 'BLOCK';
+export type ReviewRisk = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+
+export interface Review {
+  decision: ReviewDecision;
+  risk: ReviewRisk;
+  criticalIssues: string[];
+  warnings: string[];
+  suggestions: string[];
+  summary?: string;
+  reviewer: string;
+  timestamp: number;
 }
 
 export type DiffLineType = 'added' | 'removed' | 'unchanged' | 'hunk';
@@ -187,6 +204,7 @@ export interface ModelInfo {
   geometryStatus: 'IDLE' | 'GENERATING' | 'READY' | 'FAILED';
   textureStatus: 'IDLE' | 'GENERATING' | 'READY' | 'FAILED';
   modelUrl?: string;
+  filename?: string;
 }
 
 // ── Assets ────────────────────────────────────────────────────
@@ -200,6 +218,10 @@ export interface Asset {
   thumbnailUrl?: string;
   size: number;
   createdAt: number;
+  status?: 'READY' | 'GENERATING' | 'FAILED';
+  jobId?: string;
+  conceptVersion?: number;
+  metadata?: Record<string, string>;
 }
 
 // ── Studio ────────────────────────────────────────────────────
@@ -211,6 +233,8 @@ export interface StudioNode {
   className: string;
   path: string;
   children?: StudioNode[];
+  locked?: boolean;
+  usedAsContext?: boolean;
 }
 
 // ── Test ──────────────────────────────────────────────────────
