@@ -1,0 +1,24 @@
+[tool.ruff]
+target-version = "py314"
+line-length = 120
+exclude = ["build", "dist", "artifacts", "__pycache__"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]
+
+[tool.ruff.lint.per-file-ignores]
+"zenless_studio.py" = ["E701", "E702", "E741"]
+"tests/gui_backend_smoke.py" = ["E402"]
+"tests/frozen_webview_smoke.py" = ["E402"]
+"tests/live_studio_smoke.py" = ["E402"]
+
+[tool.pyright]
+pythonVersion = "3.14"
+typeCheckingMode = "basic"
+include = ["main.py", "zenless"]
+exclude = ["build", "dist", "artifacts", "tests", "zenless_studio.py"]
+reportMissingTypeStubs = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
