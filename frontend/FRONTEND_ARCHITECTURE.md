@@ -5,7 +5,7 @@
 Zenless Web is the official UI layer. It is intentionally separate from Zenless Core. The frontend displays state and sends commands; it does not implement AI reasoning, Roblox mutation policy, provider automation or persistence authority.
 
 ```text
-React UI ↔ ZenlessAPI / ZenlessSocket ↔ Bridge ↔ future Zenless Core
+React UI ↔ ZenlessAPI / ZenlessSocket ↔ Python LocalWebBridge ↔ Zenless Core
 ```
 
 ## Stack
@@ -178,7 +178,7 @@ Diagnostic fields support severity, source/component, message, file/line/functio
 
 ## Development Bridge
 
-`bridge/` is a foundation/mock server, not Zenless Core. It:
+`bridge/` is an optional fixture/mock server, not the production backend. It:
 
 - binds to `127.0.0.1`
 - uses ESM imports
@@ -187,7 +187,7 @@ Diagnostic fields support severity, source/component, message, file/line/functio
 - validates configured origins
 - provides REST/WebSocket routes against a mock adapter
 
-Multipart attachments are intentionally not parsed by the dev Bridge; production parsing belongs to Codex.
+Multipart attachments are intentionally not parsed by this fixture. The production Python Bridge already applies attachment count/size/name checks and task-scoped storage.
 
 ## Environment
 
@@ -202,7 +202,7 @@ Never put secrets in `VITE_*` values.
 ## Commands
 
 ```bash
-npm install
+npm ci
 npm run dev
 npm run typecheck
 npm run build
@@ -214,8 +214,8 @@ Bridge development:
 
 ```bash
 cd bridge
-npm install
+npm ci
 npm run dev
 ```
 
-See `BACKEND_CONTRACT.md` for the wire protocol and `CODEX_HANDOFF.md` for the production integration boundary.
+See `BACKEND_CONTRACT.md` for the real wire protocol and `CODEX_HANDOFF.md` for invariants and release verification.

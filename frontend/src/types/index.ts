@@ -88,7 +88,7 @@ export interface TaskOptions {
 }
 
 export const DEFAULT_TASK_OPTIONS: TaskOptions = {
-  visualFirst: false,
+  visualFirst: true,
   create3D: true,
   review: true,
   autoTest: true,
@@ -347,7 +347,7 @@ export interface ConnectionInfo {
 }
 
 // ── Boot ──────────────────────────────────────────────────────
-export type BootStage = 'CORE' | 'BROWSER' | 'AI' | 'STUDIO';
+export type BootStage = 'CORE' | 'STATE' | 'BRIDGE' | 'UI' | 'BROWSER' | 'AI' | 'STUDIO';
 export type BootState = 'READY' | 'CONNECTING' | 'OFF';
 
 export interface BootStep {

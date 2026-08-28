@@ -6,11 +6,15 @@ export function handleEvent(event: ZenlessEvent) {
 
   switch (event.type) {
     case 'BOOT_STAGE_CHANGED':
-      store.setBootSteps(
-        useStore.getState().bootSteps.map((s) =>
-          s.stage === event.data.stage ? { ...s, state: event.data.state } : s,
-        ),
-      );
+      {
+        const steps = useStore.getState().bootSteps;
+        const known = steps.some((step) => step.stage === event.data.stage);
+        store.setBootSteps(
+          known
+            ? steps.map((step) => (step.stage === event.data.stage ? { ...step, state: event.data.state } : step))
+            : [...steps, { stage: event.data.stage, state: event.data.state }],
+        );
+      }
       break;
     case 'BOOT_COMPLETE':
       store.setBooted(true);

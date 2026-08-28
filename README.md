@@ -1,68 +1,85 @@
 # Zenless — By Fentalware
 
-Aplicativo Windows que coordena Roblox Studio, ChatGPT, DeepSeek e Hunyuan3D sem exigir chaves de API:
+Zenless é um aplicativo Windows local para coordenar Roblox Studio, ChatGPT, DeepSeek e Hunyuan3D sem chaves de API. Ele usa sessões normais dos provedores em navegador gerenciado; login, MFA, CAPTCHA e consentimentos continuam manuais.
 
-`pedido → contexto StudioMCP → criação → revisão → aprovação → aplicação → Play Test → reparo limitado → concluído`
+```text
+pedido
+  → leitura do Studio
+  → proposta do ChatGPT
+  → revisão independente do DeepSeek
+  → aprovação do usuário
+  → mutação verificada no Studio
+  → QA e reparo limitado
+  → revisão final real do DeepSeek
+  → concluído ou bloqueado
+```
 
-## Uso
+## Como usar
 
-1. Abra o Roblox Studio atualizado e deixe o projeto em **Edit** com o servidor MCP do Studio habilitado.
-2. Abra `Zenless.exe`. A tela inicial verifica banco, WebView2 e integrações; se o WebView2 estiver ausente, o redistribuível oficial incluído é validado e instalado silenciosamente.
-3. Na primeira vez, use **Login** para ChatGPT, DeepSeek e, opcionalmente, Hunyuan. Login, CAPTCHA, MFA e consentimentos permanecem manuais. As sessões são persistidas em `%LOCALAPPDATA%\Zenless\webview-profile`.
-4. Envie um único objetivo completo no Chat. O Zenless mostra o progresso e pede aprovação antes de alterações relevantes no Studio.
+1. Abra o Roblox Studio atualizado, deixe o projeto em **Edit** e conecte o servidor StudioMCP compatível.
+2. Execute `Zenless.exe`.
+3. Faça login em ChatGPT, DeepSeek e, quando necessário, Hunyuan. As sessões ficam no perfil local do Zenless; credenciais e cookies não passam pela interface React.
+4. Envie um objetivo completo no Chat. O aplicativo mostra estados reais e solicita aprovação antes de cada bloco de escrita relevante.
 
-O fluxo normal não exige Python, Chrome, Playwright, WebView2 ou extensão instalados manualmente. O navegador WebView2 fica gerenciado pelo Zenless e só aparece quando a intervenção do usuário é necessária.
+Os dados persistentes ficam em `%LOCALAPPDATA%\Zenless`: SQLite, logs rotativos, perfis de navegador, anexos validados, snapshots, evidências e ativos gerados.
 
-## Rotas web
+## Garantias principais
 
-1. **WebView2** embutido, com perfil persistente e uma página por provedor.
-2. **Playwright** gerenciado, baixado automaticamente apenas se uma capacidade obrigatória falhar no WebView2.
-3. Se as duas rotas falharem, a capacidade é marcada como indisponível; nenhuma extensão é exigida ou instalada.
+- Bridge HTTP/WebSocket somente em `127.0.0.1`, porta efêmera, token aleatório por processo, validação exata de host/origin e IDs de requisição.
+- Core autoritativo: a UI solicita ações, mas não aplica alterações nem decide sucesso.
+- Mutações com leitura atual, snapshot, precondição SHA-256, operação idempotente, aplicação, releitura e verificação. Divergência de precondição bloqueia a escrita.
+- Recuperação conservadora: uma queda durante escrita/QA/revisão final não repete a operação automaticamente.
+- ChatGPT como construtor e DeepSeek como revisor independente, inclusive depois de mutação e QA.
+- Deltas reais dos navegadores são encaminhados pelo WebSocket; a resposta parcial não vira estado durável.
+- Visual First versionado com seis PNGs canônicos (`FRONT`, `BACK`, `LEFT`, `RIGHT`, `TOP`, `BOTTOM`), QA visual e regeneração controlada.
+- Hunyuan usa descoberta de capacidade e separa geometria de textura. Recursos não expostos pela UI do provedor são marcados como indisponíveis; não há progresso ou ativo fabricado.
+- QA Breaker registra perfil, seed, casos, evidências, Output e resultado. Capacidades Roblox ausentes são `SKIPPED`/bloqueadas, nunca simuladas como sucesso.
+- Encerramento cooperativo de Bridge, navegadores, StudioMCP, filas e banco.
 
-O suporte nunca é simulado: cada provedor só fica `Ready` após teste real de sessão e DOM. Alterações de interface do site podem exigir atualização dos seletores.
+## Limites reais
 
-## Recursos
-
-- Estado e fila em SQLite, logs rotativos, diagnóstico central e snapshots.
-- ChatGPT como criador e DeepSeek como revisor independente.
-- Contexto total disponível pelo StudioMCP: árvore, scripts, estado, Output e Play Test.
-- Gates de aprovação, validação de schema/política, releitura pós-edição e reparos limitados.
-- Hunyuan3D opcional, download controlado de GLB e prévia 3D integrada/expandida.
-- Ferramentas nativas de geração 3D do Roblox, quando disponíveis, também passam por aprovação.
-- Encerramento cooperativo; tarefas web e Studio são serializadas para evitar rajadas de prompts.
-
-## Limites de segurança
-
-- O Zenless não solicita, lê nem exporta senhas ou cookies.
-- CAPTCHA, MFA, consentimentos, publicação e compras nunca são contornados.
-- O StudioMCP atual não importa diretamente um GLB local. Use o **3D Importer** para arquivos locais; ativos criados por ferramentas nativas entram pelo próprio Studio.
-
-## Arquivos principais
-
-- `frontend/`: HUD React congelada e visualizador 3D.
-- `zenless/core.py`: estado autoritativo e adaptadores do frontend.
-- `zenless/web_bridge.py`: REST/WebSocket local autenticado.
-- `zenless/orchestrator.py`: pipeline, gates e reparos.
-- `zenless/agent_gateway.py`: WebView2 → Playwright.
-- `zenless/webview2_browser.py` e `zenless/webview_host.py`: navegador embutido.
-- `zenless/studio_mcp.py`: cliente StudioMCP.
-- `zenless/provisioning.py`: preparação automática do WebView2.
-- `zenless/qa_breaker.py`: testes limitados, evidências e revisão.
+- A automação dos provedores depende da interface web atual de cada serviço e pode exigir atualização de seletores.
+- O fallback Playwright é interno e provisionado sob demanda. Uma extensão de navegador não faz parte da rota normal.
+- Importação de GLB local continua sujeita às capacidades expostas pelo StudioMCP/Roblox Studio.
+- Multiplayer, VirtualInput e emulação de dispositivo só podem ser executados quando a conexão StudioMCP expõe a capacidade correspondente.
+- O executável é um pacote `one-file`; este repositório não gera instalador MSI/Setup separado.
 
 ## Desenvolvimento
 
 ```powershell
 python -m pip install -r requirements-dev.txt
+npm --prefix frontend ci
 python -m ruff check .
 python -m pyright
 python -m pytest -o addopts= -q
+npm --prefix frontend run lint
 npm --prefix frontend run typecheck
 npm --prefix frontend run test
 npm --prefix frontend run build
-python tests/live_studio_smoke.py
+```
+
+`tests/live_studio_smoke.py` só inicia Play Test quando o Studio confirma **Edit** e sempre solicita **Stop** em `finally`. Ele requer uma instância real conectada; não é substituído por mock.
+
+Para gerar a release:
+
+```powershell
 .\build.ps1
 ```
 
-`live_studio_smoke.py` inicia Play Test somente quando o Studio confirma **Edit** e sempre solicita **Stop** em `finally`.
+O script executa, nesta ordem, Ruff, Pyright, pytest, `npm ci`, ESLint, TypeScript, Vitest, Vite com Mock Mode desativado e, somente se tudo passar, PyInstaller. A saída única é `dist\Zenless.exe`.
 
-Licença: GPL-3.0. Consulte `NOTICE.md`.
+## Árvore canônica
+
+- `frontend/`: única fonte React/TypeScript/Vite e contrato de transporte.
+- `zenless/core.py`: estado autoritativo e adaptadores expostos à UI.
+- `zenless/web_bridge.py`: REST, WebSocket e arquivos autorizados locais.
+- `zenless/orchestrator.py`: pipeline, gates, mutação e revisão final.
+- `zenless/agent_gateway.py`: seleção WebView2 → Playwright por capacidade.
+- `zenless/studio_mcp.py`: cliente StudioMCP.
+- `zenless/store.py`: SQLite, operações idempotentes e recuperação.
+- `zenless/qa_breaker.py`: planejamento, execução e evidência de QA.
+- `Zenless.spec`: pacote Windows `one-file` sem console.
+
+Detalhes: [ARCHITECTURE.md](ARCHITECTURE.md), [QA_ARCHITECTURE.md](QA_ARCHITECTURE.md), [frontend/BACKEND_CONTRACT.md](frontend/BACKEND_CONTRACT.md) e [RELEASE_NOTES.md](RELEASE_NOTES.md).
+
+Licença GPL-3.0. Consulte `NOTICE.md`.

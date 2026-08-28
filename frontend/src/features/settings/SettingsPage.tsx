@@ -81,13 +81,8 @@ function GeneralTab({ settings, onChange }: { settings: Settings | null; onChang
         </Row>
       </Section>
       <Section title="CONNECTION">
-        <Row label="Bridge Port" hint="Local bridge server port">
-          <input
-            type="number"
-            value={settings.bridgePort}
-            onChange={(event) => void persist({ bridgePort: Number.parseInt(event.target.value, 10) || 8787 })}
-            className="w-16 h-6 text-2xs text-center text-ink-50 bg-ink-800 border border-ink-600 focus:border-ink-500"
-          />
+        <Row label="Bridge Port" hint="Assigned automatically to an authenticated loopback bridge">
+          <span className="text-2xs font-mono text-ink-200">{settings.bridgePort || 'EPHEMERAL'}</span>
         </Row>
       </Section>
       <Section title="MODE">

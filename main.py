@@ -37,11 +37,17 @@ def main() -> int:
 
     diagnostics = ErrorBus(_data_root() / "logs")
     diagnostics.install_global_hooks()
+    splash = None
     try:
         if "--webview-host" in sys.argv:
             from zenless.webview_host import main as webview_host_main
 
             return webview_host_main()
+        from zenless.bootstrap import NativeSplash
+
+        splash = NativeSplash()
+        splash.show()
+        splash.update("CORE", "initializing local runtime")
         from zenless.web_app import run_web_app
 
         try:
@@ -51,6 +57,8 @@ def main() -> int:
                 diagnostics=diagnostics,
                 smoke_test="--smoke-test" in sys.argv,
                 provision="--no-provision" not in sys.argv,
+                boot_status=splash.update,
+                ui_ready=splash.close,
             )
         except Exception as exc:
             diagnostics.report(
@@ -71,6 +79,8 @@ def main() -> int:
                 pass
             return 1
     finally:
+        if splash is not None:
+            splash.close()
         diagnostics.close()
         crash_stream.close()
 

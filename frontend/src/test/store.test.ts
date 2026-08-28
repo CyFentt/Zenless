@@ -15,6 +15,12 @@ describe('Store', () => {
     useStore.getState().setBooted(false);
   });
 
+  it('preserves a boot stage received before the bootstrap snapshot', () => {
+    useStore.getState().setBootSteps([]);
+    handleEvent({ type: 'BOOT_STAGE_CHANGED', data: { stage: 'STATE', state: 'READY' } });
+    expect(useStore.getState().bootSteps).toEqual([{ stage: 'STATE', state: 'READY' }]);
+  });
+
   it('setActivePage changes page', () => {
     useStore.getState().setActivePage('chat');
     expect(useStore.getState().activePage).toBe('chat');

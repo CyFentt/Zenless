@@ -1,5 +1,5 @@
 import { Canvas } from '@react-three/fiber';
-import { OrbitControls, Environment, useGLTF } from '@react-three/drei';
+import { OrbitControls, useGLTF } from '@react-three/drei';
 import { Suspense, useRef } from 'react';
 import * as THREE from 'three';
 
@@ -39,7 +39,6 @@ export function ModelViewer({ modelUrl, allowDemo = false }: Props) {
       <directionalLight position={[-3, -2, -3]} intensity={0.2} color="#858585" />
       <Suspense fallback={null}>
         <Model url={modelUrl} allowDemo={allowDemo} />
-        <Environment preset="studio" />
       </Suspense>
       <OrbitControls
         enablePan={false}

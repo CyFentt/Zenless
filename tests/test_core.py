@@ -26,6 +26,12 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(options.max_revisions, 5)
         self.assertEqual(options.max_test_fixes, 3)
 
+    def test_3d_option_forces_visual_first_but_non_3d_can_skip_it(self) -> None:
+        model = TaskOptions.from_api({"visualFirst": False, "create3D": True})
+        plain = TaskOptions.from_api({"visualFirst": False, "create3D": False})
+        self.assertTrue(model.visual_first)
+        self.assertFalse(plain.visual_first)
+
     def test_protocol_round_trip_and_rejects_unknown_source(self) -> None:
         original = make_envelope(
             "agent.command",
@@ -75,6 +81,20 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(loaded["stage"], Stage.TESTING.value)
             self.assertEqual(loaded["context"], {"live": True})
             self.assertEqual(len(store.task_events(task_id)), 1)
+
+    def test_recovery_pauses_pre_mutation_work_and_blocks_uncertain_writes(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            store = SQLiteStore(Path(folder) / "state.db")
+            store.create_task("planning", "Planeje", TaskOptions())
+            store.create_task("applying", "Aplique", TaskOptions())
+            store.update_task("planning", stage=Stage.PLANNING, status="running")
+            store.update_task("applying", stage=Stage.APPLYING, status="running")
+
+            recovered = {item["id"]: item for item in store.recover_interrupted_tasks()}
+
+            self.assertEqual(recovered["planning"]["stage"], Stage.PAUSED.value)
+            self.assertEqual(recovered["applying"]["stage"], Stage.BLOCKED.value)
+            self.assertIn("Recuperação segura", recovered["applying"]["reason"])
 
 
 if __name__ == "__main__":

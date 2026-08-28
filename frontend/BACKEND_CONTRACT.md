@@ -1,18 +1,18 @@
 # ZENLESS — Backend Contract
 
-This is the transport contract between the React frontend and the future real Zenless backend. The current `bridge/` is a **development/mock foundation only**. Codex must replace the mock adapter with real Zenless Core adapters without changing the frontend contract unless a versioned migration is required.
+This is the versioned transport contract between the React frontend and the real local Zenless backend. Production is served by `zenless/web_bridge.py` and `zenless/core.py`; `frontend/bridge/` and Mock Mode remain development fixtures and are never selected by the production build.
 
 ## Architecture
 
 ```text
 React UI
   ↕ REST + WebSocket
-Zenless Bridge (127.0.0.1 only)
+Python Zenless Bridge (127.0.0.1, ephemeral port)
   ↕ adapters
 Zenless Core / Orchestrator / Providers / StudioMCP / Persistence
 ```
 
-The Bridge transports commands, state and events. It must not contain AI reasoning or Roblox mutation policy.
+The Bridge transports commands, state, authorized files and events. It contains no AI reasoning or Roblox mutation policy; the Core and Orchestrator remain authoritative.
 
 ## Configuration
 
@@ -20,20 +20,11 @@ Frontend environment variables:
 
 | Variable | Purpose | Development default |
 |---|---|---|
-| `VITE_ZENLESS_MOCK` | `true` uses in-browser Mock API/Socket | `true` |
+| `VITE_ZENLESS_MOCK` | `true` uses in-browser Mock API/Socket | `true` in `.env.development`; forced `false` by the release build |
 | `VITE_ZENLESS_API_BASE` | Optional REST base override | same origin |
 | `VITE_ZENLESS_WS_BASE` | Optional WebSocket base override | same origin (`ws:`/`wss:`) |
 
-Development Bridge environment:
-
-| Variable | Purpose | Default |
-|---|---|---|
-| `ZENLESS_HOST` | Bind host | `127.0.0.1` |
-| `ZENLESS_PORT` | Bind port | `8787` |
-| `ZENLESS_TOKEN` | Optional fixed dev session token | random 32-byte hex |
-| `ZENLESS_ALLOWED_ORIGINS` | Comma-separated exact origins | local Bridge + Vite origins |
-
-Production must keep the Bridge local-only unless a separately designed remote-auth architecture is introduced.
+The production Bridge is not configured through public host/token environment variables. It rejects any bind other than `127.0.0.1`, asks the OS for an available port and creates a fresh 48-byte URL-safe token for each process. A remote mode is intentionally out of scope.
 
 ## Session, origin and request IDs
 
@@ -93,7 +84,7 @@ The backend is authoritative for the current job. The frontend must never depend
 | POST | `/api/chat` | JSON `{ content, jobId? }` **or** multipart form with `content`, optional `jobId`, repeated `attachments` | `{ messageId, jobId? }` |
 | POST | `/api/chat/:jobId/cancel` | — | `{ ok: boolean }` |
 
-The development Bridge intentionally returns `415 MOCK_MULTIPART_UNSUPPORTED` for multipart. Browser-only Mock Mode supports attachment UI. Codex must implement secure multipart parsing, limits, temp-file cleanup and backend/provider forwarding in the production Bridge.
+The production Bridge accepts JSON or multipart. Multipart is bounded to five attachments, 32 MiB per file and 96 MiB total; filenames are sanitized and files are moved into task-scoped storage before provider forwarding. Browser-only Mock Mode may use fixture behavior and must never be enabled in release.
 
 ### Context
 
@@ -149,7 +140,7 @@ Exactly six canonical directions are used: `FRONT`, `BACK`, `LEFT`, `RIGHT`, `TO
 | GET | `/api/assets` | `Asset[]` |
 | GET | `/api/assets/:id/content` (preferred production shape) | authorized binary stream |
 
-The current mock contract may use `/api/assets/:id` URLs. Codex should normalize asset delivery and prevent path traversal. Never send `C:\...` paths to the web UI.
+Production uses `/api/assets/:id/content`, resolves the stored asset ID inside the authorized data root and rejects traversal. Mock fixtures may use in-memory URLs. Never send `C:\...` paths to the web UI.
 
 ### Studio
 
@@ -164,7 +155,7 @@ The current mock contract may use `/api/assets/:id` URLs. Codex should normalize
 | POST | `/api/studio/:nodeId/unlock` | `{ ok }` |
 | POST | `/api/studio/:nodeId/context` | `{ ok }` |
 
-The production adapter must query StudioMCP. UI requests must not bypass Zenless mutation safety.
+The production adapter queries StudioMCP. UI requests never bypass Zenless mutation safety.
 
 ### Tests
 
@@ -202,7 +193,7 @@ One logical connection at `WS_BASE/ws?token=<session-token>`. Each frame is:
 { "type": "EVENT_NAME", "data": {} }
 ```
 
-Canonical event names and payloads are defined by `ZenlessEventMap` in `src/types/index.ts`:
+Canonical event names and payloads are defined by `ZenlessEventMap` in `src/types/index.ts`. Provider stream deltas are forwarded as they are observed by WebView2/Playwright; only the completed response is persisted:
 
 | Event | Payload |
 |---|---|
@@ -249,18 +240,22 @@ Frontend source-of-truth types live in:
 - `src/types/index.ts`
 - `src/services/api/types.ts`
 
-The development Bridge imports compatible types. Codex may create a generated/shared protocol package later, but must preserve wire compatibility.
+The development fixtures import compatible types. A generated/shared protocol package may be introduced later, but wire compatibility must be preserved.
 
-## Required Codex production work
+## Production invariants
 
-1. Replace `createMockAdapter()` with a real adapter to Zenless Core/Event Bus.
-2. Connect Orchestrator/jobs/state machine and SQLite/recovery.
-3. Connect Managed Browser and truthful ChatGPT/DeepSeek/Hunyuan state/model discovery.
-4. Connect StudioMCP and preserve read/snapshot/version-check/apply/read-back verification safety.
-5. Implement secure multipart attachment handling and provider forwarding.
-6. Implement authorized asset streaming with path traversal protection.
-7. Emit real WebSocket events from the Core Event Bus.
-8. Serve the built frontend from the final local application/Bridge.
-9. Select/manage a local port and launch the UI shell/browser automatically.
-10. Package the Windows release so end users do not run Node/npm/Python manually.
-11. Keep provider login manual/normal when required; no cookie theft, CAPTCHA bypass or browser extension requirement.
+1. Mock Mode is compile-time disabled for the release and cannot report production readiness.
+2. A mutation is `READ CURRENT → SNAPSHOT → EXPECTED SHA-256 → CLAIM OPERATION → APPLY → READ BACK → VERIFY`; an existing pending operation is never replayed after a crash.
+3. ChatGPT builds; DeepSeek performs the independent proposal review and a second real final review after mutation and QA. `REVISE` has a bounded repair loop; `BLOCK` prevents completion.
+4. Visual First stores six separate, versioned PNG assets and visual-QA evidence. Approval/regeneration commands act on a gate; no placeholder image is treated as generated output.
+5. Hunyuan capabilities are discovered from the live provider UI. Approved views are uploaded only up to the discovered limit; geometry and texture are separate operations and unavailable capabilities return a stable error.
+6. Provider deltas, QA cases, diagnostics and pipeline stages travel through the Core Event Bus to one authenticated WebSocket connection.
+7. Asset responses are ID-based and authorized; provider cookies, browser profile paths and arbitrary filesystem paths are never exposed.
+8. Recovery is conservative: pre-mutation work may be paused, while interrupted mutation/QA/final-review stages are blocked for explicit inspection.
+
+## Runtime-dependent limits
+
+- Provider websites, account entitlements and model catalogs can change independently of Zenless. Absence of an upload/generation/download control is reported as capability unavailable.
+- Studio Play/Output is executed only against a connected StudioMCP instance in Edit mode.
+- Multiplayer, `StudioTestService`, VirtualInput and device emulation are not inferred from ordinary Play Test. They are executed only when the connected Studio tooling exposes a bounded capability; otherwise QA records a skip/gap.
+- Clean-machine Windows, live provider and live Roblox E2E evidence belongs in release verification, not in this transport contract.

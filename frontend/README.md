@@ -1,39 +1,32 @@
 # Zenless Web
 
-Zenless web frontend + development Bridge foundation.
+Fonte canônica da interface React/TypeScript/Vite do Zenless. Produção serve `dist/` pelo Bridge Python local; `bridge/` e Mock Mode são fixtures de desenvolvimento, não o backend do executável.
 
-## Frontend
+## Desenvolvimento
 
 ```bash
-npm install
+npm ci
 npm run dev
 ```
 
-Quality gates:
+`.env.development` ativa o Mock Mode para trabalho isolado de UI. Para testar a interface contra o Core/Bridge Python real, use `VITE_ZENLESS_MOCK=false` e inicie o aplicativo/backend local.
+
+## Gates
 
 ```bash
-npm run typecheck
-npm run build
 npm run lint
-npm test
+npm run typecheck
+npm run test
+npm run build
 ```
 
-Default `.env.development` runs the full UI in browser-only Mock Mode.
+O gate oficial completo fica em `../build.ps1`; ele força Mock Mode desligado antes do build de produção e só empacota o EXE depois dos gates Python e frontend.
 
-## Development Bridge
+## Limites
 
-```bash
-cd bridge
-npm install
-npm run dev
-```
+- A UI apenas solicita ações e renderiza estado/eventos; Core/Orchestrator são autoritativos.
+- Não adicione uma segunda árvore `src/` na raiz do repositório.
+- Não edite `dist/` manualmente.
+- Nunca exponha credenciais, cookies ou caminhos Windows arbitrários ao frontend.
 
-Set `VITE_ZENLESS_MOCK=false` to exercise the HTTP/WebSocket transport against the development Bridge.
-
-The Bridge is a mock/foundation only. Real Zenless Core, providers, StudioMCP, persistence and Windows packaging are the next Codex integration stage.
-
-See:
-
-- `FRONTEND_ARCHITECTURE.md`
-- `BACKEND_CONTRACT.md`
-- `CODEX_HANDOFF.md`
+Consulte `FRONTEND_ARCHITECTURE.md`, `BACKEND_CONTRACT.md` e `CODEX_HANDOFF.md`.

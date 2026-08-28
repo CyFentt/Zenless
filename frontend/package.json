@@ -9,7 +9,7 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.app.json",
-    "test": "vitest run",
+    "test": "vitest run --no-file-parallelism --maxWorkers=1",
     "test:watch": "vitest",
     "format": "prettier --write ."
   },

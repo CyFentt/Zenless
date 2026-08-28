@@ -5,7 +5,9 @@ import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import Any
 
+from zenless.agent_gateway import AgentGateway
 from zenless.diagnostics import ErrorBus
 from zenless.managed_browser import ProviderSpec
 from zenless.webview2_browser import WebView2BrowserController
@@ -15,8 +17,9 @@ class ProviderHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802 - stdlib callback name
         body = b"""<!doctype html>
 <html><body>
+  <p>Upload up to 6 images</p>
   <textarea id="prompt-textarea"></textarea>
-  <input id="upload" type="file">
+  <input id="upload" type="file" accept="image/png,image/jpeg" multiple>
   <button data-model="sol">GPT Sol</button>
   <button id="send">Send</button>
   <main id="messages"></main>
@@ -28,9 +31,11 @@ class ProviderHandler(BaseHTTPRequestHandler):
       document.body.appendChild(stop);
       const reply = document.createElement('article');
       reply.dataset.messageAuthorRole = 'assistant';
-      reply.textContent = 'webview2:' + document.querySelector('#prompt-textarea').value;
+      reply.textContent = 'web';
       document.querySelector('#messages').appendChild(reply);
-      setTimeout(() => stop.remove(), 250);
+      setTimeout(() => { reply.textContent += 'view2:'; }, 500);
+      setTimeout(() => { reply.textContent += document.querySelector('#prompt-textarea').value; }, 1000);
+      setTimeout(() => stop.remove(), 1300);
     });
   </script>
 </body></html>"""
@@ -88,8 +93,27 @@ class WebView2BrowserIntegrationTests(unittest.TestCase):
                         timeout=30,
                     )
                     self.assertEqual(model_result["selected"], "GPT Sol")
-                    response = controller.send_prompt("chatgpt", "hello", task_id="mock", timeout=30)
+                    capabilities = controller.request(
+                        "chatgpt",
+                        "capabilities",
+                        {},
+                        task_id="mock",
+                        timeout=30,
+                    )["capabilities"]
+                    self.assertTrue(capabilities["upload_files"])
+                    self.assertEqual(capabilities["max_image_inputs"], 6)
+                    self.assertEqual(capabilities["file_types"], ["image/png", "image/jpeg"])
+                    deltas: list[str] = []
+                    response = controller.send_prompt(
+                        "chatgpt",
+                        "hello",
+                        task_id="mock",
+                        timeout=30,
+                        stream_callback=deltas.append,
+                    )
                     self.assertEqual(response, "webview2:hello")
+                    self.assertEqual("".join(deltas), response)
+                    self.assertGreaterEqual(len(deltas), 2)
                     self.assertEqual(controller.provider_status()["chatgpt"]["state"], "Ready")
                     controller.stop()
                     self.assertFalse(controller.running)
@@ -103,6 +127,103 @@ class WebView2BrowserIntegrationTests(unittest.TestCase):
             server.shutdown()
             server.server_close()
             server_thread.join(timeout=5)
+
+
+class _CapabilityTransport:
+    def __init__(self, capabilities: dict[str, Any]) -> None:
+        self.capabilities = capabilities
+        self.calls: list[str] = []
+        self.running = True
+
+    def start(self) -> None:
+        self.running = True
+
+    def stop(self) -> None:
+        self.running = False
+
+    def wait_for_provider(self, _provider: str, _timeout: float = 0.0) -> bool:
+        return True
+
+    def provider_status(self) -> dict[str, dict[str, str]]:
+        return {"hunyuan": {"state": "Ready", "detail": "test", "transport": "test"}}
+
+    def request(
+        self,
+        _provider: str,
+        action: str,
+        _payload: dict[str, Any],
+        *,
+        task_id: str,
+        timeout: float,
+        stream_callback: Any = None,
+    ) -> dict[str, Any]:
+        del task_id, timeout, stream_callback
+        self.calls.append(action)
+        if action == "capabilities":
+            return {"status": "ok", "capabilities": dict(self.capabilities)}
+        return {"status": "ok", "text": action}
+
+    def send_prompt(
+        self,
+        provider: str,
+        prompt: str,
+        *,
+        task_id: str,
+        timeout: float = 360.0,
+        stream_callback: Any = None,
+    ) -> str:
+        del provider, task_id, timeout
+        self.calls.append("send_prompt")
+        if stream_callback is not None:
+            stream_callback(prompt[:2])
+            stream_callback(prompt[2:])
+        return prompt
+
+
+class AgentGatewayCapabilityTests(unittest.TestCase):
+    def test_routes_only_missing_capability_to_playwright_and_preserves_streaming(self) -> None:
+        embedded = _CapabilityTransport({"send_text": True, "geometry": False, "max_image_inputs": 1})
+        managed = _CapabilityTransport({"send_text": True, "geometry": True, "max_image_inputs": 6})
+        gateway = AgentGateway(managed=managed, embedded=embedded)  # type: ignore[arg-type]
+
+        self.assertTrue(gateway.wait_for_provider("chatgpt", 1))
+        deltas: list[str] = []
+        self.assertEqual(
+            gateway.send_prompt("chatgpt", "stream", task_id="job", stream_callback=deltas.append),
+            "stream",
+        )
+        self.assertEqual("".join(deltas), "stream")
+        result = gateway.request(
+            "chatgpt",
+            "generate_geometry",
+            {"prompt": "mesh"},
+            task_id="job",
+            timeout=5,
+        )
+        self.assertEqual(result["text"], "generate_geometry")
+        self.assertNotIn("generate_geometry", embedded.calls)
+        self.assertIn("generate_geometry", managed.calls)
+
+        combined = gateway.request("chatgpt", "capabilities", {}, task_id="job", timeout=5)
+        self.assertTrue(combined["capabilities"]["geometry"])
+        self.assertEqual(combined["capabilities"]["max_image_inputs"], 6)
+        self.assertEqual(set(combined["routes"]), {"webview2", "playwright"})
+
+    def test_hunyuan_pins_upload_geometry_and_texture_to_one_capable_route(self) -> None:
+        embedded = _CapabilityTransport({"upload_files": True, "geometry": True, "texture": False})
+        managed = _CapabilityTransport({"upload_files": True, "geometry": True, "texture": True, "max_image_inputs": 5})
+        gateway = AgentGateway(managed=managed, embedded=embedded)  # type: ignore[arg-type]
+
+        capabilities = gateway.request("hunyuan", "capabilities", {}, task_id="job-3d", timeout=5)
+        self.assertEqual(capabilities["transport"], "playwright")
+        self.assertEqual(set(capabilities["routes"]), {"playwright"})
+        for action in ("upload_files", "generate_geometry", "generate_texture"):
+            gateway.request("hunyuan", action, {"prompt": "mesh"}, task_id="job-3d", timeout=5)
+
+        self.assertNotIn("upload_files", embedded.calls)
+        self.assertNotIn("generate_geometry", embedded.calls)
+        self.assertNotIn("generate_texture", embedded.calls)
+        self.assertTrue({"upload_files", "generate_geometry", "generate_texture"}.issubset(managed.calls))
 
 
 if __name__ == "__main__":

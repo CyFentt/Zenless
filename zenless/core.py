@@ -111,6 +111,9 @@ class ZenlessCore:
         self._connections_lock = threading.RLock()
         self._boot_steps = [
             {"stage": "CORE", "state": "READY"},
+            {"stage": "STATE", "state": "CONNECTING"},
+            {"stage": "BRIDGE", "state": "READY"},
+            {"stage": "UI", "state": "CONNECTING"},
             {"stage": "BROWSER", "state": "CONNECTING"},
             {"stage": "AI", "state": "OFF"},
             {"stage": "STUDIO", "state": "CONNECTING"},
@@ -284,9 +287,24 @@ class ZenlessCore:
         return self.job(job_id)
 
     def resume_job(self, job_id: str) -> dict[str, Any]:
-        if not self.orchestrator.resume(job_id):
+        if self.orchestrator.resume(job_id):
+            return self.job(job_id)
+        task = self._require_task(job_id)
+        if str(task.get("stage")) != Stage.PAUSED.value or "Checkpoint recuperado" not in str(task.get("error")):
             raise CoreError("JOB_NOT_RESUMABLE", "A tarefa não está pausada.", status=409)
-        return self.job(job_id)
+        try:
+            options = TaskOptions(**dict(task.get("options") or {}))
+            replacement_id = self.orchestrator.submit(str(task.get("prompt") or ""), options)
+        except (TypeError, OrchestratorError) as exc:
+            raise CoreError("JOB_NOT_RESUMABLE", str(exc), status=409) from exc
+        self.store.update_task(
+            job_id,
+            stage=Stage.BLOCKED,
+            status="blocked",
+            error=f"Reiniciada com segurança como {replacement_id}; nenhuma escrita anterior foi repetida.",
+        )
+        self.store.append_message(job_id, "Recovery", "system", f"Tarefa substituta: {replacement_id}")
+        return self.job(replacement_id)
 
     def cancel_job(self, job_id: str) -> bool:
         stopped = self.qa.stop(job_id)
@@ -433,7 +451,8 @@ class ZenlessCore:
     def visual(self, job_id: str) -> dict[str, Any]:
         task = self._require_task(job_id)
         context = task.get("context") or {}
-        visual = context.get("visual") if isinstance(context.get("visual"), dict) else {}
+        raw_visual = context.get("visual") if isinstance(context, dict) else None
+        visual: dict[str, Any] = raw_visual if isinstance(raw_visual, dict) else {}
         views = []
         for name in ("FRONT", "BACK", "LEFT", "RIGHT", "TOP", "BOTTOM"):
             entry = visual.get(name.casefold(), {}) if isinstance(visual, dict) else {}
@@ -446,12 +465,28 @@ class ZenlessCore:
                 }
             )
         proposal = task.get("proposal") or {}
-        prompt = str(proposal.get("visual_prompt", ""))
+        prompt = str(visual.get("prompt") or proposal.get("visual_prompt", ""))
         stage = str(task.get("stage", ""))
-        status = "APPROVED" if stage not in {Stage.WAITING_IMAGE_APPROVAL.value, Stage.GENERATING_CONCEPT.value} and prompt else (
-            "READY" if stage == Stage.WAITING_IMAGE_APPROVAL.value else ("GENERATING" if stage == Stage.GENERATING_CONCEPT.value else "FAILED" if stage == Stage.FAILED.value else "READY" if prompt else "GENERATING")
-        )
-        return {"views": views, "concept": {"version": 1 if prompt else 0, "status": status, "prompt": prompt}}
+        persisted_status = str(visual.get("status") or "")
+        if persisted_status:
+            status = persisted_status
+        elif stage == Stage.GENERATING_CONCEPT.value:
+            status = "GENERATING"
+        elif stage == Stage.WAITING_IMAGE_APPROVAL.value:
+            status = "READY"
+        elif stage in {Stage.FAILED.value, Stage.BLOCKED.value}:
+            status = "FAILED"
+        else:
+            status = "IDLE" if not prompt else "PENDING"
+        return {
+            "views": views,
+            "concept": {
+                "version": int(visual.get("version") or (1 if prompt else 0)),
+                "status": status,
+                "prompt": prompt,
+                "qa": visual.get("qa") or {},
+            },
+        }
 
     def approve_visual(self, job_id: str) -> bool:
         if not self.orchestrator.approve_active(job_id, ("visual",), "approve"):
@@ -460,23 +495,44 @@ class ZenlessCore:
         return True
 
     def edit_visual(self, job_id: str, prompt: str) -> bool:
+        if not prompt.strip():
+            raise CoreError("EMPTY_VISUAL_EDIT", "Descreva o ajuste visual desejado.")
         if not self.orchestrator.approve_active(job_id, ("visual",), "edit", prompt):
             raise CoreError("NO_VISUAL_GATE", "Nenhum conceito visual aguarda edição.", status=409)
         return True
 
+    def regenerate_visual(self, job_id: str, view: str = "") -> bool:
+        normalized = view.strip().casefold()
+        if normalized and normalized not in {"front", "back", "left", "right", "top", "bottom"}:
+            raise CoreError("INVALID_VISUAL_VIEW", "Vista visual inválida.")
+        note = f"regen:view:{normalized}" if normalized else "regen:all"
+        if not self.orchestrator.approve_active(job_id, ("visual",), "edit", note):
+            raise CoreError("NO_VISUAL_GATE", "Nenhum conceito visual aguarda regeneração.", status=409)
+        return True
+
     def model(self, job_id: str) -> dict[str, Any]:
-        assets = [asset for asset in self.store.assets(job_id) if asset["kind"] in {"GLB", "GLTF"}]
-        if not assets:
-            task = self._require_task(job_id)
-            stage = str(task.get("stage", ""))
-            state = "GENERATING" if stage == Stage.GENERATING_3D.value else ("FAILED" if stage == Stage.FAILED.value else "EMPTY")
-            return {"state": state, "geometryStatus": state if state != "EMPTY" else "IDLE", "textureStatus": "IDLE"}
-        asset = assets[0]
-        approved = str(self._require_task(job_id).get("stage", "")) != Stage.WAITING_3D_APPROVAL.value
+        task = self._require_task(job_id)
+        context = task.get("context") if isinstance(task.get("context"), dict) else {}
+        raw_model = context.get("model") if isinstance(context, dict) else None
+        model: dict[str, Any] = raw_model if isinstance(raw_model, dict) else {}
+        stage = str(task.get("stage", ""))
+        final_asset_id = str(model.get("asset_id") or "")
+        asset = self.store.asset(final_asset_id) if final_asset_id else None
+        if asset is None:
+            assets = [candidate for candidate in self.store.assets(job_id) if candidate["kind"] in {"GLB", "GLTF"}]
+            asset = assets[0] if assets else None
+        if asset is None:
+            state = "GENERATING" if stage == Stage.GENERATING_3D.value else ("FAILED" if stage in {Stage.FAILED.value, Stage.BLOCKED.value} else "EMPTY")
+            return {
+                "state": state,
+                "geometryStatus": "GENERATING" if state == "GENERATING" else ("FAILED" if state == "FAILED" else "IDLE"),
+                "textureStatus": "IDLE",
+            }
+        approved = str(model.get("status") or "") == "APPROVED"
         return {
             "state": "APPROVED" if approved else "READY",
-            "geometryStatus": "READY",
-            "textureStatus": "READY",
+            "geometryStatus": "READY" if model.get("geometry_path") else "PENDING",
+            "textureStatus": "READY" if model.get("texture_path") else "PENDING",
             "modelUrl": f"/api/assets/{asset['id']}/content",
             "filename": asset["name"],
         }
@@ -492,11 +548,9 @@ class ZenlessCore:
             raise CoreError("INVALID_MODEL_TARGET", "Alvo 3D inválido.")
         if not self.bridge.wait_for_provider("hunyuan", timeout=0.5):
             raise CoreError("PROVIDER_LOGIN_REQUIRED", "Hunyuan requer login.", status=409)
-        raise CoreError(
-            "REGENERATION_REQUIRES_PROMPT",
-            "Regeneração direta não foi simulada; envie o ajuste pelo chat para nova revisão.",
-            status=409,
-        )
+        if not self.orchestrator.approve_active(job_id, ("3d",), "edit", f"regen:{target}"):
+            raise CoreError("NO_MODEL_GATE", "Nenhum modelo 3D aguarda regeneração.", status=409)
+        return True
 
     def assets(self) -> list[dict[str, Any]]:
         result = []
@@ -708,6 +762,22 @@ class ZenlessCore:
 
     def _start_services(self) -> None:
         try:
+            recovered = self.store.recover_interrupted_tasks()
+            self._set_boot("STATE", "READY")
+            for item in recovered:
+                self.events.publish("JOB_UPDATED", {"job": self.job(str(item["id"]))})
+                self.diagnostics.report(
+                    severity="WARNING",
+                    source="state",
+                    component="recovery",
+                    message=str(item["reason"]),
+                    impact=f"Interrupted task {item['id']} moved to {item['stage']}.",
+                    recovery_action="Resume only pre-mutation checkpoints; inspect blocked mutation evidence manually.",
+                )
+        except Exception as exc:
+            self._set_boot("STATE", "OFF")
+            self._report("state", "recovery", exc, "Inspect the local SQLite state before running another mutation.")
+        try:
             self.bridge.start()
             self._set_connection("browser", "READY")
             self._set_boot("BROWSER", "READY")
@@ -721,6 +791,7 @@ class ZenlessCore:
             self._set_boot("STUDIO", "READY")
         except CoreError:
             self._set_boot("STUDIO", "OFF")
+        self._set_boot("UI", "READY")
         self.events.publish("BOOT_COMPLETE", {})
 
     def _login_worker(self, provider: str) -> None:
@@ -755,6 +826,21 @@ class ZenlessCore:
             self._set_connection("browser", self._normalize_connection(state))
 
     def _on_pipeline_event(self, event: PipelineEvent) -> None:
+        if event.kind == "stream_start":
+            self.events.publish(
+                "CHAT_STREAM_STARTED",
+                {"messageId": event.message, "jobId": event.task_id, "provider": event.detail},
+            )
+            return
+        if event.kind == "stream_delta":
+            self.events.publish(
+                "CHAT_STREAM_DELTA",
+                {"messageId": event.message, "delta": event.detail},
+            )
+            return
+        if event.kind == "stream_finish":
+            self.events.publish("CHAT_STREAM_FINISHED", {"messageId": event.message})
+            return
         try:
             job = self.job(event.task_id)
         except CoreError:

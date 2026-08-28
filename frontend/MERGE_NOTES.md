@@ -7,4 +7,4 @@ The Lovable archive was **not** overlaid wholesale because it is mostly a generi
 - Prettier configuration (`.prettierrc`, `.prettierignore`)
 - stronger centralized frontend error-description/diagnostic behavior, adapted to the existing Zenless architecture
 
-The Zenless-specific fixes were then completed directly on the Bolt base: attachments, dynamic models/settings persistence, richer diagnostics/dedup, Six View image rendering, production-safe 3D empty state, current-job handling, Review model, Studio actions, typed API/WebSocket contracts, `ws`-based development Bridge, token/origin foundation and Codex handoff docs.
+The Zenless-specific fixes were then completed directly on the Bolt base: attachments, dynamic models/settings persistence, richer diagnostics/dedup, Six View image rendering, production-safe 3D empty state, current-job handling, Review model, Studio actions, typed API/WebSocket contracts and the optional `ws` development fixture. The production integration now lives in the Python Core/Bridge; this file records frontend provenance only.

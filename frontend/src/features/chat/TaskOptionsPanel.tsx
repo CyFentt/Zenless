@@ -23,11 +23,19 @@ export function TaskOptionsPanel({ options, onChange, onClose }: Props) {
         </button>
       </div>
       <div className="flex-1 overflow-y-auto scrollbar-zen p-3 space-y-3">
-        <OptionRow label="Visual First" hint="Generate concept art before building">
-          <Toggle checked={options.visualFirst} onChange={(v) => set('visualFirst', v)} label="Visual First" />
+        <OptionRow label="Visual First" hint="Required while 3D generation is enabled">
+          <Toggle
+            checked={options.visualFirst}
+            onChange={(value) => set('visualFirst', value || options.create3D)}
+            label="Visual First"
+          />
         </OptionRow>
         <OptionRow label="Create 3D" hint="Generate 3D model from concept">
-          <Toggle checked={options.create3D} onChange={(v) => set('create3D', v)} label="Create 3D" />
+          <Toggle
+            checked={options.create3D}
+            onChange={(value) => onChange({ ...options, create3D: value, visualFirst: value || options.visualFirst })}
+            label="Create 3D"
+          />
         </OptionRow>
         <OptionRow label="Review" hint="Code review before applying">
           <Toggle checked={options.review} onChange={(v) => set('review', v)} label="Review" />

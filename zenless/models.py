@@ -190,9 +190,11 @@ class TaskOptions:
             except (TypeError, ValueError):
                 return default
 
+        create_3d_asset = bool(raw.get("Create 3D Asset", True))
         return cls(
-            visual_first=bool(raw.get("Visual First", False)),
-            create_3d_asset=bool(raw.get("Create 3D Asset", True)),
+            # A 3D job cannot bypass its approved visual reference set.
+            visual_first=bool(raw.get("Visual First", True)) or create_3d_asset,
+            create_3d_asset=create_3d_asset,
             independent_review=bool(raw.get("Independent Review", True)),
             automatic_play_test=bool(raw.get("Automatic Play Test", True)),
             auto_fix_errors=bool(raw.get("Auto Fix Errors", True)),
@@ -212,9 +214,12 @@ class TaskOptions:
             except (TypeError, ValueError):
                 return default
 
+        create_3d_asset = bool(source.get("create3D", True))
         return cls(
-            visual_first=bool(source.get("visualFirst", False)),
-            create_3d_asset=bool(source.get("create3D", True)),
+            # Keep the API contract permissive for non-3D jobs, but make the
+            # Visual First gate mandatory whenever Hunyuan generation is enabled.
+            visual_first=bool(source.get("visualFirst", True)) or create_3d_asset,
+            create_3d_asset=create_3d_asset,
             independent_review=bool(source.get("review", True)),
             automatic_play_test=bool(source.get("autoTest", True)),
             auto_fix_errors=bool(source.get("autoFix", True)),

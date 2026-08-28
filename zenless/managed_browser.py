@@ -8,7 +8,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import urlparse
 
 from .browser_bridge import BridgeError, StatusCallback
@@ -135,6 +135,7 @@ class _Command:
     timeout: float = 60.0
     event: threading.Event = field(default_factory=threading.Event)
     cancelled: threading.Event = field(default_factory=threading.Event)
+    stream_callback: Callable[[str], None] | None = None
     result: Any = None
     error: BaseException | None = None
 
@@ -218,13 +219,22 @@ class ManagedBrowserController:
             timeout=timeout,
         )
 
-    def send_prompt(self, provider: str, prompt: str, *, task_id: str, timeout: float = 360.0) -> str:
+    def send_prompt(
+        self,
+        provider: str,
+        prompt: str,
+        *,
+        task_id: str,
+        timeout: float = 360.0,
+        stream_callback: Callable[[str], None] | None = None,
+    ) -> str:
         result = self.request(
             provider,
             "send_prompt",
             {"prompt": prompt, "timeout_ms": int(timeout * 1000)},
             task_id=task_id,
             timeout=timeout,
+            stream_callback=stream_callback,
         )
         text = str(result.get("text") or "").strip()
         if not text:
@@ -239,10 +249,17 @@ class ManagedBrowserController:
         *,
         task_id: str,
         timeout: float,
+        stream_callback: Callable[[str], None] | None = None,
     ) -> dict[str, Any]:
         command_payload = dict(payload)
         command_payload.update({"provider_action": action, "task_id": task_id, "request_id": uuid.uuid4().hex})
-        return self._call("request", provider, command_payload, timeout=timeout)
+        return self._call(
+            "request",
+            provider,
+            command_payload,
+            timeout=timeout,
+            stream_callback=stream_callback,
+        )
 
     def _call(
         self,
@@ -251,12 +268,19 @@ class ManagedBrowserController:
         payload: dict[str, Any] | None = None,
         *,
         timeout: float,
+        stream_callback: Callable[[str], None] | None = None,
     ) -> Any:
         if provider and provider not in self.provider_specs:
             raise BridgeError(f"Provedor gerenciado desconhecido: {provider}")
         if not self.running:
             self.start()
-        command = _Command(action, provider, payload or {}, timeout=max(1.0, timeout))
+        command = _Command(
+            action,
+            provider,
+            payload or {},
+            timeout=max(1.0, timeout),
+            stream_callback=stream_callback,
+        )
         self._commands.put(command)
         if not command.event.wait(command.timeout + 2.0):
             command.cancelled.set()
@@ -333,7 +357,11 @@ class ManagedBrowserController:
                 "Ready" if ready else "Login Required",
                 "Authenticated managed session" if ready else "Use Login for the normal provider page",
             )
-            return {"ready": ready, "runtime": "ready"}
+            return {
+                "ready": ready,
+                "runtime": "ready",
+                "capabilities": self._capabilities(page, self.provider_specs[command.provider]),
+            }
         if command.action == "login":
             if self._runtime_blocked:
                 raise BridgeError("Playwright runtime unavailable on this Windows installation.")
@@ -364,6 +392,13 @@ class ManagedBrowserController:
                 page = self._ensure_page(command.provider)
                 page.reload(wait_until="domcontentloaded", timeout=60_000)
                 return {"status": "ok", "reloaded": True, "transport": "playwright"}
+            if provider_action == "capabilities":
+                page = self._ensure_page(command.provider)
+                return {
+                    "status": "ok",
+                    "capabilities": self._capabilities(page, self.provider_specs[command.provider]),
+                    "transport": "playwright",
+                }
             return self._send(command)
         raise BridgeError(f"Comando de navegador não suportado: {command.action}")
 
@@ -410,6 +445,9 @@ class ManagedBrowserController:
     def _send(self, command: _Command) -> dict[str, Any]:
         spec = self.provider_specs[command.provider]
         page = self._ensure_page(command.provider)
+        provider_action = str(command.payload.get("provider_action") or "send_prompt")
+        if command.provider == "hunyuan" and provider_action in {"generate_geometry", "generate_texture"}:
+            self._select_generation_mode(page, provider_action)
         composer = self._composer(page, spec)
         if composer is None:
             self._set_state(command.provider, "Login Required", "Composer unavailable in managed session")
@@ -430,7 +468,9 @@ class ManagedBrowserController:
         self._set_state(command.provider, "Working", "Waiting for provider response")
         text = self._wait_response(page, spec, before_count, before_text, command)
         result: dict[str, Any] = {"status": "ok", "text": text}
-        if command.payload.get("provider_action") == "generate_3d":
+        if provider_action == "generate_image":
+            result.update(self._capture_generated_image(page, spec, command))
+        if provider_action in {"generate_3d", "generate_geometry", "generate_texture"}:
             artifact_url = self._artifact_url(page)
             if artifact_url:
                 result["artifact_url"] = artifact_url
@@ -443,12 +483,17 @@ class ManagedBrowserController:
 
     def _upload_files(self, command: _Command) -> dict[str, Any]:
         files = [Path(str(item)).expanduser().resolve() for item in command.payload.get("files", [])]
-        if not files or len(files) > 5:
-            raise BridgeError("Forneça de 1 a 5 arquivos para upload.")
+        page = self._ensure_page(command.provider)
+        capabilities = self._capabilities(page, self.provider_specs[command.provider])
+        try:
+            max_files = max(1, min(6, int(capabilities.get("max_image_inputs") or 1)))
+        except (TypeError, ValueError):
+            max_files = 1
+        if not files or len(files) > max_files:
+            raise BridgeError(f"O provedor aceita de 1 a {max_files} arquivo(s) nesta sessão.")
         for path in files:
             if not path.is_file() or path.stat().st_size > 128 * 1024 * 1024:
                 raise BridgeError(f"Arquivo ausente ou acima de 128 MB: {path.name}")
-        page = self._ensure_page(command.provider)
         target = page.locator('input[type="file"]').first
         if target.count() == 0:
             raise BridgeError("A página do provedor não expõe um input de arquivo compatível.")
@@ -514,12 +559,121 @@ class ManagedBrowserController:
             is_new = count > before_count or bool(text and text != before_text)
             if is_new and text:
                 if text != last_text:
+                    if command.stream_callback is not None:
+                        delta = text[len(last_text) :] if text.startswith(last_text) else ""
+                        if delta:
+                            try:
+                                command.stream_callback(delta)
+                            except Exception as exc:
+                                self._report(
+                                    exc,
+                                    "managed-browser:stream-callback",
+                                    provider=command.provider,
+                                    job_id=str(command.payload.get("task_id") or ""),
+                                )
                     last_text = text
                     stable_since = time.monotonic()
                 elif not self._is_streaming(page, spec) and time.monotonic() - stable_since >= 2.0:
                     return text
             page.wait_for_timeout(350)
         raise BridgeError(f"Tempo limite aguardando resposta completa de {spec.code}.")
+
+    def _capabilities(self, page: Any, spec: ProviderSpec) -> dict[str, Any]:
+        raw = page.evaluate(
+            r"""
+            ({inputs, sends, stops, responses}) => {
+              const visible = node => !!node && getComputedStyle(node).display !== 'none' &&
+                getComputedStyle(node).visibility !== 'hidden';
+              const any = selectors => selectors.some(selector => [...document.querySelectorAll(selector)].some(visible));
+              const file = document.querySelector('input[type="file"]');
+              const accept = (file?.getAttribute('accept') || '').split(',').map(value => value.trim()).filter(Boolean);
+              const body = (document.body?.innerText || '').slice(0, 200000);
+              const countMatch = body.match(/(?:up to|max(?:imum)?|最多|至多)\s*(\d+)\s*(?:images?|views?|photos?|图片|图)/i);
+              const explicitCount = countMatch ? Math.max(1, Math.min(6, Number(countMatch[1]))) : 0;
+              const labels = [...document.querySelectorAll('button,[role="tab"],[role="option"]')]
+                .map(node => (node.innerText || node.textContent || '').trim()).filter(Boolean).slice(0, 400).join('\n');
+              return {
+                send_text: any(inputs) && any(sends),
+                upload_files: !!file,
+                file_types: accept,
+                max_image_inputs: file ? (file.multiple ? (explicitCount || 1) : 1) : 0,
+                cancel: any(stops),
+                responses: any(responses),
+                geometry: /(geometry|shape|mesh|几何|形状)/i.test(labels),
+                texture: /(texture|pbr|material|纹理|贴图|材质)/i.test(labels),
+                download_artifact: [...document.querySelectorAll('a[href]')]
+                  .some(a => /\.(glb|gltf|fbx|obj)(\?|$)/i.test(a.href))
+              };
+            }
+            """,
+            {
+                "inputs": list(spec.inputs),
+                "sends": list(spec.sends),
+                "stops": list(spec.stops),
+                "responses": list(spec.responses),
+            },
+        )
+        return dict(raw) if isinstance(raw, dict) else {}
+
+    @staticmethod
+    def _select_generation_mode(page: Any, action: str) -> None:
+        patterns = (
+            ("geometry", "shape", "mesh", "几何", "形状")
+            if action == "generate_geometry"
+            else ("texture", "pbr", "material", "纹理", "贴图", "材质")
+        )
+        nodes = page.locator('button, [role="tab"], [role="option"]')
+        for index in range(min(nodes.count(), 400)):
+            node = nodes.nth(index)
+            try:
+                label = (node.inner_text(timeout=300) or "").strip().casefold()
+                if node.is_visible() and any(pattern in label for pattern in patterns):
+                    node.click(timeout=3_000)
+                    return
+            except Exception:
+                continue
+        phase = "geometry" if action == "generate_geometry" else "texture"
+        raise BridgeError(f"CAPABILITY_UNAVAILABLE: Hunyuan did not expose a {phase} generation mode.")
+
+    def _capture_generated_image(
+        self,
+        page: Any,
+        spec: ProviderSpec,
+        command: _Command,
+    ) -> dict[str, Any]:
+        output_text = str(command.payload.get("output_path") or "").strip()
+        if not output_text:
+            raise BridgeError("generate_image requires an authorized output_path.")
+        output = Path(output_text).resolve()
+        try:
+            output.relative_to(self.data_root.resolve())
+        except ValueError as exc:
+            raise BridgeError("Image output escaped Zenless storage.") from exc
+        if output.suffix.casefold() != ".png":
+            raise BridgeError("Generated concept output must be PNG.")
+        response = self._response_locator(page, spec)
+        container = response.last if response is not None and response.count() else page.locator("body")
+        images = container.locator("img")
+        for index in range(images.count() - 1, -1, -1):
+            image = images.nth(index)
+            try:
+                dimensions = image.evaluate(
+                    "node => ({width: node.naturalWidth || node.clientWidth, height: node.naturalHeight || node.clientHeight})"
+                )
+                width = int(dimensions.get("width", 0)) if isinstance(dimensions, dict) else 0
+                height = int(dimensions.get("height", 0)) if isinstance(dimensions, dict) else 0
+                if image.is_visible() and width >= 256 and height >= 256:
+                    output.parent.mkdir(parents=True, exist_ok=True)
+                    image.screenshot(path=str(output), type="png")
+                    if output.is_file() and output.stat().st_size > 1024:
+                        return {
+                            "artifact_path": str(output),
+                            "artifact_name": output.name,
+                            "mime": "image/png",
+                        }
+            except Exception:
+                continue
+        raise BridgeError("CAPABILITY_UNAVAILABLE: provider response exposed no generated image to capture.")
 
     def _poll_login(self) -> None:
         provider = self._login_provider

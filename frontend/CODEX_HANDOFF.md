@@ -1,104 +1,53 @@
-# ZENLESS — Codex Handoff
+# Zenless — Engineering Handoff
 
-## What is complete in this repository
+## Source of truth
 
-### Frontend
+`frontend/` is the only React/TypeScript/Vite source tree. The former root-level `src/`, `bridge/`, `package*.json` and build configs were stale duplicates and were removed. Production serves `frontend/dist` through the authenticated Python Bridge; `frontend/bridge/` and Mock Mode exist only for development and tests.
 
-- React/TypeScript/Vite Zenless UI
-- accepted black/white minimal/gothic design
-- HOME / CHAT / BUILD / VISUAL / STUDIO / TEST / SETTINGS
-- Mock Mode and Real API abstraction
-- typed REST contract
-- typed WebSocket event contract
-- current-job state without production hardcoded IDs
-- real chat attachment `File` pipeline to `FormData`
-- Six View image URL rendering
-- GLB/GLTF viewer with production `NO MODEL` behavior
-- Build review model (APPROVE/REVISE/BLOCK + risk/details)
-- Studio inspect/lock/use-as-context frontend actions
-- dynamic provider model catalog/settings calls
-- frontend diagnostics with dedup/correlation fields
+Do not restore a second frontend tree and do not edit generated `frontend/dist` by hand.
 
-### Bridge foundation
+## Implemented boundaries
 
-- local Node/TypeScript development Bridge
-- `127.0.0.1` default bind
-- session token and origin validation foundation
-- `ws` WebSocket library
-- REST routes matching the frontend contract
-- mock adapter only
+- `ZenlessAPI` is the UI command boundary; `ZenlessEventMap` is the event boundary.
+- `zenless/web_bridge.py` owns local REST/WebSocket transport, token/origin/host checks, request correlation, multipart limits and authorized asset delivery.
+- `zenless/core.py` owns state exposed to the UI and maps Event Bus updates into the frontend contract.
+- `zenless/orchestrator.py` owns provider sequencing, approval gates, Studio mutation safety, QA/repair and final DeepSeek review.
+- `zenless/store.py` owns SQLite tasks/events/messages/approvals/assets/tests and idempotent operations.
+- `zenless/agent_gateway.py` selects embedded WebView2 first and internal Playwright when the required capability is unavailable.
+- `zenless/studio_mcp.py` is the only Studio command transport.
+- `zenless/qa_breaker.py` records bounded, seeded QA evidence; it does not call an absent Studio capability a pass.
 
-The Bridge is **not** the real Zenless backend.
+## Critical invariants
 
-## Codex must implement
+1. Never enable `VITE_ZENLESS_MOCK` in a production build.
+2. Never move AI policy or Studio writes into the frontend/Bridge.
+3. Preserve `READ CURRENT → SNAPSHOT → EXPECTED SHA-256 → CLAIM OPERATION → APPLY → READ BACK → VERIFY`.
+4. A crash with a pending/unsafe write blocks recovery; it must not replay the mutation automatically.
+5. ChatGPT is the builder. DeepSeek independently reviews before approval and again after mutation/QA. A final `BLOCK` cannot become `COMPLETE`.
+6. Stream events are provisional display data. Persist only the completed provider response.
+7. Six View means six separate versioned PNGs: `FRONT`, `BACK`, `LEFT`, `RIGHT`, `TOP`, `BOTTOM`. Regeneration creates a new version and never overwrites approved evidence in place.
+8. Hunyuan image count, upload, geometry, texture and download support come from live capability discovery. Never fabricate a stage, percentage, model or texture.
+9. Never expose provider cookies, credentials, browser profile paths or arbitrary Windows paths to React.
+10. Keep login, MFA, CAPTCHA, consent, publishing and purchases manual.
 
-1. **Zenless Core adapter** — connect Bridge commands to the existing Orchestrator/state machine/job manager.
-2. **Persistence/recovery** — real SQLite state, safe resume and pending-operation handling.
-3. **Managed Browser** — real lifecycle and provider session state.
-4. **ChatGPT adapter** — truthful login/session/model discovery/send/stream/upload/download/cancel/recovery.
-5. **DeepSeek adapter** — same provider contract, used for review/final review.
-6. **Hunyuan adapter** — six-view input policy, geometry/texture generation states, approved model asset flow.
-7. **StudioMCP adapter** — real tree/search/inspect/context/test integration.
-8. **Mutation safety** — keep READ CURRENT → SNAPSHOT → VERSION/HASH VALIDATE → APPLY → READ BACK → VERIFY, with operation IDs and dedup/idempotency.
-9. **Play Test events** — real test state/log stream/error correlation and bounded Auto Fix loop.
-10. **Diagnostics bridge** — pipe real Core/Browser/Studio/storage errors into `Diagnostic`/`DIAGNOSTIC_EVENT`.
-11. **Multipart attachments** — size/type validation, safe temporary storage/cleanup and backend/provider forwarding.
-12. **Asset serving** — authorized ID-based image/GLB/texture delivery; reject traversal/arbitrary paths.
-13. **Static UI serving/application shell** — launch the built frontend from the final local app without requiring npm/Vite from the user.
-14. **Port/bootstrap** — choose an available local port and communicate it safely to the shell/UI.
-15. **Windows packaging** — final Zenless installer/executable; no manual Python/Node/npm/Playwright installation for end users.
+## Verification before release
 
-## Do not change unless objectively necessary
+Run `build.ps1`; it gates PyInstaller behind Ruff, Pyright, pytest, `npm ci`, ESLint, TypeScript, Vitest and the production Vite build. Report the exact counts from that run.
 
-- visual identity/navigation
-- frontend/backend separation
-- `ZenlessAPI` as UI command boundary
-- `ZenlessEvent` event-driven model
-- no-browser-extension primary architecture
-- provider model lists must stay dynamic
-- production UI must never fabricate READY/model/job/Studio state
+Static/unit tests do not prove these external integrations:
 
-## Provider/browser rule
+- a fresh Windows machine with no development toolchain;
+- real WebView2 provisioning and first-run login;
+- real ChatGPT/DeepSeek/Hunyuan UI flows and generated assets;
+- connected Roblox Studio mutation, Play/Stop and Output capture;
+- multiplayer, VirtualInput or device-emulator QA;
+- the complete visual and 3D E2E.
 
-The final primary architecture is Managed Browser behind Zenless Core/Bridge. Do not introduce a required Chrome/Firefox extension. Manual normal login may show the provider page when necessary; do not implement cookie theft, credential capture, CAPTCHA bypass or stealth evasion.
+If any item was not observed, mark it `NOT RUN` or `CAPABILITY UNAVAILABLE`. Do not convert it to `PASS` from code inspection.
 
-## API methods the production Bridge/Core adapter must satisfy
+## Useful references
 
-See `src/services/api/types.ts`. It is the frontend source of truth and covers:
-
-- bootstrap/status/connections/agents
-- jobs
-- chat + attachments/cancel
-- context
-- changes/review
-- visual/six-view
-- 3D model
-- assets
-- Studio
-- tests
-- settings/models/Smart Routing
-- diagnostics
-
-## WebSocket events the production Core must emit
-
-See `ZenlessEventMap` in `src/types/index.ts` and the table in `BACKEND_CONTRACT.md`.
-
-## Acceptance target
-
-```text
-Open Zenless
-→ UI appears
-→ Core/Bridge state truthful
-→ provider login state truthful
-→ StudioMCP state truthful
-→ user sends task/attachments
-→ Core investigates Studio
-→ ChatGPT work streams to UI
-→ DeepSeek review appears in BUILD
-→ approval applies safely through StudioMCP
-→ Play Test logs stream to TEST
-→ errors reach Diagnostics
-→ job completes/recoverable state persists
-```
-
-Only then package the final Windows release.
+- `BACKEND_CONTRACT.md`: REST/WebSocket contract and runtime limits.
+- `../ARCHITECTURE.md`: component and trust-boundary map.
+- `../QA_ARCHITECTURE.md`: automated and manual verification matrix.
+- `../RELEASE_NOTES.md`: current change set and release evidence.

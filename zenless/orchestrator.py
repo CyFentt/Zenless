@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
+import shutil
+import struct
 import threading
 import time
 import uuid
@@ -11,6 +14,7 @@ from typing import Any, Callable, Protocol
 
 from .brain import BrainAnalysis, ZenlessBrain
 from .browser_bridge import BridgeError
+from .glb_viewer import GLBError, load_glb
 from .models import (
     TERMINAL_STAGES,
     AgentProposal,
@@ -23,7 +27,16 @@ from .models import (
     validate_stage_transition,
 )
 from .policy import classify_action, is_read_only, validate_proposal
-from .prompts import principal_prompt, repair_prompt, review_prompt, revision_prompt
+from .prompts import (
+    final_review_prompt,
+    principal_prompt,
+    repair_prompt,
+    review_prompt,
+    revision_prompt,
+    visual_master_prompt,
+    visual_qa_prompt,
+    visual_view_prompt,
+)
 from .protocol import ProtocolError, extract_json_object
 from .store import SQLiteStore, now_iso
 from .studio_mcp import MCPError, StudioMCPClient
@@ -35,7 +48,15 @@ QACallback = Callable[[str, str, threading.Event, list[dict[str, Any]], bool], s
 class AgentTransport(Protocol):
     def wait_for_provider(self, provider: str, timeout: float = 0.0) -> bool: ...
 
-    def send_prompt(self, provider: str, prompt: str, *, task_id: str, timeout: float = 360.0) -> str: ...
+    def send_prompt(
+        self,
+        provider: str,
+        prompt: str,
+        *,
+        task_id: str,
+        timeout: float = 360.0,
+        stream_callback: Callable[[str], None] | None = None,
+    ) -> str: ...
 
     def request(
         self,
@@ -53,6 +74,10 @@ class OrchestratorError(RuntimeError):
 
 
 class TaskCancelled(OrchestratorError):
+    pass
+
+
+class TaskBlocked(OrchestratorError):
     pass
 
 
@@ -214,6 +239,56 @@ class ZenlessOrchestrator:
             else:
                 time.sleep(min(0.01, remaining))
 
+    def _send_agent_prompt(
+        self,
+        provider: str,
+        prompt: str,
+        *,
+        task_id: str,
+        timeout: float = 360.0,
+    ) -> str:
+        """Forward provider deltas without treating a partial response as durable state."""
+
+        message_id = uuid.uuid4().hex
+        task = self.store.load_task(task_id) or {}
+        try:
+            stage = Stage(str(task.get("stage") or Stage.PLANNING.value))
+        except ValueError:
+            stage = Stage.PLANNING
+
+        def publish(kind: str, detail: str = "") -> None:
+            if self.event_callback is None:
+                return
+            self.event_callback(
+                PipelineEvent(
+                    task_id=task_id,
+                    stage=stage,
+                    message=message_id,
+                    kind=kind,
+                    detail=detail,
+                    created_at=now_iso(),
+                )
+            )
+
+        publish("stream_start", provider)
+        try:
+            try:
+                return self.bridge.send_prompt(
+                    provider,
+                    prompt,
+                    task_id=task_id,
+                    timeout=timeout,
+                    stream_callback=lambda delta: publish("stream_delta", str(delta)),
+                )
+            except TypeError as exc:
+                # Compatibility with the extension bridge and old test doubles. Python
+                # rejects the unexpected keyword before those transports do any work.
+                if "stream_callback" not in str(exc):
+                    raise
+                return self.bridge.send_prompt(provider, prompt, task_id=task_id, timeout=timeout)
+        finally:
+            publish("stream_finish", provider)
+
     def _run_guarded(
         self,
         task_id: str,
@@ -227,6 +302,8 @@ class ZenlessOrchestrator:
                 self._run(task_id, objective, options, cancel_event, attachment_paths)
         except TaskCancelled as exc:
             self._finish_error(task_id, Stage.BLOCKED, str(exc))
+        except TaskBlocked as exc:
+            self._finish_error(task_id, Stage.BLOCKED, str(exc))
         except BridgeError as exc:
             self._finish_error(task_id, Stage.BLOCKED, str(exc))
         except (MCPError, ProtocolError, OrchestratorError) as exc:
@@ -234,6 +311,9 @@ class ZenlessOrchestrator:
         except Exception as exc:
             self._finish_error(task_id, Stage.FAILED, f"Falha interna controlada: {exc}")
         finally:
+            release_route = getattr(self.bridge, "release_task_route", None)
+            if callable(release_route):
+                release_route(task_id)
             with self._state_lock:
                 self._tasks.pop(task_id, None)
                 self._cancel.pop(task_id, None)
@@ -304,7 +384,7 @@ class ZenlessOrchestrator:
             review_json=review.to_dict() if review else {},
         )
 
-        self._handle_visual_and_3d(task_id, proposal, options, cancel_event)
+        self._handle_visual_and_3d(task_id, objective, proposal, options, cancel_event)
 
         mutating = [action for action in proposal.actions if not is_read_only(action.tool)]
         if not mutating:
@@ -313,6 +393,8 @@ class ZenlessOrchestrator:
             self.store.update_task(task_id, final_text=final_text)
             self._emit(task_id, Stage.COMPLETE, "Concluído sem alterações persistentes.", "success")
             return
+        self._bind_mutation_preconditions(task_id, target.studio_id, mutating)
+        self.store.update_task(task_id, proposal_json=proposal.to_dict())
 
         if options.require_approval:
             gate_round = 0
@@ -353,12 +435,15 @@ class ZenlessOrchestrator:
                     if not mutating:
                         self._emit(task_id, Stage.COMPLETE, "Revisão concluiu que nenhuma escrita era necessária.", "success")
                         return
+                    self._bind_mutation_preconditions(task_id, target.studio_id, mutating)
+                    self.store.update_task(task_id, proposal_json=proposal.to_dict())
                     continue
                 break
 
         self._emit(task_id, Stage.APPLYING, "Aplicando o bloco aprovado via StudioMCP.")
         apply_evidence = self._apply_actions(task_id, target.studio_id, mutating)
 
+        console_output = "[QA automático desativado pelo usuário.]"
         if options.automatic_play_test:
             console_output = self._run_quality_test(
                 task_id, target.studio_id, cancel_event, apply_evidence, False
@@ -404,13 +489,24 @@ class ZenlessOrchestrator:
                         self._emit(task_id, Stage.BLOCKED, "Correção não aprovada.", "warning", note)
                         return
                 repair_actions = [action for action in repair.actions if not is_read_only(action.tool)]
+                self._bind_mutation_preconditions(task_id, target.studio_id, repair_actions)
                 apply_evidence.extend(self._apply_actions(task_id, target.studio_id, repair_actions))
                 proposal = repair
                 console_output = self._run_quality_test(
                     task_id, target.studio_id, cancel_event, apply_evidence, True
                 )
 
-        self._emit(task_id, Stage.FINAL_REVIEW, "Verificação final de segurança e estado concluída.")
+        proposal, apply_evidence, console_output = self._final_review_and_repair(
+            task_id,
+            objective,
+            context,
+            proposal,
+            apply_evidence,
+            console_output,
+            options,
+            cancel_event,
+            target.studio_id,
+        )
         final_text = proposal.final_message or proposal.summary or "Alterações aplicadas e verificadas."
         self.store.append_message(task_id, "Orchestrator", "assistant", final_text)
         self.store.update_task(task_id, final_text=final_text)
@@ -461,7 +557,7 @@ class ZenlessOrchestrator:
                 f"ChatGPT criando o bloco estratégico (rodada {research_round}/2).",
             )
             prompt = principal_prompt(objective, context, tools, evidence, research_round)
-            raw = self.bridge.send_prompt("chatgpt", prompt, task_id=task_id)
+            raw = self._send_agent_prompt("chatgpt", prompt, task_id=task_id)
             self.store.append_message(task_id, "ChatGPT", "agent", raw)
             proposal = self._parse_proposal(raw)
             errors = validate_proposal(proposal.actions, set(self.studio.tools))
@@ -534,7 +630,7 @@ class ZenlessOrchestrator:
         while True:
             self._check_control(task_id, cancel_event)
             self._emit(task_id, Stage.REVIEWING, "DeepSeek revisando o bloco independentemente.")
-            raw = self.bridge.send_prompt(
+            raw = self._send_agent_prompt(
                 "deepseek",
                 review_prompt(objective, context, proposal, evidence),
                 task_id=task_id,
@@ -545,7 +641,7 @@ class ZenlessOrchestrator:
                 self._emit(task_id, Stage.REVIEWING, "Revisão independente aprovada.", "success", review.summary)
                 return proposal, review
             if review.verdict == "block":
-                raise OrchestratorError("DeepSeek bloqueou o bloco: " + (review.summary or "sem resumo"))
+                raise TaskBlocked("DeepSeek bloqueou o bloco: " + (review.summary or "sem resumo"))
             if revisions >= options.max_revisions:
                 raise OrchestratorError("Limite de revisões atingido sem aprovação independente.")
             revisions += 1
@@ -574,7 +670,7 @@ class ZenlessOrchestrator:
             summary="O usuário pediu ajustes.",
             required_changes=[user_note] if user_note else [],
         )
-        raw = self.bridge.send_prompt(
+        raw = self._send_agent_prompt(
             "chatgpt",
             revision_prompt(objective, context, proposal, effective_review, user_note),
             task_id=task_id,
@@ -585,73 +681,368 @@ class ZenlessOrchestrator:
     def _handle_visual_and_3d(
         self,
         task_id: str,
+        objective: str,
         proposal: AgentProposal,
         options: TaskOptions,
         cancel_event: threading.Event,
     ) -> None:
-        if options.visual_first and proposal.visual_prompt:
-            decision, note = self._wait_gate(
-                task_id,
-                "visual",
-                Stage.WAITING_VISUAL_APPROVAL,
-                "Conceito visual pronto; aguardando aprovação.",
-                proposal.visual_prompt,
-                cancel_event,
-            )
-            if decision != "approve":
-                raise OrchestratorError("Conceito visual não aprovado: " + note)
+        visual_required = options.visual_first or options.create_3d_asset
+        visual_prompt = proposal.visual_prompt.strip() or proposal.model_3d_prompt.strip() or objective
+        if visual_required:
+            version = 0
+            master: dict[str, Any] = {}
+            visual: dict[str, Any] = {}
+            revision_note = ""
+            target_views: set[str] | None = None
+            while True:
+                self._check_control(task_id, cancel_event)
+                if not master or (revision_note and not revision_note.startswith("regen:")):
+                    raw_master = self._send_agent_prompt(
+                        "chatgpt",
+                        visual_master_prompt(objective, visual_prompt, revision_note),
+                        task_id=task_id,
+                    )
+                    self.store.append_message(task_id, "ChatGPT", "visual-spec", raw_master)
+                    master = extract_json_object(raw_master)
+                version += 1
+                visual = self._generate_visual_version(
+                    task_id,
+                    master,
+                    version,
+                    previous=visual,
+                    target_views=target_views,
+                )
+                qa = self._qa_visual_version(task_id, master, version, visual)
+                visual.update(
+                    {
+                        "version": version,
+                        "master": master,
+                        "qa": qa,
+                        "status": "READY",
+                        "prompt": visual_prompt,
+                    }
+                )
+                self.store.update_context_section(task_id, "visual", visual)
+                if not bool(qa.get("approved")):
+                    failed = {
+                        str(item).strip().casefold()
+                        for item in qa.get("failed_views", [])
+                        if str(item).strip().casefold() in self._visual_views()
+                    }
+                    if version >= 3:
+                        raise OrchestratorError(
+                            "Visual QA rejeitou três versões: " + str(qa.get("summary") or qa.get("warnings"))
+                        )
+                    target_views = failed or set(self._visual_views())
+                    revision_note = "regen:qa"
+                    self._emit(
+                        task_id,
+                        Stage.GENERATING_CONCEPT,
+                        f"Visual QA pediu regeneração da versão {version}.",
+                        "warning",
+                        json.dumps(qa, ensure_ascii=False),
+                    )
+                    continue
+                decision, note = self._wait_gate(
+                    task_id,
+                    f"visual:{version}",
+                    Stage.WAITING_VISUAL_APPROVAL,
+                    f"Seis vistas PNG da versão {version} prontas; aguardando aprovação.",
+                    json.dumps({"version": version, "master": master, "qa": qa}, ensure_ascii=False),
+                    cancel_event,
+                )
+                if decision == "approve":
+                    visual["status"] = "APPROVED"
+                    self.store.update_context_section(task_id, "visual", visual)
+                    break
+                if decision == "reject":
+                    raise OrchestratorError("Conceito visual rejeitado: " + note)
+                revision_note = note.strip() or "Revisar o conceito mantendo a identidade do objeto."
+                target_views = self._visual_regen_targets(revision_note)
 
-        if options.create_3d_asset and proposal.model_3d_prompt:
+        if options.create_3d_asset:
+            model_prompt = proposal.model_3d_prompt.strip()
+            if not model_prompt:
+                raise TaskBlocked("ChatGPT não forneceu um prompt 3D; Hunyuan não será acionado sem especificação.")
             if not self.bridge.wait_for_provider("hunyuan", timeout=2):
                 raise BridgeError("Hunyuan3D não está conectado para gerar o ativo solicitado.")
-            self._emit(task_id, Stage.GENERATING_3D, "Hunyuan3D gerando o ativo aprovado.")
-            response = self.bridge.request(
+            target = "all"
+            model_version = 0
+            while True:
+                model_version += 1
+                response = self._generate_hunyuan_model(
+                    task_id,
+                    model_prompt,
+                    model_version,
+                    target,
+                )
+                detail = json.dumps(response, ensure_ascii=False)
+                decision, note = self._wait_gate(
+                    task_id,
+                    f"3d:{model_version}",
+                    Stage.WAITING_3D_APPROVAL,
+                    f"Geometria e textura 3D da versão {model_version} prontas; aguardando aprovação.",
+                    detail,
+                    cancel_event,
+                )
+                if decision == "approve":
+                    response["status"] = "APPROVED"
+                    self.store.update_context_section(task_id, "model", response)
+                    break
+                if decision == "reject":
+                    raise OrchestratorError("Modelo 3D rejeitado: " + note)
+                normalized = note.strip().casefold()
+                target = "texture" if "texture" in normalized or "textura" in normalized else "geometry"
+
+    @staticmethod
+    def _visual_views() -> tuple[str, ...]:
+        return ("front", "back", "left", "right", "top", "bottom")
+
+    def _generate_visual_version(
+        self,
+        task_id: str,
+        master: dict[str, Any],
+        version: int,
+        *,
+        previous: dict[str, Any],
+        target_views: set[str] | None,
+    ) -> dict[str, Any]:
+        self._emit(
+            task_id,
+            Stage.GENERATING_CONCEPT,
+            f"Gerando seis vistas ortográficas reais (versão {version}).",
+        )
+        version_dir = self.run_root.parent / "assets" / task_id / "concept" / f"v{version}"
+        version_dir.mkdir(parents=True, exist_ok=True)
+        requested = target_views or set(self._visual_views())
+        visual: dict[str, Any] = {}
+        for view in self._visual_views():
+            output = version_dir / f"{view}.png"
+            prior = previous.get(view) if isinstance(previous.get(view), dict) else {}
+            prior_path = Path(str(prior.get("path") or "")) if prior else Path()
+            if view not in requested and prior_path.is_file():
+                shutil.copy2(prior_path, output)
+            else:
+                response = self.bridge.request(
+                    "chatgpt",
+                    "generate_image",
+                    {
+                        "prompt": visual_view_prompt(master, view),
+                        "output_path": str(output),
+                        "timeout_ms": 420_000,
+                    },
+                    task_id=task_id,
+                    timeout=435,
+                )
+                if str(response.get("status", "ok")).casefold() != "ok":
+                    raise BridgeError(str(response.get("error") or f"Falha ao gerar a vista {view}."))
+                artifact = Path(str(response.get("artifact_path") or output)).resolve()
+                if artifact != output.resolve() or not artifact.is_file():
+                    raise BridgeError(f"A vista {view} não produziu o PNG autorizado.")
+            width, height, digest = self._validate_png(output)
+            asset_id = f"{task_id}-concept-v{version}-{view}"
+            self.store.register_asset(
+                asset_id,
+                job_id=task_id,
+                name=output.name,
+                kind="PNG",
+                path=output,
+                mime="image/png",
+                metadata={"view": view.upper(), "version": version, "width": width, "height": height},
+            )
+            visual[view] = {
+                "asset_id": asset_id,
+                "path": str(output.resolve()),
+                "sha256": digest,
+                "width": width,
+                "height": height,
+            }
+        return visual
+
+    def _qa_visual_version(
+        self,
+        task_id: str,
+        master: dict[str, Any],
+        version: int,
+        visual: dict[str, Any],
+    ) -> dict[str, Any]:
+        paths = [str(visual[view]["path"]) for view in self._visual_views()]
+        hashes = [str(visual[view]["sha256"]) for view in self._visual_views()]
+        if len(set(hashes)) != len(hashes):
+            duplicates = [view for view in self._visual_views() if hashes.count(str(visual[view]["sha256"])) > 1]
+            return {
+                "approved": False,
+                "failed_views": duplicates,
+                "warnings": ["Duas ou mais vistas têm conteúdo PNG idêntico."],
+                "summary": "Visual QA determinístico detectou direções duplicadas.",
+            }
+        upload = self.bridge.request(
+            "chatgpt",
+            "upload_files",
+            {"files": paths},
+            task_id=task_id,
+            timeout=120,
+        )
+        if int(upload.get("uploaded") or 0) != 6:
+            raise BridgeError("Visual QA exige o upload confirmado das seis vistas separadas.")
+        raw = self._send_agent_prompt(
+            "chatgpt",
+            visual_qa_prompt(master, version),
+            task_id=task_id,
+        )
+        self.store.append_message(task_id, "ChatGPT", "visual-qa", raw)
+        qa = extract_json_object(raw)
+        return {
+            "approved": bool(qa.get("approved")),
+            "failed_views": [str(item).casefold() for item in qa.get("failed_views", [])],
+            "warnings": [str(item) for item in qa.get("warnings", [])],
+            "summary": str(qa.get("summary") or "Visual QA sem resumo."),
+        }
+
+    @staticmethod
+    def _validate_png(path: Path) -> tuple[int, int, str]:
+        raw = path.read_bytes()
+        if len(raw) < 33 or raw[:8] != b"\x89PNG\r\n\x1a\n" or raw[12:16] != b"IHDR":
+            raise OrchestratorError(f"PNG inválido ou truncado: {path.name}")
+        width, height = struct.unpack(">II", raw[16:24])
+        if width < 256 or height < 256 or max(width, height) / min(width, height) > 1.15:
+            raise OrchestratorError(f"Vista {path.name} precisa ser quase quadrada e ter ao menos 256 px.")
+        return width, height, hashlib.sha256(raw).hexdigest()
+
+    def _visual_regen_targets(self, note: str) -> set[str] | None:
+        normalized = note.casefold()
+        selected = {view for view in self._visual_views() if f"regen:view:{view}" in normalized}
+        if selected:
+            return selected
+        return set(self._visual_views()) if normalized.startswith("regen:") else None
+
+    def _generate_hunyuan_model(
+        self,
+        task_id: str,
+        prompt: str,
+        version: int,
+        target: str,
+    ) -> dict[str, Any]:
+        capabilities_response = self.bridge.request(
+            "hunyuan", "capabilities", {}, task_id=task_id, timeout=45
+        )
+        capabilities = capabilities_response.get("capabilities")
+        caps = capabilities if isinstance(capabilities, dict) else {}
+        required = {"upload_files", "geometry", "texture"}
+        missing = sorted(name for name in required if not bool(caps.get(name)))
+        if missing:
+            raise BridgeError("CAPABILITY_UNAVAILABLE: Hunyuan sem " + ", ".join(missing) + ".")
+        task = self.store.load_task(task_id) or {}
+        raw_context = task.get("context")
+        context: dict[str, Any] = raw_context if isinstance(raw_context, dict) else {}
+        raw_visual = context.get("visual")
+        visual: dict[str, Any] = raw_visual if isinstance(raw_visual, dict) else {}
+        if str(visual.get("status") or "").upper() != "APPROVED":
+            raise BridgeError("Hunyuan exige uma versão visual aprovada antes da geração 3D.")
+        references = [
+            str(visual[view]["path"])
+            for view in self._visual_views()
+            if isinstance(visual.get(view), dict) and Path(str(visual[view].get("path") or "")).is_file()
+        ]
+        if len(references) != len(self._visual_views()):
+            raise BridgeError("Hunyuan exige as seis vistas PNG aprovadas (frente, trás, esquerda, direita, topo e base).")
+        try:
+            max_images = max(1, min(6, int(caps.get("max_image_inputs") or 1)))
+        except (TypeError, ValueError):
+            max_images = 1
+        references = references[:max_images]
+        self._emit(
+            task_id,
+            Stage.GENERATING_3D,
+            f"Hunyuan: geometria e PBR separados com {len(references)} referência(s) suportada(s).",
+        )
+        raw_previous = context.get("model")
+        previous: dict[str, Any] = raw_previous if isinstance(raw_previous, dict) else {}
+        geometry_path = str(previous.get("geometry_path") or "")
+        if target in {"all", "geometry"}:
+            uploaded = self.bridge.request(
+                "hunyuan", "upload_files", {"files": references}, task_id=task_id, timeout=120
+            )
+            if int(uploaded.get("uploaded") or 0) != len(references):
+                raise BridgeError("Hunyuan não confirmou todas as referências visuais suportadas.")
+            geometry = self.bridge.request(
                 "hunyuan",
-                "generate_3d",
-                {"prompt": proposal.model_3d_prompt, "timeout_ms": 600_000},
+                "generate_geometry",
+                {"prompt": prompt, "timeout_ms": 600_000},
                 task_id=task_id,
                 timeout=615,
             )
-            response_status = str(response.get("status", "ok")).strip().lower()
-            if response_status != "ok":
-                reason = str(response.get("error") or response.get("message") or "A geração 3D requer atenção.")
-                raise BridgeError(reason)
-            artifact_path = str(response.get("artifact_path") or "").strip()
-            artifact_url = str(response.get("artifact_url") or "").strip()
-            download_error = str(response.get("download_error") or "").strip()
-            if download_error and not artifact_path:
-                raise BridgeError("O modelo foi gerado, mas o download falhou: " + download_error)
-            if not artifact_path and not artifact_url:
-                raise BridgeError("Hunyuan3D concluiu sem expor um arquivo 3D para o Zenless.")
-            if artifact_path and Path(artifact_path).suffix.casefold() != ".glb":
-                raise BridgeError(
-                    f"O modelo foi baixado como {Path(artifact_path).suffix or 'formato desconhecido'}; "
-                    "a prévia integrada requer GLB."
-                )
-            context = {"hunyuan": response}
-            task = self.store.load_task(task_id) or {}
-            merged_context = dict(task.get("context") or {})
-            merged_context.update(context)
-            self.store.update_task(task_id, context_json=merged_context)
-            detail = json.dumps(
-                {
-                    "name": str(response.get("artifact_name") or "Ativo 3D disponível"),
-                    "path": str(response.get("artifact_path") or ""),
-                    "url": str(response.get("artifact_url") or ""),
-                    "download_error": str(response.get("download_error") or ""),
-                },
-                ensure_ascii=False,
+            geometry_path = self._validated_glb_artifact(geometry, "geometria")
+            geometry_asset = f"{task_id}-geometry-v{version}"
+            self.store.register_asset(
+                geometry_asset,
+                job_id=task_id,
+                name=Path(geometry_path).name,
+                kind="GLB",
+                path=Path(geometry_path),
+                mime="model/gltf-binary",
+                metadata={"phase": "geometry", "version": version, "references": len(references)},
             )
-            decision, note = self._wait_gate(
-                task_id,
-                "3d",
-                Stage.WAITING_3D_APPROVAL,
-                "Modelo 3D pronto; aguardando aprovação.",
-                detail,
-                cancel_event,
-            )
-            if decision != "approve":
-                raise OrchestratorError("Modelo 3D não aprovado: " + note)
+        if not geometry_path or not Path(geometry_path).is_file():
+            raise BridgeError("A etapa de textura/PBR exige uma geometria GLB local válida.")
+        texture_inputs = [geometry_path, *references]
+        uploaded_texture = self.bridge.request(
+            "hunyuan",
+            "upload_files",
+            {"files": texture_inputs[:max_images]},
+            task_id=task_id,
+            timeout=120,
+        )
+        if int(uploaded_texture.get("uploaded") or 0) != len(texture_inputs[:max_images]):
+            raise BridgeError("Hunyuan não confirmou os insumos da etapa de textura/PBR.")
+        textured = self.bridge.request(
+            "hunyuan",
+            "generate_texture",
+            {"prompt": prompt + "\nPreserve the approved geometry; generate final texture and PBR materials.", "timeout_ms": 600_000},
+            task_id=task_id,
+            timeout=615,
+        )
+        textured_path = self._validated_glb_artifact(textured, "textura/PBR")
+        textured_asset = f"{task_id}-textured-v{version}"
+        self.store.register_asset(
+            textured_asset,
+            job_id=task_id,
+            name=Path(textured_path).name,
+            kind="GLB",
+            path=Path(textured_path),
+            mime="model/gltf-binary",
+            metadata={"phase": "texture", "version": version, "references": len(references)},
+        )
+        response = {
+            "version": version,
+            "status": "READY",
+            "capabilities": caps,
+            "reference_count": len(references),
+            "geometry_path": geometry_path,
+            "texture_path": textured_path,
+            "asset_id": textured_asset,
+            "name": Path(textured_path).name,
+            "path": textured_path,
+        }
+        self.store.update_context_section(task_id, "model", response)
+        return response
+
+    @staticmethod
+    def _validated_glb_artifact(response: dict[str, Any], phase: str) -> str:
+        if str(response.get("status", "ok")).casefold() != "ok":
+            raise BridgeError(str(response.get("error") or f"Hunyuan falhou na etapa {phase}."))
+        path_text = str(response.get("artifact_path") or "").strip()
+        if not path_text:
+            error = str(response.get("download_error") or "").strip()
+            raise BridgeError(error or f"Hunyuan concluiu {phase} sem arquivo GLB local.")
+        path = Path(path_text).resolve()
+        if path.suffix.casefold() != ".glb":
+            raise BridgeError(f"Hunyuan retornou {path.suffix or 'formato desconhecido'} em {phase}; GLB é obrigatório.")
+        try:
+            load_glb(path)
+        except GLBError as exc:
+            raise BridgeError(f"GLB inválido em {phase}: {exc}") from exc
+        return str(path)
 
     def _apply_actions(
         self,
@@ -668,45 +1059,121 @@ class ZenlessOrchestrator:
                 raise OrchestratorError(
                     f"Ação {action.tool} bloqueada na aplicação: {'; '.join(decision.reasons)}"
                 )
-            arguments = self._prepare_arguments(action.tool, action.arguments)
-            if action.tool == "multi_edit":
-                self._snapshot_script(task_id, studio_id, arguments, run_dir, index)
-            self._emit(
-                task_id,
-                Stage.APPLYING,
-                f"StudioMCP aplicando {index}/{len(actions)}: {action.tool}.",
-                detail=action.reason,
-            )
-            result = self.studio.call_tool(action.tool, arguments, studio_id=studio_id, timeout=240)
-            item = {
+            operation_payload = {
                 "tool": action.tool,
-                "arguments": arguments,
-                "is_error": result.is_error,
-                "result": result.compact(24_000),
+                "arguments": action.arguments,
+                "reason": action.reason,
             }
-            evidence.append(item)
-            if result.is_error:
-                raise OrchestratorError(f"StudioMCP falhou em {action.tool}: {result.compact(6000)}")
-            if action.tool == "multi_edit":
-                evidence.extend(self._verify_script(task_id, studio_id, arguments))
+            digest = hashlib.sha256(
+                json.dumps(operation_payload, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
+            ).hexdigest()
+            operation_id = f"mutation:{task_id}:{digest}"
+            operation = self.store.claim_operation(operation_id, "studio_mutation", task_id)
+            if not operation.get("claimed"):
+                state = str(operation.get("state") or "")
+                if state == "complete":
+                    response = operation.get("response")
+                    prior = response.get("evidence") if isinstance(response, dict) else None
+                    if isinstance(prior, list):
+                        evidence.extend(item for item in prior if isinstance(item, dict))
+                    self._emit(
+                        task_id,
+                        Stage.APPLYING,
+                        f"Mutação {index}/{len(actions)} já confirmada; replay idempotente evitado.",
+                        "success",
+                        operation_id,
+                    )
+                    continue
+                raise OrchestratorError(
+                    f"RECOVERY_REQUIRED: a operação {operation_id} ficou em estado {state or 'desconhecido'}; "
+                    "Zenless não repetirá uma escrita sem revisão humana."
+                )
+
+            operation_evidence: list[dict[str, Any]] = []
+            try:
+                arguments = self._prepare_arguments(action.tool, action.arguments)
+                expected_hash = str(action.arguments.get("_zenless_expected_sha256") or "")
+                before_hash = ""
+                if action.tool == "multi_edit":
+                    if not expected_hash:
+                        raise OrchestratorError("MUTATION_PRECONDITION_MISSING: multi_edit sem hash esperado.")
+                    source = self._read_script_source(studio_id, arguments)
+                    before_hash = self._source_hash(source)
+                    if before_hash != expected_hash:
+                        raise OrchestratorError(
+                            "STUDIO_CHANGED: o script foi alterado depois da proposta; a escrita foi bloqueada "
+                            f"(esperado {expected_hash[:12]}, atual {before_hash[:12]})."
+                        )
+                    self._snapshot_script(task_id, arguments, run_dir, index, source)
+                self._emit(
+                    task_id,
+                    Stage.APPLYING,
+                    f"StudioMCP aplicando {index}/{len(actions)}: {action.tool}.",
+                    detail=f"{action.reason}\noperation_id={operation_id}",
+                )
+                result = self.studio.call_tool(action.tool, arguments, studio_id=studio_id, timeout=240)
+                item = {
+                    "tool": action.tool,
+                    "arguments": arguments,
+                    "is_error": result.is_error,
+                    "result": result.compact(24_000),
+                    "operation_id": operation_id,
+                    "mutation_id": digest,
+                    "expected_sha256": expected_hash,
+                    "before_sha256": before_hash,
+                }
+                operation_evidence.append(item)
+                if result.is_error:
+                    raise OrchestratorError(f"StudioMCP falhou em {action.tool}: {result.compact(6000)}")
+                if action.tool == "multi_edit":
+                    operation_evidence.extend(
+                        self._verify_script(task_id, studio_id, arguments, expected_hash, operation_id)
+                    )
+                self.store.finish_operation(
+                    operation_id,
+                    "complete",
+                    {"evidence": operation_evidence, "completed_at": now_iso()},
+                )
+                evidence.extend(operation_evidence)
+            except Exception as exc:
+                self.store.finish_operation(
+                    operation_id,
+                    "failed",
+                    {"error": str(exc), "evidence": operation_evidence, "failed_at": now_iso()},
+                )
+                raise
         (run_dir / "apply-evidence.json").write_text(
             json.dumps(evidence, ensure_ascii=False, indent=2), encoding="utf-8"
         )
         return evidence
 
-    def _snapshot_script(
+    def _bind_mutation_preconditions(
         self,
         task_id: str,
         studio_id: str,
-        arguments: dict[str, Any],
-        run_dir: Path,
-        index: int,
+        actions: list[ProposalAction],
     ) -> None:
+        for action in actions:
+            if action.tool != "multi_edit":
+                continue
+            arguments = self._prepare_arguments(action.tool, action.arguments)
+            source = self._read_script_source(studio_id, arguments)
+            action.arguments["_zenless_expected_sha256"] = self._source_hash(source)
+            task = self.store.load_task(task_id) or {}
+            current_stage = Stage(str(task.get("stage") or Stage.REVIEWING.value))
+            self._emit(
+                task_id,
+                current_stage,
+                f"Pré-condição vinculada ao estado atual de {arguments.get('file_path', 'script')}.",
+                "success",
+            )
+
+    def _read_script_source(self, studio_id: str, arguments: dict[str, Any]) -> str:
         if arguments.get("className") or "script_read" not in self.studio.tools:
-            return
-        target = str(arguments.get("file_path", ""))
+            raise OrchestratorError("MUTATION_PRECONDITION_UNAVAILABLE: script_read é obrigatório antes de multi_edit.")
+        target = str(arguments.get("file_path", "")).strip()
         if not target:
-            return
+            raise OrchestratorError("multi_edit não informou file_path para snapshot e pré-condição.")
         result = self.studio.call_tool(
             "script_read",
             {"target_file": target, "should_read_entire_file": True},
@@ -714,9 +1181,24 @@ class ZenlessOrchestrator:
             timeout=90,
         )
         if result.is_error:
-            raise OrchestratorError(f"Não foi possível criar snapshot de {target}: {result.compact(3000)}")
+            raise OrchestratorError(f"Não foi possível reler {target}: {result.compact(3000)}")
+        return result.text
+
+    @staticmethod
+    def _source_hash(source: str) -> str:
+        return hashlib.sha256(source.encode("utf-8", "replace")).hexdigest()
+
+    def _snapshot_script(
+        self,
+        task_id: str,
+        arguments: dict[str, Any],
+        run_dir: Path,
+        index: int,
+        source: str,
+    ) -> None:
+        target = str(arguments.get("file_path", ""))
         safe_name = re.sub(r"[^A-Za-z0-9_.-]+", "_", target)[-100:] or "script"
-        (run_dir / f"before-{index:02d}-{safe_name}.luau.txt").write_text(result.text, encoding="utf-8")
+        (run_dir / f"before-{index:02d}-{safe_name}.luau.txt").write_text(source, encoding="utf-8")
         self._emit(task_id, Stage.APPLYING, f"Snapshot criado antes de editar {target}.", "success")
 
     def _verify_script(
@@ -724,30 +1206,44 @@ class ZenlessOrchestrator:
         task_id: str,
         studio_id: str,
         arguments: dict[str, Any],
+        expected_hash: str,
+        operation_id: str,
     ) -> list[dict[str, Any]]:
-        if "script_read" not in self.studio.tools:
-            return []
         target = str(arguments.get("file_path", ""))
-        result = self.studio.call_tool(
-            "script_read",
-            {"target_file": target, "should_read_entire_file": True},
-            studio_id=studio_id,
-            timeout=90,
-        )
-        if result.is_error:
-            raise OrchestratorError(f"A verificação pós-edição falhou para {target}: {result.compact(3000)}")
+        source = self._read_script_source(studio_id, arguments)
+        missing: list[str] = []
+        for edit in arguments.get("edits", []):
+            if not isinstance(edit, dict):
+                continue
+            replacement = str(edit.get("new_string") or "")
+            if replacement and replacement not in source:
+                missing.append(replacement[:160])
+        if missing:
+            raise OrchestratorError(
+                f"READ_BACK_MISMATCH: {target} não contém {len(missing)} substituição(ões) esperada(s)."
+            )
+        post_hash = self._source_hash(source)
+        if post_hash == expected_hash and any(
+            isinstance(edit, dict) and edit.get("old_string") != edit.get("new_string")
+            for edit in arguments.get("edits", [])
+        ):
+            raise OrchestratorError(f"READ_BACK_MISMATCH: {target} manteve o hash anterior após a edição.")
         self._emit(
             task_id,
             Stage.APPLYING,
             f"Fonte pós-edição relida: {target}.",
-            "warning" if result.is_error else "success",
+            "success",
         )
         return [
             {
                 "tool": "script_read",
                 "arguments": {"target_file": target},
-                "is_error": result.is_error,
-                "result": result.compact(24_000),
+                "is_error": False,
+                "result": source[:24_000],
+                "operation_id": operation_id,
+                "expected_sha256": expected_hash,
+                "post_sha256": post_hash,
+                "verified": True,
             }
         ]
 
@@ -813,7 +1309,7 @@ class ZenlessOrchestrator:
         console_output: str,
         source_evidence: list[dict[str, Any]],
     ) -> AgentProposal:
-        raw = self.bridge.send_prompt(
+        raw = self._send_agent_prompt(
             "chatgpt",
             repair_prompt(objective, proposal, console_output, source_evidence),
             task_id=task_id,
@@ -824,6 +1320,156 @@ class ZenlessOrchestrator:
         if errors:
             raise OrchestratorError("Correção bloqueada pela política: " + " | ".join(errors))
         return repair
+
+    def _final_review_and_repair(
+        self,
+        task_id: str,
+        objective: str,
+        context: dict[str, Any],
+        proposal: AgentProposal,
+        mutation_evidence: list[dict[str, Any]],
+        console_output: str,
+        options: TaskOptions,
+        cancel_event: threading.Event,
+        studio_id: str,
+    ) -> tuple[AgentProposal, list[dict[str, Any]], str]:
+        if not self.bridge.wait_for_provider("deepseek", timeout=2):
+            raise BridgeError("DeepSeek requer login para a revisão final independente obrigatória.")
+        revisions = 0
+        while True:
+            self._check_control(task_id, cancel_event)
+            self._emit(
+                task_id,
+                Stage.FINAL_REVIEW,
+                "DeepSeek revisando o estado final, read-back e QA reais.",
+            )
+            final_state = self._collect_final_state(studio_id, mutation_evidence)
+            latest_test = self.store.latest_test_run(task_id)
+            qa_result: dict[str, Any] = {
+                "automatic_enabled": options.automatic_play_test,
+                "latest_run": latest_test or {},
+                "studio_output": console_output[-24_000:],
+            }
+            warnings: list[str] = []
+            if not options.automatic_play_test:
+                warnings.append("Automatic QA was explicitly disabled; no test pass may be inferred.")
+            if self._console_has_errors(console_output):
+                warnings.append("The latest Studio output still contains an error marker.")
+            raw = self._send_agent_prompt(
+                "deepseek",
+                final_review_prompt(objective, final_state, mutation_evidence, qa_result, warnings),
+                task_id=task_id,
+            )
+            self.store.append_message(task_id, "DeepSeek", "final-reviewer", raw)
+            review = self._parse_review(raw)
+            self.store.update_task(task_id, final_review_json=review.to_dict())
+            if review.approved:
+                self._emit(
+                    task_id,
+                    Stage.FINAL_REVIEW,
+                    "Revisão final independente aprovada com evidências pós-mudança.",
+                    "success",
+                    review.summary,
+                )
+                return proposal, mutation_evidence, console_output
+            if review.verdict == "block":
+                raise TaskBlocked("DeepSeek bloqueou o estado final: " + review.summary)
+            if revisions >= options.max_revisions:
+                raise TaskBlocked("Revisão final não aprovou após o limite de correções: " + review.summary)
+            revisions += 1
+            self._emit(
+                task_id,
+                Stage.FIXING,
+                f"Preparando correção final {revisions}/{options.max_revisions}.",
+                "warning",
+                review.summary,
+            )
+            repair = self._request_revision(
+                task_id,
+                objective,
+                {**context, "final_state": final_state, "qa": qa_result},
+                proposal,
+                review,
+                "Corrija somente os problemas encontrados na revisão final.",
+            )
+            errors = validate_proposal(repair.actions, set(self.studio.tools))
+            if errors:
+                raise OrchestratorError("Correção final bloqueada pela política: " + " | ".join(errors))
+            repair, repair_review = self._review_and_revise(
+                task_id,
+                objective,
+                context,
+                repair,
+                mutation_evidence,
+                options,
+                cancel_event,
+                initial_review=False,
+            )
+            repair_actions = [action for action in repair.actions if not is_read_only(action.tool)]
+            if not repair_actions:
+                raise TaskBlocked("A correção final não propôs nenhuma ação verificável.")
+            self._bind_mutation_preconditions(task_id, studio_id, repair_actions)
+            self.store.update_task(
+                task_id,
+                proposal_json=repair.to_dict(),
+                review_json=repair_review.to_dict() if repair_review else {},
+            )
+            if options.require_approval:
+                decision, note = self._wait_gate(
+                    task_id,
+                    f"final-repair:{revisions}",
+                    Stage.WAITING_CHANGE_APPROVAL,
+                    f"Correção da revisão final {revisions} aguarda aprovação.",
+                    self._proposal_detail(repair, repair_review),
+                    cancel_event,
+                )
+                if decision != "approve":
+                    raise TaskBlocked("Correção final não aprovada: " + note)
+            self._emit(task_id, Stage.APPLYING, "Aplicando correção aprovada da revisão final.")
+            mutation_evidence.extend(self._apply_actions(task_id, studio_id, repair_actions))
+            proposal = repair
+            if options.automatic_play_test:
+                console_output = self._run_quality_test(
+                    task_id,
+                    studio_id,
+                    cancel_event,
+                    mutation_evidence,
+                    True,
+                )
+                if self._console_has_errors(console_output):
+                    raise TaskBlocked("O rerun após a correção final ainda retornou erros.")
+
+    def _collect_final_state(
+        self,
+        studio_id: str,
+        mutation_evidence: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        state: dict[str, Any] = {"captured_at": now_iso(), "studio_id": studio_id, "sources": {}}
+        if "get_studio_state" in self.studio.tools:
+            result = self.studio.call_tool("get_studio_state", {}, studio_id=studio_id, timeout=90)
+            state["studio_state"] = result.compact(18_000)
+        targets: set[str] = set()
+        for item in mutation_evidence:
+            raw_arguments = item.get("arguments")
+            arguments: dict[str, Any] = raw_arguments if isinstance(raw_arguments, dict) else {}
+            target = str(arguments.get("file_path") or arguments.get("target_file") or "").strip()
+            if target:
+                targets.add(target)
+        for target in sorted(targets)[:20]:
+            result = self.studio.call_tool(
+                "script_read",
+                {"target_file": target, "should_read_entire_file": True},
+                studio_id=studio_id,
+                timeout=90,
+            )
+            if result.is_error:
+                state["sources"][target] = {"error": result.compact(3000)}
+                continue
+            state["sources"][target] = {
+                "sha256": self._source_hash(result.text),
+                "source": result.text[:32_000],
+            }
+        return state
 
     def _wait_gate(
         self,
@@ -848,7 +1494,7 @@ class ZenlessOrchestrator:
                 self._gates.pop(key, None)
 
     def _prepare_arguments(self, tool_name: str, raw: dict[str, Any]) -> dict[str, Any]:
-        arguments = dict(raw)
+        arguments = {key: value for key, value in raw.items() if not str(key).startswith("_zenless_")}
         arguments.pop("studio_id", None)
         tool = self.studio.tools.get(tool_name)
         if tool is None:
