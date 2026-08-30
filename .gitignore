@@ -8,6 +8,6 @@ __pycache__/
 *.db
 *.db-shm
 *.db-wal
-build/
+/build/
 dist/
 artifacts/

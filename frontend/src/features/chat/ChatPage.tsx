@@ -6,10 +6,27 @@ import { ApiError } from '@/services/api/realApi';
 import { frontendDiagnostics } from '@/services/diagnostics';
 import { Tooltip } from '@/components/Tooltip';
 import { DEFAULT_TASK_OPTIONS, type ChatMessage, type ProviderId, type TaskOptions } from '@/types';
+
+import { ChatActivityGroup } from './ChatActivityGroup';
+import { ChatChangeCard } from './ChatChangeCard';
+import { ChatImageGallery } from './ChatImageGallery';
+import { ChatModelCard } from './ChatModelCard';
+import { ChatTestCard } from './ChatTestCard';
+import { ChatErrorCard } from './ChatErrorCard';
+
 const TaskOptionsPanel = lazy(() => import('./TaskOptionsPanel').then((m) => ({ default: m.TaskOptionsPanel })));
 
 export function ChatPage() {
   const messages = useStore((s) => s.messages);
+  const activities = useStore((s) => s.activities);
+  const artifacts = useStore((s) => s.artifacts);
+  const views = useStore((s) => s.views);
+  const conceptVersion = useStore((s) => s.conceptVersion);
+  const modelInfo = useStore((s) => s.modelInfo);
+  const testCases = useStore((s) => s.testCases);
+  const testFailures = useStore((s) => s.testFailures);
+  const diagnostics = useStore((s) => s.diagnostics);
+
   const streamingMessageId = useStore((s) => s.streamingMessageId);
   const streamingContent = useStore((s) => s.streamingContent);
   const addMessage = useStore((s) => s.addMessage);
@@ -20,6 +37,7 @@ export function ChatPage() {
   const setCurrentJobId = useStore((s) => s.setCurrentJobId);
   const setConnections = useStore((s) => s.setConnections);
   const setAgents = useStore((s) => s.setAgents);
+  const setActivePage = useStore((s) => s.setActivePage);
 
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
@@ -34,7 +52,7 @@ export function ChatPage() {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [messages, streamingContent]);
+  }, [messages, streamingContent, activities, artifacts]);
 
   const handleSend = async () => {
     const content = input.trim();
@@ -104,28 +122,204 @@ export function ChatPage() {
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
+  // Filter activities and artifacts relevant to active job
+  const jobActivities = activities.filter((a) => !currentJobId || !a.jobId || a.jobId === currentJobId);
+  const imageArtifacts = artifacts.filter((a) => a.type === 'IMAGE' && (!currentJobId || !a.jobId || a.jobId === currentJobId));
+  const modelArtifacts = artifacts.filter((a) => a.type === 'MODEL_3D' && (!currentJobId || !a.jobId || a.jobId === currentJobId));
+  const diffArtifacts = artifacts.filter((a) => a.type === 'DIFF' && (!currentJobId || !a.jobId || a.jobId === currentJobId));
+  const criticalErrors = diagnostics.filter((d) => d.severity === 'critical' || d.severity === 'error');
+
+  // Domain Action Handlers
+  const handleApproveChanges = async (jobId: string) => {
+    await getApi().approveChanges(jobId);
+  };
+  const handleRejectChanges = async (jobId: string) => {
+    await getApi().approveChanges(jobId, false);
+  };
+  const handleRequestRevision = async (jobId: string, feedback: string) => {
+    await getApi().editChanges(jobId, 'feedback', feedback);
+  };
+
+  const handleApproveVisual = async (jobId: string) => {
+    await getApi().approveVisual(jobId);
+  };
+  const handleRegenerateVisual = async (jobId: string) => {
+    await getApi().regenerateVisual(jobId);
+  };
+
+  const handleApproveModel = async (jobId: string) => {
+    await getApi().approveModel(jobId);
+  };
+  const handleRegenerateGeometry = async (jobId: string) => {
+    await getApi().regenerateGeometry(jobId);
+  };
+  const handleRegenerateTexture = async (jobId: string) => {
+    await getApi().regenerateTexture(jobId);
+  };
+
+  // Deep Link Handlers
+  const openBuildPage = (jobId: string) => {
+    setCurrentJobId(jobId);
+    setActivePage('build');
+  };
+  const openVisualPage = (jobId: string) => {
+    setCurrentJobId(jobId);
+    setActivePage('visual');
+  };
+  const openTestPage = (jobId: string) => {
+    setCurrentJobId(jobId);
+    setActivePage('test');
+  };
+  const openSettingsPage = () => {
+    setActivePage('settings');
+  };
+
   return (
     <div className="flex h-full">
       <div className="flex-1 flex flex-col min-w-0">
         <div ref={scrollRef} className="flex-1 overflow-y-auto scrollbar-zen">
-          <div className="max-w-3xl mx-auto px-6 py-4 space-y-1">
-            {messages.length === 0 && !streamingMessageId && (
+          <div className="max-w-3xl mx-auto px-6 py-4 space-y-3">
+            {messages.length === 0 && !streamingMessageId && jobActivities.length === 0 && (
               <div className="flex items-center justify-center h-full text-xs text-ink-400 uppercase tracking-wider pt-20">
                 Start a conversation
               </div>
             )}
+
+            {/* Chat Messages */}
             {messages.map((msg) => (
               <ChatMessageRow key={msg.id} message={msg} logging={loggingProvider === msg.action?.provider} onLogin={handleProviderLogin} />
             ))}
+
             {streamingMessageId && (
               <ChatMessageRow message={{ id: streamingMessageId, role: 'zenless', content: streamingContent + '▊', timestamp: Date.now() }} streaming onLogin={handleProviderLogin} />
             )}
+
+            {/* Activities Timeline Group */}
+            {jobActivities.length > 0 && (
+              <ChatActivityGroup
+                activities={jobActivities}
+                onOpenContext={() => currentJobId && openBuildPage(currentJobId)}
+              />
+            )}
+
+            {/* Code Change Artifacts */}
+            {diffArtifacts.map((art) => (
+              <ChatChangeCard
+                key={art.id}
+                artifact={art}
+                onApprove={handleApproveChanges}
+                onReject={handleRejectChanges}
+                onRequestRevision={handleRequestRevision}
+                onOpenDiff={openBuildPage}
+              />
+            ))}
+
+            {/* Visual Concept 6-View Gallery */}
+            {(views.length > 0 || imageArtifacts.length > 0) && (
+              <ChatImageGallery
+                views={views}
+                conceptVersion={conceptVersion}
+                jobId={currentJobId ?? undefined}
+                onApproveVisual={handleApproveVisual}
+                onRegenerateVisual={handleRegenerateVisual}
+                onOpenVisualPage={openVisualPage}
+              />
+            )}
+
+            {/* 3D Model Artifact Card */}
+            {(modelInfo.modelUrl || modelArtifacts.length > 0) && (
+              <ChatModelCard
+                artifact={modelArtifacts[0] || { id: 'model_art', type: 'MODEL_3D', name: modelInfo.filename || '3D Model', state: modelInfo.state, jobId: currentJobId ?? undefined, createdAt: Date.now() }}
+                modelInfo={modelInfo}
+                onApproveModel={handleApproveModel}
+                onRegenerateGeometry={handleRegenerateGeometry}
+                onRegenerateTexture={handleRegenerateTexture}
+                onOpenModelViewer={openVisualPage}
+              />
+            )}
+
+            {/* Test Results Card */}
+            {(testCases.length > 0 || testFailures.length > 0) && (
+              <ChatTestCard
+                jobId={currentJobId ?? undefined}
+                testCases={testCases}
+                failures={testFailures}
+                onOpenTestPage={openTestPage}
+              />
+            )}
+
+            {/* Critical Diagnostics / Error Card */}
+            {criticalErrors.length > 0 && (
+              <ChatErrorCard
+                source={criticalErrors[0].source}
+                message={criticalErrors[0].message}
+                detail={criticalErrors[0].probableCause}
+                onOpenSettings={openSettingsPage}
+              />
+            )}
           </div>
         </div>
+
+        {/* Composer Controls & Input */}
         <div className="shrink-0 border-t border-ink-600 px-6 py-3">
-          <div className="max-w-3xl mx-auto">
+          <div className="max-w-3xl mx-auto space-y-2">
+            {/* Control Center Toolbar */}
+            <div className="flex items-center justify-between font-mono text-2xs">
+              <div className="flex flex-wrap items-center gap-2">
+                <Tooltip content="Research mode for official docs">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const next = options.research === 'AUTO' ? 'ON' : options.research === 'ON' ? 'OFF' : 'AUTO';
+                      setOptions({ ...options, research: next });
+                    }}
+                    className="px-2 py-0.5 bg-ink-900 text-ink-200 border border-ink-700 rounded hover:text-ink-0 hover:bg-ink-800 transition-colors uppercase"
+                  >
+                    Research: <span className="font-bold text-ink-50">{options.research ?? 'AUTO'}</span>
+                  </button>
+                </Tooltip>
+
+                <Tooltip content="AI Orchestration Effort Depth">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const nexts: Record<string, TaskOptions['effort']> = { AUTO: 'MIN', MIN: 'MED', MED: 'MAX', MAX: 'AUTO' };
+                      setOptions({ ...options, effort: nexts[options.effort ?? 'AUTO'] });
+                    }}
+                    className="px-2 py-0.5 bg-ink-900 text-ink-200 border border-ink-700 rounded hover:text-ink-0 hover:bg-ink-800 transition-colors uppercase"
+                  >
+                    Effort: <span className="font-bold text-ink-50">{options.effort ?? 'AUTO'}</span>
+                  </button>
+                </Tooltip>
+
+                <Tooltip content="Context Scope (Project History vs Isolated Temp)">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setOptions({ ...options, chatMode: options.chatMode === 'TEMP' ? 'PROJECT' : 'TEMP' });
+                    }}
+                    className="px-2 py-0.5 bg-ink-900 text-ink-200 border border-ink-700 rounded hover:text-ink-0 hover:bg-ink-800 transition-colors uppercase"
+                  >
+                    Mode: <span className="font-bold text-ink-50">{options.chatMode ?? 'PROJECT'}</span>
+                  </button>
+                </Tooltip>
+
+                <Tooltip content="Approval policy for code & asset changes">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setOptions({ ...options, approval: !options.approval });
+                    }}
+                    className="px-2 py-0.5 bg-ink-900 text-ink-200 border border-ink-700 rounded hover:text-ink-0 hover:bg-ink-800 transition-colors uppercase"
+                  >
+                    Approval: <span className="font-bold text-ink-50">{options.approval ? 'MANUAL' : 'AUTO'}</span>
+                  </button>
+                </Tooltip>
+              </div>
+            </div>
+
             {attachments.length > 0 && (
-              <div className="flex flex-wrap gap-1.5 mb-2">
+              <div className="flex flex-wrap gap-1.5">
                 {attachments.map((att) => (
                   <span key={att.id} className="inline-flex items-center gap-1.5 px-2 h-6 text-2xs text-ink-100 bg-ink-800 border border-ink-600">
                     <Paperclip size={10} />

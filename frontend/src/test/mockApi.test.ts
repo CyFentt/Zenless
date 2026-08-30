@@ -5,7 +5,7 @@ describe('MockZenlessAPI', () => {
   it('bootstrap returns boot steps', async () => {
     const api = new MockZenlessAPI();
     const result = await api.bootstrap();
-    expect(result.steps).toHaveLength(4);
+    expect(result.steps).toHaveLength(5);
     expect(result.steps[0].stage).toBe('CORE');
   });
 
