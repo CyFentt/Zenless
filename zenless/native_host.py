@@ -58,7 +58,7 @@ def run_native_host(runtime_file: Path) -> int:
         host = str(runtime["host"])
         port = int(runtime["port"])
         token = str(runtime["token"])
-    except OSError, KeyError, TypeError, ValueError, json.JSONDecodeError:
+    except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
         error = (
             make_envelope(
                 "agent.error",
@@ -85,7 +85,7 @@ def run_native_host(runtime_file: Path) -> int:
                         message = websocket.recv()
                         encoded = message if isinstance(message, bytes) else message.encode("utf-8")
                         write_native_message(target, encoded, write_lock)
-                except ConnectionClosed, OSError, NativeHostError:
+                except (ConnectionClosed, OSError, NativeHostError):
                     pass
                 finally:
                     stopped.set()
@@ -102,7 +102,7 @@ def run_native_host(runtime_file: Path) -> int:
             websocket.close(1000, "Native host closed")
             reader.join(timeout=2)
         return 0
-    except OSError, ConnectionClosed, TimeoutError, ProtocolError, NativeHostError:
+    except (OSError, ConnectionClosed, TimeoutError, ProtocolError, NativeHostError):
         return 4
 
 

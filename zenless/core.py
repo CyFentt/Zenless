@@ -64,7 +64,7 @@ class _UnavailableStudio:
 def _milliseconds(value: str) -> int:
     try:
         return int(datetime.fromisoformat(value).timestamp() * 1000)
-    except TypeError, ValueError:
+    except (TypeError, ValueError):
         return int(time.time() * 1000)
 
 
@@ -973,7 +973,7 @@ class ZenlessCore:
     def _register_model_from_event(self, event: PipelineEvent) -> None:
         try:
             payload = json.loads(event.detail)
-        except TypeError, json.JSONDecodeError:
+        except (TypeError, json.JSONDecodeError):
             payload = {}
         path_text = str(payload.get("path") or "") if isinstance(payload, dict) else ""
         if not path_text:

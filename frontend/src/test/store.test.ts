@@ -63,10 +63,10 @@ describe('Store', () => {
   it('upserts agent status events without an initial snapshot', () => {
     useStore.setState({ agents: [] });
     handleEvent({ type: 'AGENT_STATUS_CHANGED', data: { agent: 'chatgpt', status: 'LOGIN' } });
-    expect(useStore.getState().agents.find((agent) => agent.id === 'chatgpt')).toMatchObject({ name: 'Builder', status: 'LOGIN' });
+    expect(useStore.getState().agents.find((agent) => agent.id === 'chatgpt')).toMatchObject({ name: 'ChatGPT', status: 'LOGIN' });
     handleEvent({ type: 'AGENT_STATUS_CHANGED', data: { agent: 'chatgpt', status: 'READY' } });
     expect(useStore.getState().agents.filter((agent) => agent.id === 'chatgpt')).toEqual([
-      expect.objectContaining({ name: 'Builder', status: 'READY' }),
+      expect.objectContaining({ name: 'ChatGPT', status: 'READY' }),
     ]);
   });
 

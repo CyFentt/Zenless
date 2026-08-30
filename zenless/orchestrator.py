@@ -948,7 +948,7 @@ class ZenlessOrchestrator:
             )
         try:
             max_images = max(1, min(6, int(caps.get("max_image_inputs") or 1)))
-        except TypeError, ValueError:
+        except (TypeError, ValueError):
             max_images = 1
         references = references[:max_images]
         self._emit(

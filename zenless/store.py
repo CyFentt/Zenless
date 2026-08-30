@@ -267,7 +267,7 @@ class SQLiteStore:
                 raise KeyError(f"Task not found: {task_id}")
             try:
                 context = json.loads(row["context_json"])
-            except TypeError, json.JSONDecodeError:
+            except (TypeError, json.JSONDecodeError):
                 context = {}
             if not isinstance(context, dict):
                 context = {}
@@ -629,6 +629,6 @@ class SQLiteStore:
         raw = data.pop(source, "{}")
         try:
             data[target] = json.loads(raw)
-        except TypeError, json.JSONDecodeError:
+        except (TypeError, json.JSONDecodeError):
             data[target] = {}
         return data

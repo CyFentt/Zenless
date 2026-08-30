@@ -183,7 +183,7 @@ class TaskOptions:
         def bounded_int(key: str, default: int) -> int:
             try:
                 return max(1, min(5, int(raw.get(key, default))))
-            except TypeError, ValueError:
+            except (TypeError, ValueError):
                 return default
 
         create_3d_asset = bool(raw.get("Create 3D Asset", True))
@@ -206,7 +206,7 @@ class TaskOptions:
         def bounded_int(key: str, default: int) -> int:
             try:
                 return max(1, min(5, int(source.get(key, default))))
-            except TypeError, ValueError:
+            except (TypeError, ValueError):
                 return default
 
         create_3d_asset = bool(source.get("create3D", True))
@@ -296,7 +296,7 @@ class ReviewResult:
     def from_dict(cls, raw: dict[str, Any], raw_text: str = "") -> "ReviewResult":
         try:
             confidence = max(0.0, min(1.0, float(raw.get("confidence", 0.0))))
-        except TypeError, ValueError:
+        except (TypeError, ValueError):
             confidence = 0.0
         return cls(
             verdict=str(raw.get("verdict", "revise")).strip().lower(),

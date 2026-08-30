@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 import tempfile
 import threading
 import unittest
@@ -49,6 +50,7 @@ class ProviderHandler(BaseHTTPRequestHandler):
         return
 
 
+@unittest.skipUnless(sys.platform == "win32", "WebView2 host requires Windows")
 class WebView2BrowserIntegrationTests(unittest.TestCase):
     def test_provider_round_trip_and_clean_restart(self) -> None:
         server = ThreadingHTTPServer(("127.0.0.1", 0), ProviderHandler)
