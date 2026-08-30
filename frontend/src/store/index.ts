@@ -5,28 +5,38 @@ import type {
   Asset,
   BootStep,
   ChangedFile,
+  ChatActivity,
+  ChatArtifact,
   ChatMessage,
   ConnectionInfo,
   ContextItem,
   Diagnostic,
+  EffortLevel,
+  ChatMode,
   Job,
   ModelInfo,
+  ProviderDescriptor,
+  ProviderId,
+  ReadinessStateInfo,
   Settings,
   StudioNode,
   StudioState,
+  StorageInfo,
   TestLog,
   TestCaseResult,
   TestFailure,
   TestState,
+  ToolDescriptor,
   ViewTile,
   SocketStatus,
 } from '@/types';
+import { AGENT_NAMES } from '@/types';
 
 const CANONICAL_AGENTS: AgentInfo[] = [
-  { id: 'chatgpt', name: 'Builder', status: 'CONNECTING' },
-  { id: 'deepseek', name: 'Reviewer', status: 'CONNECTING' },
-  { id: 'hunyuan', name: '3D Generator', status: 'CONNECTING' },
-  { id: 'studio', name: 'Studio', status: 'CONNECTING' },
+  { id: 'chatgpt', name: 'ChatGPT', status: 'CONNECTING' },
+  { id: 'deepseek', name: 'DeepSeek', status: 'CONNECTING' },
+  { id: 'hunyuan', name: 'Hunyuan', status: 'CONNECTING' },
+  { id: 'studio', name: 'Roblox Studio', status: 'CONNECTING' },
 ];
 
 function normalizeAgents(agents: AgentInfo[], connections: ConnectionInfo): AgentInfo[] {
@@ -34,7 +44,7 @@ function normalizeAgents(agents: AgentInfo[], connections: ConnectionInfo): Agen
     ...canonical,
     status: connections[canonical.id],
     ...agents.find((agent) => agent.id === canonical.id),
-    name: canonical.name,
+    name: AGENT_NAMES[canonical.id],
   }));
 }
 
@@ -55,10 +65,19 @@ interface AppState {
   socketStatus: SocketStatus;
   connections: ConnectionInfo;
   agents: AgentInfo[];
+  providers: ProviderDescriptor[];
+  setProviders: (p: ProviderDescriptor[]) => void;
+  upsertProvider: (id: ProviderId, patch: Partial<ProviderDescriptor>) => void;
   jobs: Job[];
   currentJobId: string | null;
   setCurrentJobId: (id: string | null) => void;
   messages: ChatMessage[];
+  activities: ChatActivity[];
+  artifacts: ChatArtifact[];
+  addActivity: (a: ChatActivity) => void;
+  updateActivity: (id: string, patch: Partial<ChatActivity>) => void;
+  addArtifact: (a: ChatArtifact) => void;
+  updateArtifact: (id: string, patch: Partial<ChatArtifact>) => void;
   streamingMessageId: string | null;
   streamingContent: string;
   contextItems: ContextItem[];
@@ -85,6 +104,18 @@ interface AppState {
   setLogFilter: (f: string) => void;
   settings: Settings | null;
   diagnostics: Diagnostic[];
+  readiness: ReadinessStateInfo | null;
+  setReadiness: (r: ReadinessStateInfo) => void;
+  loginStates: Record<string, string>;
+  setLoginState: (provider: ProviderId, state: string) => void;
+  effort: EffortLevel;
+  setEffort: (e: EffortLevel) => void;
+  chatMode: ChatMode;
+  setChatMode: (m: ChatMode) => void;
+  tools: ToolDescriptor[];
+  setTools: (t: ToolDescriptor[]) => void;
+  storage: StorageInfo | null;
+  setStorage: (s: StorageInfo) => void;
   setBackendReady: (ready: boolean) => void;
   setRuntimeHydrated: (hydrated: boolean) => void;
   setBootError: (error: string) => void;
@@ -143,12 +174,38 @@ export const useStore = create<AppState>((set) => ({
     studio: 'OFF',
   },
   agents: CANONICAL_AGENTS,
+  providers: [],
+  setProviders: (providers) => set({ providers }),
+  upsertProvider: (id, patch) => set((state) => ({
+    providers: state.providers.some((p) => p.id === id)
+      ? state.providers.map((p) => (p.id === id ? { ...p, ...patch } : p))
+      : [...state.providers, { id, name: id, role: 'BUILDER', status: 'OFF', ...patch }],
+  })),
 
   jobs: [],
   currentJobId: null,
   setCurrentJobId: (id) => set({ currentJobId: id }),
 
   messages: [],
+  activities: [],
+  artifacts: [],
+  addActivity: (a) => set((state) => ({
+    activities: state.activities.some((x) => x.id === a.id)
+      ? state.activities.map((x) => (x.id === a.id ? { ...x, ...a } : x))
+      : [...state.activities, a],
+  })),
+  updateActivity: (id, patch) => set((state) => ({
+    activities: state.activities.map((a) => (a.id === id ? { ...a, ...patch } : a)),
+  })),
+  addArtifact: (a) => set((state) => ({
+    artifacts: state.artifacts.some((x) => x.id === a.id)
+      ? state.artifacts.map((x) => (x.id === a.id ? { ...x, ...a } : x))
+      : [...state.artifacts, a],
+  })),
+  updateArtifact: (id, patch) => set((state) => ({
+    artifacts: state.artifacts.map((a) => (a.id === id ? { ...a, ...patch } : a)),
+  })),
+
   streamingMessageId: null,
   streamingContent: '',
 
@@ -185,6 +242,19 @@ export const useStore = create<AppState>((set) => ({
 
   diagnostics: [],
 
+  readiness: null,
+  setReadiness: (readiness) => set({ readiness }),
+  loginStates: {},
+  setLoginState: (provider, state) => set((s) => ({ loginStates: { ...s.loginStates, [provider]: state } })),
+  effort: 'AUTO',
+  setEffort: (effort) => set({ effort }),
+  chatMode: 'PROJECT',
+  setChatMode: (chatMode) => set({ chatMode }),
+  tools: [],
+  setTools: (tools) => set({ tools }),
+  storage: null,
+  setStorage: (storage) => set({ storage }),
+
   setBackendReady: (backendReady) => set((state) => ({ backendReady, booted: backendReady && state.runtimeHydrated })),
   setRuntimeHydrated: (runtimeHydrated) => set((state) => ({ runtimeHydrated, booted: runtimeHydrated && state.backendReady })),
   setBootError: (bootError) => set({ bootError }),
@@ -201,7 +271,7 @@ export const useStore = create<AppState>((set) => ({
         ? state.agents.map((agent) => (agent.id === id ? { ...agent, ...patch, id } : agent))
         : [...state.agents, { ...CANONICAL_AGENTS.find((agent) => agent.id === id)!, ...patch, id }],
       state.connections,
-    ).map((agent) => (agent.id === id ? { ...agent, ...patch, id, name: CANONICAL_AGENTS.find((item) => item.id === id)!.name } : agent)),
+    ).map((agent) => (agent.id === id ? { ...agent, ...patch, id, name: AGENT_NAMES[id] } : agent)),
   })),
   setJobs: (jobs) => set({ jobs: [...new Map(jobs.map((job) => [job.id, job])).values()] }),
   addJob: (job) => set((state) => ({ jobs: [job, ...state.jobs.filter((item) => item.id !== job.id)] })),

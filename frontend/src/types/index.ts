@@ -4,6 +4,8 @@ export type SocketStatus = "CONNECTING" | "CONNECTED" | "RECONNECTING" | "DISCON
 export type AgentId = "chatgpt" | "deepseek" | "hunyuan" | "studio";
 export type ProviderId = Extract<AgentId, "chatgpt" | "deepseek" | "hunyuan">;
 
+export type ProviderRole = "BUILDER" | "REVIEWER" | "VISUAL" | "THREED";
+
 export interface AgentInfo {
   id: AgentId;
   name: string;
@@ -13,6 +15,26 @@ export interface AgentInfo {
   version?: string;
   quality?: string;
 }
+
+export const PROVIDER_NAMES: Record<ProviderId, string> = {
+  chatgpt: "ChatGPT",
+  deepseek: "DeepSeek",
+  hunyuan: "Hunyuan",
+};
+
+export const AGENT_NAMES: Record<AgentId, string> = {
+  chatgpt: "ChatGPT",
+  deepseek: "DeepSeek",
+  hunyuan: "Hunyuan",
+  studio: "Roblox Studio",
+};
+
+export const AGENT_ROLES: Record<AgentId, string> = {
+  chatgpt: "BUILDER",
+  deepseek: "REVIEWER",
+  hunyuan: "3D GENERATOR",
+  studio: "EDITOR",
+};
 
 export type PipelineStage =
   | "NEW"
@@ -82,6 +104,9 @@ export interface Job {
   maxFixAttempts?: number;
 }
 
+export type EffortLevel = "AUTO" | "MIN" | "MED" | "MAX";
+export type ChatMode = "PROJECT" | "TEMP";
+
 export interface TaskOptions {
   visualFirst: boolean;
   create3D: boolean;
@@ -92,6 +117,9 @@ export interface TaskOptions {
   risk: "low" | "medium" | "high";
   revisions: number;
   fixAttempts: number;
+  effort?: EffortLevel;
+  research?: "AUTO" | "ON" | "OFF";
+  chatMode?: ChatMode;
 }
 
 export const DEFAULT_TASK_OPTIONS: TaskOptions = {
@@ -104,6 +132,9 @@ export const DEFAULT_TASK_OPTIONS: TaskOptions = {
   risk: "medium",
   revisions: 3,
   fixAttempts: 3,
+  effort: "AUTO",
+  research: "AUTO",
+  chatMode: "PROJECT",
 };
 
 export type ChatRole = "user" | "zenless" | "system";
@@ -122,6 +153,9 @@ export interface ChatMessage {
   jobId?: string;
   attachments?: ChatAttachment[];
   action?: ChatAction;
+  artifact?: ChatArtifact;
+  activity?: ChatActivity;
+  error?: ChatError;
 }
 
 export interface ChatAttachment {
@@ -131,6 +165,60 @@ export interface ChatAttachment {
   size?: number;
   mime?: string;
   previewUrl?: string;
+  state?: "READY" | "EXTRACTING" | "ROUTING" | "UNSUPPORTED" | "FAILED" | "PREPARING";
+}
+
+export type ChatArtifactType = "IMAGE" | "MODEL_3D" | "FILE" | "DIFF" | "REPORT";
+export type ChatArtifactState = "GENERATING" | "READY" | "APPROVED" | "REJECTED" | "FAILED";
+
+export interface ChatArtifact {
+  id: string;
+  jobId?: string;
+  messageId?: string;
+  type: ChatArtifactType;
+  name: string;
+  mime?: string;
+  size?: number;
+  state: ChatArtifactState;
+  previewUrl?: string;
+  contentUrl?: string;
+  modelUrl?: string;
+  metadata?: {
+    version?: number;
+    views?: string[];
+    risk?: string;
+    reviewer?: string;
+    decision?: string;
+    fileCount?: number;
+    [key: string]: unknown;
+  };
+  actions?: string[];
+  createdAt: number;
+}
+
+export type ChatActivityStatus = "QUEUED" | "RUNNING" | "DONE" | "WARNING" | "FAILED";
+export type ChatActivityPhase = "CONTEXT" | "PLAN" | "BUILD" | "REVIEW" | "APPLY" | "TEST" | "FINAL" | "RESEARCH" | "CONCEPT" | "THREED";
+
+export interface ChatActivity {
+  id: string;
+  jobId?: string;
+  providerId?: AgentId;
+  role?: string;
+  phase: ChatActivityPhase;
+  status: ChatActivityStatus;
+  title: string;
+  target?: string;
+  step?: number;
+  totalSteps?: number;
+  detail?: string;
+  timestamp: number;
+}
+
+export interface ChatError {
+  source: string;
+  message: string;
+  detail?: string;
+  retryable?: boolean;
 }
 
 export type ContextItemType = "Script" | "Module" | "Remote" | "Local" | "Service";
@@ -223,7 +311,7 @@ export interface Asset {
   conceptVersion?: number;
 }
 
-export type StudioState = "ONLINE" | "OFFLINE" | "CONNECTING";
+export type StudioState = "ONLINE" | "OFFLINE" | "CONNECTING" | "SEARCHING" | "SETUP_REQUIRED" | "SELECT_REQUIRED" | "ERROR";
 
 export interface StudioNode {
   id: string;
@@ -356,6 +444,81 @@ export interface BootStep {
   state: BootState;
 }
 
+export type ReadinessStepState =
+  | "CHECKING"
+  | "READY"
+  | "LOGIN_REQUIRED"
+  | "NOT_FOUND"
+  | "SETUP_REQUIRED"
+  | "SELECT_REQUIRED"
+  | "ERROR"
+  | "OPTIONAL";
+
+export interface ReadinessStep {
+  id: string;
+  label: string;
+  providerId?: ProviderId;
+  required: boolean;
+  state: ReadinessStepState;
+  detail?: string;
+}
+
+export type ReadinessState = "CHECKING" | "READY" | "ACTION_REQUIRED" | "DEGRADED";
+
+export interface ReadinessStateInfo {
+  state: ReadinessState;
+  steps: ReadinessStep[];
+}
+
+export interface ProviderCapabilities {
+  reasoning?: { supported: boolean; levels?: string[] };
+  search?: { supported: boolean };
+  files?: { supported: boolean; accepted?: string[]; maxCount?: number };
+}
+
+export interface ProviderMode {
+  id: string;
+  label: string;
+  capabilities: ProviderCapabilities;
+}
+
+export interface ProviderModel {
+  id: string;
+  label: string;
+  available?: boolean;
+}
+
+export interface ProviderDescriptor {
+  id: ProviderId;
+  name: string;
+  role: ProviderRole;
+  status: ConnectionStatus;
+  model?: string;
+  mode?: string;
+  modes?: ProviderMode[];
+  models?: ProviderModel[];
+  capabilities?: ProviderCapabilities;
+  verified?: "VERIFIED" | "BETA" | "EXPERIMENTAL" | "UNVERIFIED";
+  loginState?: "IDLE" | "OPENING" | "WAITING" | "VERIFYING" | "READY";
+}
+
+export interface ToolDescriptor {
+  id: string;
+  name: string;
+  description?: string;
+  status: "INSTALLED" | "NOT_INSTALLED" | "OPTIONAL";
+  category: "BUILT_IN" | "MCP" | "EXTERNAL";
+  downloadSize?: string;
+  installedSize?: string;
+  reason?: string;
+}
+
+export interface StorageInfo {
+  used: number;
+  budget: number;
+  categories: { name: string; size: number }[];
+}
+
 export interface ZenlessEventMap {
   BOOT_STAGE_CHANGED: { stage: BootStage; state: BootState };
   BOOT_COMPLETE: Record<string, never>;
@@ -370,6 +533,10 @@ export interface ZenlessEventMap {
   CHAT_STREAM_DELTA: { messageId: string; delta: string };
   CHAT_STREAM_FINISHED: { messageId: string };
   CHAT_MESSAGE: { message: ChatMessage };
+  CHAT_ACTIVITY: { activity: ChatActivity };
+  CHAT_ARTIFACT: { artifact: ChatArtifact };
+  PROVIDER_LOGIN_STATE: { provider: ProviderId; state: "IDLE" | "OPENING" | "WAITING" | "VERIFYING" | "READY" };
+  READINESS_CHANGED: { readiness: ReadinessStateInfo };
   CONTEXT_UPDATED: { items: ContextItem[] };
   CHANGES_UPDATED: { files: ChangedFile[] };
   REVIEW_READY: { review: Review };
