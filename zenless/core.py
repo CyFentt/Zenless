@@ -542,7 +542,10 @@ class ZenlessCore:
     def approve_visual(self, job_id: str) -> bool:
         if not self.orchestrator.approve_active(job_id, ("visual",), "approve"):
             raise CoreError("NO_VISUAL_GATE", "No visual concept is waiting for approval.", status=409)
-        self.events.publish("VISUAL_APPROVED", {"view": "FRONT"})
+        self.events.publish("VISUAL_APPROVED", {
+            "jobId": job_id,
+            "views": ["FRONT", "BACK", "LEFT", "RIGHT", "TOP", "BOTTOM"]
+        })
         return True
 
     def edit_visual(self, job_id: str, prompt: str) -> bool:

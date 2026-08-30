@@ -120,4 +120,43 @@ describe('ChatTimeline Artifact & Activity Rendering', () => {
     fireEvent.click(testButton);
     expect(useStore.getState().activePage).toBe('test');
   });
+
+  it('renders ChatTestCard truthfully without fake 12 counts or fake PASS', () => {
+    useStore.setState({
+      currentJobId: 'job_001',
+      testCases: [
+        { id: 'c1', name: 'test 1', status: 'SKIPPED' },
+        { id: 'c2', name: 'test 2', status: 'SKIPPED' },
+      ],
+      testFailures: [],
+    });
+
+    render(<ChatPage />);
+    expect(screen.getAllByText('SKIPPED').length).toBeGreaterThan(0);
+    expect(screen.queryByText('12')).toBeNull();
+    expect(screen.queryByText('All automated QA scenarios completed successfully.')).toBeNull();
+  });
+
+  it('renders ChatChangeCard truthfully without hardcoded reviewer/risk fallbacks', () => {
+    useStore.setState({
+      currentJobId: 'job_001',
+      artifacts: [
+        {
+          id: 'art_diff_empty',
+          jobId: 'job_001',
+          type: 'DIFF',
+          name: 'CODE CHANGES PENDING',
+          state: 'READY',
+          createdAt: Date.now(),
+          metadata: {},
+        },
+      ],
+    });
+
+    render(<ChatPage />);
+    expect(screen.getByText('CODE CHANGES PENDING')).toBeInTheDocument();
+    expect(screen.getByText('PENDING')).toBeInTheDocument();
+    expect(screen.getByText('UNASSESSED')).toBeInTheDocument();
+    expect(screen.queryByText('DeepSeek')).toBeNull();
+  });
 });

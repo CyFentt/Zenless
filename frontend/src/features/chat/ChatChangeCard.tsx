@@ -17,10 +17,10 @@ export function ChatChangeCard({ artifact, onApprove, onReject, onRequestRevisio
 
   const jobId = artifact.jobId ?? '';
   const metadata = artifact.metadata || {};
-  const risk = String(metadata.risk || 'MEDIUM').toUpperCase();
-  const fileCount = Number(metadata.fileCount || 3);
-  const reviewer = String(metadata.reviewer || 'DeepSeek');
-  const decision = String(metadata.decision || 'APPROVE').toUpperCase();
+  const risk = metadata.risk ? String(metadata.risk).toUpperCase() : null;
+  const fileCount = metadata.fileCount !== undefined ? Number(metadata.fileCount) : null;
+  const reviewer = metadata.reviewer ? String(metadata.reviewer) : null;
+  const decision = metadata.decision ? String(metadata.decision).toUpperCase() : null;
 
   const handleApprove = async () => {
     if (!jobId || acting) return;
@@ -84,29 +84,33 @@ export function ChatChangeCard({ artifact, onApprove, onReject, onRequestRevisio
               <CheckCircle2 size={13} className="text-zen-okBright" />
             ) : decision === 'BLOCK' ? (
               <ShieldAlert size={13} className="text-zen-errBright" />
-            ) : (
+            ) : decision === 'REVISE' ? (
               <AlertTriangle size={13} className="text-zen-warnBright" />
-            )}
-            <span className="text-ink-100 font-bold">{decision}</span>
-            <span className="text-ink-400 text-2xs">({reviewer})</span>
+            ) : null}
+            <span className="text-ink-100 font-bold">{decision || 'PENDING'}</span>
+            {reviewer && <span className="text-ink-400 text-2xs">({reviewer})</span>}
           </div>
         </div>
 
         <div>
           <span className="text-ink-400 text-2xs uppercase block mb-1">RISK & IMPACT</span>
           <div className="flex items-center gap-2">
-            <span
-              className={`px-1.5 py-0.5 rounded font-bold uppercase ${
-                risk === 'LOW'
-                  ? 'bg-zen-ok/20 text-zen-okBright'
-                  : risk === 'CRITICAL' || risk === 'HIGH'
-                    ? 'bg-zen-err/20 text-zen-errBright'
-                    : 'bg-zen-warn/20 text-zen-warnBright'
-              }`}
-            >
-              {risk} RISK
-            </span>
-            <span className="text-ink-300">{fileCount} files modified</span>
+            {risk ? (
+              <span
+                className={`px-1.5 py-0.5 rounded font-bold uppercase ${
+                  risk === 'LOW'
+                    ? 'bg-zen-ok/20 text-zen-okBright'
+                    : risk === 'CRITICAL' || risk === 'HIGH'
+                      ? 'bg-zen-err/20 text-zen-errBright'
+                      : 'bg-zen-warn/20 text-zen-warnBright'
+                }`}
+              >
+                {risk} RISK
+              </span>
+            ) : (
+              <span className="text-ink-400 text-2xs">UNASSESSED</span>
+            )}
+            {fileCount !== null && <span className="text-ink-300">{fileCount} files modified</span>}
           </div>
         </div>
       </div>

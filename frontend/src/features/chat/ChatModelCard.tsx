@@ -106,9 +106,15 @@ export function ChatModelCard({ artifact, modelInfo, onApproveModel, onRegenerat
       {/* Lazy Interactive 3D Preview */}
       {interactive3D && (
         <div className="h-56 bg-ink-950 rounded border border-ink-800 relative overflow-hidden">
-          <Suspense fallback={<div className="flex items-center justify-center h-full text-ink-400">Loading 3D...</div>}>
-            <ModelViewer modelUrl={modelUrl} allowDemo={!modelUrl} />
-          </Suspense>
+          {modelUrl ? (
+            <Suspense fallback={<div className="flex items-center justify-center h-full text-ink-400">Loading 3D...</div>}>
+              <ModelViewer modelUrl={modelUrl} allowDemo={false} />
+            </Suspense>
+          ) : (
+            <div className="flex items-center justify-center h-full text-xs text-ink-400 uppercase tracking-wider font-semibold">
+              NO MODEL AVAILABLE
+            </div>
+          )}
         </div>
       )}
 

@@ -12,9 +12,28 @@ export function ChatTestCard({ jobId, testCases = [], failures = [], onOpenTestP
   const passed = testCases.filter((c) => c.status === 'PASSED').length;
   const failed = testCases.filter((c) => c.status === 'FAILED').length;
   const skipped = testCases.filter((c) => c.status === 'SKIPPED').length;
-  const total = testCases.length || (passed + failed + skipped);
+  const totalCases = testCases.length;
 
   const hasFailures = failed > 0 || failures.length > 0;
+  const hasExecutedCases = totalCases > 0;
+
+  // Truthful status determination
+  let statusText = 'NOT RUN';
+  let statusStyle = 'bg-ink-800 text-ink-300';
+
+  if (hasFailures) {
+    statusText = 'FAILED';
+    statusStyle = 'bg-zen-err/20 text-zen-errBright';
+  } else if (hasExecutedCases && passed > 0 && skipped === 0) {
+    statusText = 'PASSED';
+    statusStyle = 'bg-zen-ok/20 text-zen-okBright';
+  } else if (hasExecutedCases && passed > 0 && skipped > 0) {
+    statusText = `PASSED (${skipped} SKIPPED)`;
+    statusStyle = 'bg-zen-ok/20 text-zen-okBright';
+  } else if (hasExecutedCases && passed === 0 && skipped > 0) {
+    statusText = 'SKIPPED';
+    statusStyle = 'bg-zen-warn/20 text-zen-warnBright';
+  }
 
   return (
     <div className="my-3 p-4 bg-ink-900/90 border border-ink-700 rounded font-mono text-2xs space-y-3 shadow-lg">
@@ -24,12 +43,8 @@ export function ChatTestCard({ jobId, testCases = [], failures = [], onOpenTestP
           <Play size={14} className="text-ink-200" />
           <span className="font-semibold text-xs text-ink-100">PLAY TEST RESULTS</span>
         </div>
-        <span
-          className={`px-2 py-0.5 rounded font-bold uppercase tracking-wider ${
-            !hasFailures ? 'bg-zen-ok/20 text-zen-okBright' : 'bg-zen-err/20 text-zen-errBright'
-          }`}
-        >
-          {!hasFailures ? 'PASSED' : 'FAILED'}
+        <span className={`px-2 py-0.5 rounded font-bold uppercase tracking-wider ${statusStyle}`}>
+          {statusText}
         </span>
       </div>
 
@@ -37,12 +52,12 @@ export function ChatTestCard({ jobId, testCases = [], failures = [], onOpenTestP
       <div className="grid grid-cols-3 gap-2 bg-ink-950 p-2.5 rounded border border-ink-800 text-center">
         <div>
           <span className="text-ink-400 text-2xs uppercase block">PASSED</span>
-          <span className="text-sm font-bold text-zen-okBright">{passed || (hasFailures ? 0 : 12)}</span>
+          <span className="text-sm font-bold text-zen-okBright">{passed}</span>
         </div>
         <div>
           <span className="text-ink-400 text-2xs uppercase block">FAILED</span>
-          <span className={`text-sm font-bold ${failed > 0 ? 'text-zen-errBright' : 'text-ink-300'}`}>
-            {failed || (hasFailures ? failures.length || 1 : 0)}
+          <span className={`text-sm font-bold ${failed > 0 || failures.length > 0 ? 'text-zen-errBright' : 'text-ink-300'}`}>
+            {failed > 0 ? failed : failures.length}
           </span>
         </div>
         <div>
@@ -67,10 +82,10 @@ export function ChatTestCard({ jobId, testCases = [], failures = [], onOpenTestP
         </div>
       )}
 
-      {!hasFailures && (
+      {!hasFailures && hasExecutedCases && passed > 0 && (
         <div className="flex items-center gap-2 text-zen-okBright">
           <CheckCircle2 size={13} />
-          <span>All automated QA scenarios completed successfully.</span>
+          <span>Executed QA test cases passed successfully.</span>
         </div>
       )}
 

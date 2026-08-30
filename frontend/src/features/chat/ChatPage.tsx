@@ -5,7 +5,7 @@ import { getApi } from '@/services';
 import { ApiError } from '@/services/api/realApi';
 import { frontendDiagnostics } from '@/services/diagnostics';
 import { Tooltip } from '@/components/Tooltip';
-import { DEFAULT_TASK_OPTIONS, type ChatMessage, type ProviderId, type TaskOptions } from '@/types';
+import { DEFAULT_TASK_OPTIONS, type ChatMessage, type ProviderId, type TaskOptions, type ChatArtifact } from '@/types';
 
 import { ChatActivityGroup } from './ChatActivityGroup';
 import { ChatChangeCard } from './ChatChangeCard';
@@ -122,19 +122,87 @@ export function ChatPage() {
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
-  // Filter activities and artifacts relevant to active job
+  // Filter activities, artifacts, and diagnostics strictly relevant to active job
   const jobActivities = activities.filter((a) => !currentJobId || !a.jobId || a.jobId === currentJobId);
   const imageArtifacts = artifacts.filter((a) => a.type === 'IMAGE' && (!currentJobId || !a.jobId || a.jobId === currentJobId));
   const modelArtifacts = artifacts.filter((a) => a.type === 'MODEL_3D' && (!currentJobId || !a.jobId || a.jobId === currentJobId));
   const diffArtifacts = artifacts.filter((a) => a.type === 'DIFF' && (!currentJobId || !a.jobId || a.jobId === currentJobId));
-  const criticalErrors = diagnostics.filter((d) => d.severity === 'critical' || d.severity === 'error');
+  const criticalErrors = diagnostics.filter(
+    (d) => (d.severity === 'critical' || d.severity === 'error') && (!currentJobId || !d.jobId || d.jobId === currentJobId)
+  );
+
+  // Chronological timeline item composition
+  type TimelineItem =
+    | { type: 'MESSAGE'; id: string; timestamp: number; message: ChatMessage }
+    | { type: 'ACTIVITY_GROUP'; id: string; timestamp: number }
+    | { type: 'DIFF_ARTIFACT'; id: string; timestamp: number; artifact: (typeof artifacts)[0] }
+    | { type: 'IMAGE_GALLERY'; id: string; timestamp: number }
+    | { type: 'MODEL_CARD'; id: string; timestamp: number; artifact?: (typeof artifacts)[0] }
+    | { type: 'TEST_CARD'; id: string; timestamp: number }
+    | { type: 'ERROR_CARD'; id: string; timestamp: number; diag: (typeof diagnostics)[0] };
+
+  const timelineItems: TimelineItem[] = [];
+
+  messages.forEach((msg) => {
+    timelineItems.push({ type: 'MESSAGE', id: msg.id, timestamp: msg.timestamp, message: msg });
+  });
+
+  if (jobActivities.length > 0) {
+    const latestActivityTs = Math.max(...jobActivities.map((a) => a.timestamp || 0));
+    timelineItems.push({ type: 'ACTIVITY_GROUP', id: 'activity_group', timestamp: latestActivityTs });
+  }
+
+  diffArtifacts.forEach((art) => {
+    timelineItems.push({ type: 'DIFF_ARTIFACT', id: art.id, timestamp: art.createdAt, artifact: art });
+  });
+
+  if (views.length > 0 || imageArtifacts.length > 0) {
+    const latestImageTs = Math.max(
+      ...imageArtifacts.map((a) => a.createdAt),
+      0
+    );
+    timelineItems.push({ type: 'IMAGE_GALLERY', id: 'image_gallery', timestamp: latestImageTs || Date.now() });
+  }
+
+  if (modelInfo.modelUrl || modelArtifacts.length > 0) {
+    const latestModelTs = modelArtifacts[0]?.createdAt || Date.now();
+    const modelStateMap: Record<string, ChatArtifact['state']> = {
+      EMPTY: 'GENERATING',
+      GENERATING_GEOMETRY: 'GENERATING',
+      GEOMETRY_READY: 'READY',
+      GENERATING_TEXTURE: 'GENERATING',
+      TEXTURE_READY: 'READY',
+      READY: 'READY',
+      FAILED: 'FAILED',
+    };
+    const defaultModelArtifact: ChatArtifact = {
+      id: 'model_art',
+      type: 'MODEL_3D',
+      name: modelInfo.filename || '3D Model',
+      state: modelStateMap[modelInfo.state] || 'READY',
+      jobId: currentJobId ?? undefined,
+      createdAt: latestModelTs,
+    };
+    timelineItems.push({ type: 'MODEL_CARD', id: modelArtifacts[0]?.id || 'model_card', timestamp: latestModelTs, artifact: modelArtifacts[0] || defaultModelArtifact });
+  }
+
+  if (testCases.length > 0 || testFailures.length > 0) {
+    timelineItems.push({ type: 'TEST_CARD', id: 'test_card', timestamp: Date.now() });
+  }
+
+  criticalErrors.forEach((diag) => {
+    timelineItems.push({ type: 'ERROR_CARD', id: diag.id, timestamp: diag.timestamp, diag });
+  });
+
+  // Sort timeline chronologically
+  timelineItems.sort((a, b) => a.timestamp - b.timestamp);
 
   // Domain Action Handlers
   const handleApproveChanges = async (jobId: string) => {
     await getApi().approveChanges(jobId);
   };
   const handleRejectChanges = async (jobId: string) => {
-    await getApi().approveChanges(jobId, false);
+    await getApi().rejectChanges(jobId);
   };
   const handleRequestRevision = async (jobId: string, feedback: string) => {
     await getApi().editChanges(jobId, 'feedback', feedback);
@@ -185,76 +253,112 @@ export function ChatPage() {
               </div>
             )}
 
-            {/* Chat Messages */}
-            {messages.map((msg) => (
-              <ChatMessageRow key={msg.id} message={msg} logging={loggingProvider === msg.action?.provider} onLogin={handleProviderLogin} />
-            ))}
+            {/* Unified Chronological Timeline */}
+            {timelineItems.map((item) => {
+              if (item.type === 'MESSAGE') {
+                return (
+                  <ChatMessageRow
+                    key={item.id}
+                    message={item.message}
+                    logging={loggingProvider === item.message.action?.provider}
+                    onLogin={handleProviderLogin}
+                  />
+                );
+              }
+              if (item.type === 'ACTIVITY_GROUP') {
+                return (
+                  <ChatActivityGroup
+                    key={item.id}
+                    activities={jobActivities}
+                    onOpenContext={() => currentJobId && openBuildPage(currentJobId)}
+                  />
+                );
+              }
+              if (item.type === 'DIFF_ARTIFACT') {
+                return (
+                  <ChatChangeCard
+                    key={item.id}
+                    artifact={item.artifact}
+                    onApprove={handleApproveChanges}
+                    onReject={handleRejectChanges}
+                    onRequestRevision={handleRequestRevision}
+                    onOpenDiff={openBuildPage}
+                  />
+                );
+              }
+              if (item.type === 'IMAGE_GALLERY') {
+                return (
+                  <ChatImageGallery
+                    key={item.id}
+                    views={views}
+                    conceptVersion={conceptVersion}
+                    jobId={currentJobId ?? undefined}
+                    onApproveVisual={handleApproveVisual}
+                    onRegenerateVisual={handleRegenerateVisual}
+                    onOpenVisualPage={openVisualPage}
+                  />
+                );
+              }
+              if (item.type === 'MODEL_CARD') {
+                const modelStateMap: Record<string, ChatArtifact['state']> = {
+                  EMPTY: 'GENERATING',
+                  GENERATING_GEOMETRY: 'GENERATING',
+                  GEOMETRY_READY: 'READY',
+                  GENERATING_TEXTURE: 'GENERATING',
+                  TEXTURE_READY: 'READY',
+                  READY: 'READY',
+                  FAILED: 'FAILED',
+                };
+                const fallbackModelArt: ChatArtifact = {
+                  id: 'model_art',
+                  type: 'MODEL_3D',
+                  name: modelInfo.filename || '3D Model',
+                  state: modelStateMap[modelInfo.state] || 'READY',
+                  jobId: currentJobId ?? undefined,
+                  createdAt: Date.now(),
+                };
+                return (
+                  <ChatModelCard
+                    key={item.id}
+                    artifact={item.artifact || fallbackModelArt}
+                    modelInfo={modelInfo}
+                    onApproveModel={handleApproveModel}
+                    onRegenerateGeometry={handleRegenerateGeometry}
+                    onRegenerateTexture={handleRegenerateTexture}
+                    onOpenModelViewer={openVisualPage}
+                  />
+                );
+              }
+              if (item.type === 'TEST_CARD') {
+                return (
+                  <ChatTestCard
+                    key={item.id}
+                    jobId={currentJobId ?? undefined}
+                    testCases={testCases}
+                    failures={testFailures}
+                    onOpenTestPage={openTestPage}
+                  />
+                );
+              }
+              if (item.type === 'ERROR_CARD') {
+                return (
+                  <ChatErrorCard
+                    key={item.id}
+                    source={item.diag.source}
+                    message={item.diag.message}
+                    detail={item.diag.probableCause}
+                    onOpenSettings={openSettingsPage}
+                  />
+                );
+              }
+              return null;
+            })}
 
             {streamingMessageId && (
-              <ChatMessageRow message={{ id: streamingMessageId, role: 'zenless', content: streamingContent + '▊', timestamp: Date.now() }} streaming onLogin={handleProviderLogin} />
-            )}
-
-            {/* Activities Timeline Group */}
-            {jobActivities.length > 0 && (
-              <ChatActivityGroup
-                activities={jobActivities}
-                onOpenContext={() => currentJobId && openBuildPage(currentJobId)}
-              />
-            )}
-
-            {/* Code Change Artifacts */}
-            {diffArtifacts.map((art) => (
-              <ChatChangeCard
-                key={art.id}
-                artifact={art}
-                onApprove={handleApproveChanges}
-                onReject={handleRejectChanges}
-                onRequestRevision={handleRequestRevision}
-                onOpenDiff={openBuildPage}
-              />
-            ))}
-
-            {/* Visual Concept 6-View Gallery */}
-            {(views.length > 0 || imageArtifacts.length > 0) && (
-              <ChatImageGallery
-                views={views}
-                conceptVersion={conceptVersion}
-                jobId={currentJobId ?? undefined}
-                onApproveVisual={handleApproveVisual}
-                onRegenerateVisual={handleRegenerateVisual}
-                onOpenVisualPage={openVisualPage}
-              />
-            )}
-
-            {/* 3D Model Artifact Card */}
-            {(modelInfo.modelUrl || modelArtifacts.length > 0) && (
-              <ChatModelCard
-                artifact={modelArtifacts[0] || { id: 'model_art', type: 'MODEL_3D', name: modelInfo.filename || '3D Model', state: modelInfo.state, jobId: currentJobId ?? undefined, createdAt: Date.now() }}
-                modelInfo={modelInfo}
-                onApproveModel={handleApproveModel}
-                onRegenerateGeometry={handleRegenerateGeometry}
-                onRegenerateTexture={handleRegenerateTexture}
-                onOpenModelViewer={openVisualPage}
-              />
-            )}
-
-            {/* Test Results Card */}
-            {(testCases.length > 0 || testFailures.length > 0) && (
-              <ChatTestCard
-                jobId={currentJobId ?? undefined}
-                testCases={testCases}
-                failures={testFailures}
-                onOpenTestPage={openTestPage}
-              />
-            )}
-
-            {/* Critical Diagnostics / Error Card */}
-            {criticalErrors.length > 0 && (
-              <ChatErrorCard
-                source={criticalErrors[0].source}
-                message={criticalErrors[0].message}
-                detail={criticalErrors[0].probableCause}
-                onOpenSettings={openSettingsPage}
+              <ChatMessageRow
+                message={{ id: streamingMessageId, role: 'zenless', content: streamingContent + '▊', timestamp: Date.now() }}
+                streaming
+                onLogin={handleProviderLogin}
               />
             )}
           </div>
