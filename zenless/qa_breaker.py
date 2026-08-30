@@ -21,7 +21,7 @@ MAX_STUDIO_TEST_CLIENTS = 8
 DEVICE_TEST_WIDTH = 390
 DEVICE_TEST_HEIGHT = 844
 
-VIRTUAL_INPUT_SMOKE_LUA = r'''
+VIRTUAL_INPUT_SMOKE_LUA = r"""
 local HttpService = game:GetService("HttpService")
 local UserInputService = game:GetService("UserInputService")
 
@@ -42,9 +42,9 @@ return HttpService:JSONEncode({
     error = sent and "" or tostring(sendError),
     probe = "Unknown key down/up",
 })
-'''
+"""
 
-DEVICE_EMULATOR_BEGIN_LUA = rf'''
+DEVICE_EMULATOR_BEGIN_LUA = rf"""
 local HttpService = game:GetService("HttpService")
 local Simulator = game:GetService("StudioDeviceSimulatorService")
 
@@ -132,7 +132,7 @@ return HttpService:JSONEncode({{
     original = original,
     readBack = readBackOk and readBack or nil,
 }})
-'''
+"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -184,8 +184,6 @@ class TestFailure:
 
 
 class QABreaker:
-    """Bounded, change-aware QA runner. It never mutates production code."""
-
     ERROR_PATTERN = re.compile(
         r"(?im)(\bexception\b|\btraceback\b|stack begin|(^|\s)error[:\s]|infinite yield possible)"
     )
@@ -243,7 +241,7 @@ class QABreaker:
     def start_manual(self, job_id: str, profile_name: str = "STANDARD") -> bool:
         profile = profile_name.upper()
         if profile not in PROFILES:
-            raise ValueError("Perfil QA inválido.")
+            raise ValueError("Invalid QA profile.")
         with self._manual_lock:
             running = self._manual_threads.get(job_id)
             if running is not None and running.is_alive():
@@ -412,7 +410,7 @@ class QABreaker:
                 joined = "\n".join(logs)[-20_000:]
                 if failures:
                     return "ERROR: QA Breaker encontrou falhas.\n" + joined
-                return joined or "QA Breaker concluído sem erros detectados."
+                return joined or "QA completed without detected errors."
             except TaskCancelled:
                 self.store.finish_test_run(run_id, "CANCELLED", {"profile": profile.name, "seed": seed})
                 self.events.publish("TEST_FINISHED", {"passed": False, "jobId": job_id})
@@ -432,7 +430,7 @@ class QABreaker:
                 self.studio.start()
             studios = self.studio.list_studios()
             if not studios:
-                raise MCPError("Nenhum Roblox Studio conectado ao StudioMCP.")
+                raise MCPError("No Roblox Studio instance is connected to StudioMCP.")
             self.run(
                 job_id,
                 studio_id=studios[0].studio_id,
@@ -441,7 +439,7 @@ class QABreaker:
                 cancel_event=cancel,
             )
         except Exception as exc:
-            self._log(job_id, "ERR", f"QA manual falhou: {exc}")
+            self._log(job_id, "ERR", f"Manual QA failed: {exc}")
             self.events.publish("TEST_FINISHED", {"passed": False, "jobId": job_id})
         finally:
             with self._manual_lock:
@@ -499,15 +497,15 @@ class QABreaker:
         if not self.bridge.wait_for_provider("chatgpt", timeout=0.5):
             return []
         prompt = (
-            "Você é o planejador QA do próprio projeto Roblox do usuário. "
-            "Gere até 4 cenários legítimos e determinísticos; não gere exploit nem código. "
-            "Responda somente JSON {\"scenarios\":[\"...\"]}.\n"
-            f"Objetivo: {feature}\nMudanças: {changed_tools}\nRiscos: {risks}"
+            "You are the QA planner for the user's Roblox project. "
+            "Generate up to four legitimate deterministic scenarios without exploits or code. "
+            'Respond only with JSON {"scenarios":["..."]}.\n'
+            f"Objective: {feature}\nChanges: {changed_tools}\nRisks: {risks}"
         )
         try:
             raw = self.bridge.send_prompt("chatgpt", prompt, task_id=job_id, timeout=120)
             payload = extract_json_object(raw)
-        except (MCPError, OrchestratorError, ProtocolError, RuntimeError, ValueError):
+        except MCPError, OrchestratorError, ProtocolError, RuntimeError, ValueError:
             return []
         scenarios = payload.get("scenarios", [])
         return [str(item).strip()[:300] for item in scenarios if str(item).strip()][:4]
@@ -528,9 +526,9 @@ class QABreaker:
             "output_tail": output[-5000:],
         }
         prompt = (
-            "Revise independentemente este resultado de QA do projeto Roblox do usuário. "
-            "Não proponha exploit nem execute alterações. Responda em no máximo 6 linhas com "
-            "veredito, risco e lacunas de teste.\n" + json.dumps(payload, ensure_ascii=False)
+            "Independently review this QA result for the user's Roblox project. "
+            "Do not propose exploits or make changes. Respond in at most six lines with "
+            "a verdict, risk assessment, and test gaps.\n" + json.dumps(payload, ensure_ascii=False)
         )
         try:
             return self.bridge.send_prompt("deepseek", prompt, task_id=job_id, timeout=120).strip()[:3000]
@@ -555,9 +553,7 @@ class QABreaker:
                 return "SKIPPED", "StudioMCP does not expose start_stop_play", ""
             started = False
             try:
-                result = self.studio.call_tool(
-                    "start_stop_play", {"is_start": True}, studio_id=studio_id, timeout=60
-                )
+                result = self.studio.call_tool("start_stop_play", {"is_start": True}, studio_id=studio_id, timeout=60)
                 if result.is_error:
                     return "FAILED", "Play Test starts", result.compact(3000)
                 started = True
@@ -566,9 +562,7 @@ class QABreaker:
                     self._check_cancel(cancel_event)
                     cancel_event.wait(0.1)
                 if "get_console_output" in self.studio.tools:
-                    console = self.studio.call_tool(
-                        "get_console_output", {}, studio_id=studio_id, timeout=60
-                    )
+                    console = self.studio.call_tool("get_console_output", {}, studio_id=studio_id, timeout=60)
                     if console.is_error:
                         return "FAILED", "Output can be read", console.compact(3000)
                     output_holder["text"] = console.text
@@ -581,7 +575,7 @@ class QABreaker:
                         "start_stop_play", {"is_start": False}, studio_id=studio_id, timeout=60
                     )
                     if stopped.is_error:
-                        raise MCPError("Studio recusou Stop: " + stopped.compact(3000))
+                        raise MCPError("Studio rejected Stop: " + stopped.compact(3000))
 
         outcome = self._run_case(
             run_id,
@@ -683,7 +677,7 @@ class QABreaker:
                         "testCaseId": case_id,
                         "name": name,
                         "suite": suite,
-                        "message": actual[:4000] or "Falha sem detalhe",
+                        "message": actual[:4000] or "Failure without details",
                         "timestamp": finished_ms,
                         "expected": expected,
                         "actual": actual,
@@ -726,9 +720,7 @@ class QABreaker:
         started = False
         outcome = ("FAILED", expected, "VirtualInput smoke did not complete")
         try:
-            start = self._call_validated(
-                "start_stop_play", {"is_start": True}, studio_id=studio_id, timeout=60
-            )
+            start = self._call_validated("start_stop_play", {"is_start": True}, studio_id=studio_id, timeout=60)
             if start.is_error:
                 return "FAILED", expected, "Play could not start: " + start.compact(3000)
             started = True
@@ -756,9 +748,7 @@ class QABreaker:
         finally:
             if started:
                 try:
-                    stop = self._call_validated(
-                        "start_stop_play", {"is_start": False}, studio_id=studio_id, timeout=60
-                    )
+                    stop = self._call_validated("start_stop_play", {"is_start": False}, studio_id=studio_id, timeout=60)
                     if stop.is_error:
                         outcome = ("FAILED", expected, "VirtualInput ran, but Stop failed: " + stop.compact(3000))
                 except MCPError as exc:
@@ -812,11 +802,7 @@ class QABreaker:
                         width = self._bounded_number(read_back.get("width"), 64, 16384)
                         height = self._bounded_number(read_back.get("height"), 64, 16384)
                         orientation = str(read_back.get("orientation", ""))
-                        if (
-                            width != DEVICE_TEST_WIDTH
-                            or height != DEVICE_TEST_HEIGHT
-                            or orientation != "Portrait"
-                        ):
+                        if width != DEVICE_TEST_WIDTH or height != DEVICE_TEST_HEIGHT or orientation != "Portrait":
                             outcome = (
                                 "FAILED",
                                 expected,
@@ -985,20 +971,20 @@ class QABreaker:
         timeout: float,
     ) -> MCPToolResult:
         if not isinstance(studio_id, str) or not studio_id.strip() or len(studio_id) > 256:
-            raise MCPError("Studio id inválido para QA.")
+            raise MCPError("Invalid Studio ID for QA.")
         if not math.isfinite(timeout) or timeout < 1 or timeout > 180:
-            raise MCPError("Timeout de ferramenta inválido para QA.")
+            raise MCPError("Invalid tool timeout for QA.")
         tool = self.studio.tools.get(name)
         schema = getattr(tool, "input_schema", None)
         if not isinstance(schema, dict):
-            raise MCPError(f"{name} não anunciou um schema validável.")
+            raise MCPError(f"{name} did not publish a validatable schema.")
         safe_arguments = dict(arguments)
         properties = schema.get("properties", {})
         if isinstance(properties, dict) and "studio_id" in properties:
             safe_arguments["studio_id"] = studio_id
         errors = validate_json_schema(safe_arguments, schema)
         if errors:
-            raise MCPError(f"Argumentos QA inválidos para {name}: " + "; ".join(errors[:6]))
+            raise MCPError(f"Invalid QA arguments for {name}: " + "; ".join(errors[:6]))
         return self.studio.call_tool(
             name,
             arguments,
@@ -1090,7 +1076,7 @@ class QABreaker:
         width = int(state["width"])
         height = int(state["height"])
         density = float(state["density"])
-        return f'''
+        return f"""
 local HttpService = game:GetService("HttpService")
 local Simulator = game:GetService("StudioDeviceSimulatorService")
 local ok, restoreError = pcall(function()
@@ -1112,27 +1098,30 @@ local ok, restoreError = pcall(function()
     end
 end)
 return HttpService:JSONEncode({{ ok = ok, error = ok and "" or tostring(restoreError) }})
-'''
+"""
 
     @staticmethod
     def _has_multiplayer_harness_marker(text: str) -> bool:
         normalized = text.casefold()
-        no_match_terms = ("no match", "0 match", "not found", "nenhum resultado", "nenhuma correspondência")
+        no_match_terms = ("no match", "0 match", "not found")
         if any(term in normalized for term in no_match_terms):
             return False
         if MULTIPLAYER_HARNESS_PROTOCOL not in text:
             return False
-        return re.search(
-            r"(?i)(ServerScriptService|ReplicatedStorage|TestService|StarterPlayer)[.\\/]",
-            text,
-        ) is not None
+        return (
+            re.search(
+                r"(?i)(ServerScriptService|ReplicatedStorage|TestService|StarterPlayer)[.\\/]",
+                text,
+            )
+            is not None
+        )
 
     @staticmethod
     def _multiplayer_test_lua(players: int, seed: int) -> str:
         if not 1 <= players <= MAX_STUDIO_TEST_CLIENTS:
-            raise ValueError("StudioTestService aceita de 1 a 8 clientes neste runner.")
+            raise ValueError("StudioTestService accepts 1 to 8 clients in this runner.")
         if not 0 <= seed <= 0xFFFFFFFF:
-            raise ValueError("Seed de multiplayer fora do intervalo permitido.")
+            raise ValueError("Multiplayer seed is outside the allowed range.")
         return f'''
 local HttpService = game:GetService("HttpService")
 local StudioTestService = game:GetService("StudioTestService")
@@ -1176,7 +1165,7 @@ return HttpService:JSONEncode({{
     @staticmethod
     def _check_cancel(cancel_event: threading.Event) -> None:
         if cancel_event.is_set():
-            raise TaskCancelled("QA cancelado pelo usuário.")
+            raise TaskCancelled("QA cancelled by the user.")
 
     def _enforce_bound(
         self,
@@ -1186,4 +1175,4 @@ return HttpService:JSONEncode({{
     ) -> None:
         self._check_cancel(cancel_event)
         if time.monotonic() - started_at > profile.max_duration:
-            raise OrchestratorError(f"QA excedeu o limite de {profile.max_duration:.0f}s do perfil {profile.name}.")
+            raise OrchestratorError(f"QA exceeded the {profile.max_duration:.0f}s limit for profile {profile.name}.")

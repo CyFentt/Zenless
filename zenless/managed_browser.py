@@ -118,12 +118,12 @@ class BrowserRuntimeManager:
                 if cancel is not None and cancel.is_set():
                     process.terminate()
                     output_text, _ = process.communicate(timeout=10)
-                    raise BridgeError("Instalação do navegador gerenciado cancelada.")
+                    raise BridgeError("Managed browser installation cancelled.")
         if process.returncode != 0:
-            raise BridgeError("Falha ao preparar o Chromium gerenciado: " + output_text[-3000:])
+            raise BridgeError("Managed Chromium preparation failed: " + output_text[-3000:])
         installed = self.chromium_executable()
         if installed is None:
-            raise BridgeError("Playwright concluiu, mas o Chromium gerenciado não foi encontrado.")
+            raise BridgeError("Playwright completed, but managed Chromium was not found.")
         return installed
 
 
@@ -141,8 +141,6 @@ class _Command:
 
 
 class ManagedBrowserController:
-    """One Playwright thread, one persistent context and one page per provider."""
-
     def __init__(
         self,
         *,
@@ -188,9 +186,9 @@ class ManagedBrowserController:
         self._thread = threading.Thread(target=self._run, name="Zenless-ManagedBrowser", daemon=True)
         self._thread.start()
         if not self._ready.wait(timeout):
-            raise BridgeError("O controlador do navegador gerenciado não iniciou no prazo.")
+            raise BridgeError("Managed browser controller did not start in time.")
         if self._start_error is not None:
-            raise BridgeError(f"Falha ao iniciar o controlador gerenciado: {self._start_error}")
+            raise BridgeError(f"Managed browser controller failed to start: {self._start_error}")
 
     def stop(self, timeout: float = 8.0) -> None:
         self._stop.set()
@@ -238,7 +236,7 @@ class ManagedBrowserController:
         )
         text = str(result.get("text") or "").strip()
         if not text:
-            raise BridgeError(f"{provider} concluiu sem retornar texto.")
+            raise BridgeError(f"{provider} completed without returning text.")
         return text
 
     def request(
@@ -271,7 +269,7 @@ class ManagedBrowserController:
         stream_callback: Callable[[str], None] | None = None,
     ) -> Any:
         if provider and provider not in self.provider_specs:
-            raise BridgeError(f"Provedor gerenciado desconhecido: {provider}")
+            raise BridgeError(f"Unknown managed provider: {provider}")
         if not self.running:
             self.start()
         command = _Command(
@@ -284,7 +282,7 @@ class ManagedBrowserController:
         self._commands.put(command)
         if not command.event.wait(command.timeout + 2.0):
             command.cancelled.set()
-            raise BridgeError(f"Tempo limite no navegador gerenciado ({action}/{provider or 'core'}).")
+            raise BridgeError(f"Managed browser timed out ({action}/{provider or 'core'}).")
         if command.error is not None:
             if isinstance(command.error, BridgeError):
                 raise command.error
@@ -306,7 +304,7 @@ class ManagedBrowserController:
             self._report(exc, "managed-browser-thread", severity="CRITICAL")
         finally:
             self._close_context()
-            self._fail_pending(BridgeError("Navegador gerenciado encerrado."))
+            self._fail_pending(BridgeError("Managed browser stopped."))
 
     def _event_loop(self) -> None:
         while not self._stop.is_set():
@@ -367,7 +365,7 @@ class ManagedBrowserController:
                 raise BridgeError("Playwright runtime unavailable on this Windows installation.")
             if not self.runtime.installed:
                 if not command.payload.get("install_if_missing", True):
-                    raise BridgeError("Chromium gerenciado ainda não foi preparado.")
+                    raise BridgeError("Managed Chromium has not been prepared.")
                 self._set_state(command.provider, "Installing", "Preparing managed Chromium once")
                 self.runtime.install(self._stop)
             self._ensure_context(headed=True)
@@ -400,7 +398,7 @@ class ManagedBrowserController:
                     "transport": "playwright",
                 }
             return self._send(command)
-        raise BridgeError(f"Comando de navegador não suportado: {command.action}")
+        raise BridgeError(f"Unsupported browser command: {command.action}")
 
     def _ensure_context(self, *, headed: bool) -> None:
         if self._context is not None and self._headed == headed:
@@ -409,7 +407,7 @@ class ManagedBrowserController:
         self._close_context()
         executable = self.runtime.chromium_executable()
         if executable is None:
-            raise BridgeError("Chromium gerenciado ausente. Use Login para preparar o componente.")
+            raise BridgeError("Managed Chromium is unavailable. Use Login to prepare it.")
         self.profile_root.mkdir(parents=True, exist_ok=True)
         self._context = self._playwright.chromium.launch_persistent_context(
             user_data_dir=str(self.profile_root),
@@ -451,19 +449,19 @@ class ManagedBrowserController:
         composer = self._composer(page, spec)
         if composer is None:
             self._set_state(command.provider, "Login Required", "Composer unavailable in managed session")
-            raise BridgeError(f"{command.provider} requer login ou atualização do adaptador.")
+            raise BridgeError(f"{command.provider} requires login or an adapter refresh.")
         if self._is_streaming(page, spec):
-            raise BridgeError(f"{command.provider} já possui uma geração ativa.")
+            raise BridgeError(f"{command.provider} already has an active generation.")
         response_locator = self._response_locator(page, spec)
         before_count = response_locator.count() if response_locator is not None else 0
         before_text = self._last_text(response_locator)
         prompt = str(command.payload.get("prompt") or "").strip()
         if not prompt:
-            raise BridgeError("Prompt vazio.")
+            raise BridgeError("Prompt is empty.")
         composer.fill(prompt)
         sender = self._first_visible(page, spec.sends)
         if sender is None or sender.is_disabled():
-            raise BridgeError(f"Botão de envio de {command.provider} indisponível.")
+            raise BridgeError(f"Submit button is unavailable for {command.provider}.")
         sender.click()
         self._set_state(command.provider, "Working", "Waiting for provider response")
         text = self._wait_response(page, spec, before_count, before_text, command)
@@ -487,23 +485,23 @@ class ManagedBrowserController:
         capabilities = self._capabilities(page, self.provider_specs[command.provider])
         try:
             max_files = max(1, min(6, int(capabilities.get("max_image_inputs") or 1)))
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             max_files = 1
         if not files or len(files) > max_files:
-            raise BridgeError(f"O provedor aceita de 1 a {max_files} arquivo(s) nesta sessão.")
+            raise BridgeError(f"The provider accepts between 1 and {max_files} files in this session.")
         for path in files:
             if not path.is_file() or path.stat().st_size > 128 * 1024 * 1024:
-                raise BridgeError(f"Arquivo ausente ou acima de 128 MB: {path.name}")
+                raise BridgeError(f"File is missing or larger than 128 MB: {path.name}")
         target = page.locator('input[type="file"]').first
         if target.count() == 0:
-            raise BridgeError("A página do provedor não expõe um input de arquivo compatível.")
+            raise BridgeError("The provider page exposes no compatible file input.")
         target.set_input_files([str(path) for path in files])
         return {"status": "ok", "uploaded": len(files), "transport": "playwright"}
 
     def _select_model(self, command: _Command) -> dict[str, Any]:
         model = str(command.payload.get("model") or "").strip()
         if not model:
-            raise BridgeError("Nome de modelo vazio.")
+            raise BridgeError("Model name is empty.")
         page = self._ensure_page(command.provider)
         nodes = page.locator('[role="option"], [role="menuitem"], [data-model], button')
         count = min(nodes.count(), 300)
@@ -516,7 +514,7 @@ class ManagedBrowserController:
                     return {"status": "ok", "selected": text or model, "transport": "playwright"}
             except Exception:
                 continue
-        raise BridgeError(f"Opção de modelo não encontrada: {model}")
+        raise BridgeError(f"Model option not found: {model}")
 
     def _discover_models(self, command: _Command) -> dict[str, Any]:
         page = self._ensure_page(command.provider)
@@ -552,7 +550,7 @@ class ManagedBrowserController:
         stable_since = 0.0
         while time.monotonic() < deadline:
             if self._stop.is_set() or command.cancelled.is_set():
-                raise BridgeError("Operação do navegador gerenciado cancelada.")
+                raise BridgeError("Managed browser operation cancelled.")
             locator = self._response_locator(page, spec)
             count = locator.count() if locator is not None else 0
             text = self._last_text(locator)
@@ -576,7 +574,7 @@ class ManagedBrowserController:
                 elif not self._is_streaming(page, spec) and time.monotonic() - stable_since >= 2.0:
                     return text
             page.wait_for_timeout(350)
-        raise BridgeError(f"Tempo limite aguardando resposta completa de {spec.code}.")
+        raise BridgeError(f"Timed out waiting for a complete response from {spec.code}.")
 
     def _capabilities(self, page: Any, spec: ProviderSpec) -> dict[str, Any]:
         raw = page.evaluate(
@@ -767,13 +765,13 @@ class ManagedBrowserController:
             return None
         response = self._context.request.get(url, timeout=120_000)
         if not response.ok:
-            raise BridgeError(f"Download 3D falhou com HTTP {response.status}.")
+            raise BridgeError(f"3D download failed with HTTP {response.status}.")
         length = int(response.headers.get("content-length", "0") or 0)
         if length > 256 * 1024 * 1024:
-            raise BridgeError("Ativo 3D excede o limite local de 256 MB.")
+            raise BridgeError("3D asset exceeds the local 256 MB limit.")
         body = response.body()
         if len(body) > 256 * 1024 * 1024:
-            raise BridgeError("Ativo 3D excede o limite local de 256 MB.")
+            raise BridgeError("3D asset exceeds the local 256 MB limit.")
         target_dir = self.download_root / task_id[:64]
         target_dir.mkdir(parents=True, exist_ok=True)
         target = target_dir / f"hunyuan-{uuid.uuid4().hex[:8]}{suffix}"

@@ -14,7 +14,7 @@ from zenless.webview2_browser import WebView2BrowserController
 
 
 class ProviderHandler(BaseHTTPRequestHandler):
-    def do_GET(self) -> None:  # noqa: N802 - stdlib callback name
+    def do_GET(self) -> None:
         body = b"""<!doctype html>
 <html><body>
   <p>Upload up to 6 images</p>
@@ -184,7 +184,7 @@ class AgentGatewayCapabilityTests(unittest.TestCase):
     def test_routes_only_missing_capability_to_playwright_and_preserves_streaming(self) -> None:
         embedded = _CapabilityTransport({"send_text": True, "geometry": False, "max_image_inputs": 1})
         managed = _CapabilityTransport({"send_text": True, "geometry": True, "max_image_inputs": 6})
-        gateway = AgentGateway(managed=managed, embedded=embedded)  # type: ignore[arg-type]
+        gateway = AgentGateway(managed=managed, embedded=embedded)
 
         self.assertTrue(gateway.wait_for_provider("chatgpt", 1))
         deltas: list[str] = []
@@ -212,7 +212,7 @@ class AgentGatewayCapabilityTests(unittest.TestCase):
     def test_hunyuan_pins_upload_geometry_and_texture_to_one_capable_route(self) -> None:
         embedded = _CapabilityTransport({"upload_files": True, "geometry": True, "texture": False})
         managed = _CapabilityTransport({"upload_files": True, "geometry": True, "texture": True, "max_image_inputs": 5})
-        gateway = AgentGateway(managed=managed, embedded=embedded)  # type: ignore[arg-type]
+        gateway = AgentGateway(managed=managed, embedded=embedded)
 
         capabilities = gateway.request("hunyuan", "capabilities", {}, task_id="job-3d", timeout=5)
         self.assertEqual(capabilities["transport"], "playwright")

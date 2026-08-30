@@ -24,6 +24,12 @@ from .store import SQLiteStore
 from .studio_mcp import MCPError, MCPToolResult, StudioMCPClient, find_studio_mcp
 from .webview2_browser import WebView2BrowserController
 
+PROVIDER_LABELS = {
+    "chatgpt": "Builder",
+    "deepseek": "Reviewer",
+    "hunyuan": "3D Generator",
+}
+
 
 class CoreError(RuntimeError):
     def __init__(self, code: str, message: str, *, status: int = 400, details: dict[str, Any] | None = None) -> None:
@@ -58,13 +64,11 @@ class _UnavailableStudio:
 def _milliseconds(value: str) -> int:
     try:
         return int(datetime.fromisoformat(value).timestamp() * 1000)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return int(time.time() * 1000)
 
 
 class ZenlessCore:
-    """Authoritative headless Zenless state shared by REST, WS and the shell."""
-
     DEFAULT_SETTINGS = {
         "models": {
             "chatgpt": {"model": "auto", "reasoning": True},
@@ -137,9 +141,7 @@ class ZenlessCore:
             status_callback=self._on_provider_status,
         )
         try:
-            self.studio: Any = StudioMCPClient(
-                find_studio_mcp(), notification_callback=self._on_mcp_notification
-            )
+            self.studio: Any = StudioMCPClient(find_studio_mcp(), notification_callback=self._on_mcp_notification)
         except MCPError as exc:
             self.studio = _UnavailableStudio(str(exc))
             self._connections["studio"] = "OFF"
@@ -214,31 +216,31 @@ class ZenlessCore:
         return [
             {
                 "id": "chatgpt",
-                "name": "ChatGPT",
+                "name": PROVIDER_LABELS["chatgpt"],
                 "status": connections["chatgpt"],
                 "model": models["chatgpt"]["model"],
                 "reasoning": bool(models["chatgpt"]["reasoning"]),
             },
             {
                 "id": "deepseek",
-                "name": "DeepSeek",
+                "name": PROVIDER_LABELS["deepseek"],
                 "status": connections["deepseek"],
                 "model": models["deepseek"]["model"],
                 "reasoning": bool(models["deepseek"]["reasoning"]),
             },
             {
                 "id": "hunyuan",
-                "name": "Hunyuan 3D",
+                "name": PROVIDER_LABELS["hunyuan"],
                 "status": connections["hunyuan"],
                 "version": models["hunyuan"]["version"],
                 "quality": models["hunyuan"]["quality"],
             },
-            {"id": "studio", "name": "Roblox Studio", "status": connections["studio"]},
+            {"id": "studio", "name": "Studio", "status": connections["studio"]},
         ]
 
     def login_provider(self, provider: str) -> bool:
         if provider not in {"chatgpt", "deepseek", "hunyuan"}:
-            raise CoreError("UNKNOWN_PROVIDER", "Provedor desconhecido.", status=404)
+            raise CoreError("UNKNOWN_PROVIDER", "Unknown provider.", status=404)
         with self._provider_lock:
             existing = self._provider_threads.get(provider)
             if existing is not None and existing.is_alive():
@@ -259,7 +261,7 @@ class ZenlessCore:
     def job(self, job_id: str) -> dict[str, Any]:
         task = self.store.load_task(job_id)
         if task is None:
-            raise CoreError("JOB_NOT_FOUND", "Tarefa não encontrada.", status=404)
+            raise CoreError("JOB_NOT_FOUND", "Job not found.", status=404)
         return self._task_to_job(task)
 
     def create_job(
@@ -283,7 +285,7 @@ class ZenlessCore:
 
     def pause_job(self, job_id: str) -> dict[str, Any]:
         if not self.orchestrator.pause(job_id):
-            raise CoreError("JOB_NOT_PAUSABLE", "A tarefa não pode ser pausada neste estado.", status=409)
+            raise CoreError("JOB_NOT_PAUSABLE", "The job cannot be paused in its current state.", status=409)
         return self.job(job_id)
 
     def resume_job(self, job_id: str) -> dict[str, Any]:
@@ -291,7 +293,7 @@ class ZenlessCore:
             return self.job(job_id)
         task = self._require_task(job_id)
         if str(task.get("stage")) != Stage.PAUSED.value or "Checkpoint recuperado" not in str(task.get("error")):
-            raise CoreError("JOB_NOT_RESUMABLE", "A tarefa não está pausada.", status=409)
+            raise CoreError("JOB_NOT_RESUMABLE", "The job is not paused.", status=409)
         try:
             options = TaskOptions(**dict(task.get("options") or {}))
             replacement_id = self.orchestrator.submit(str(task.get("prompt") or ""), options)
@@ -301,9 +303,9 @@ class ZenlessCore:
             job_id,
             stage=Stage.BLOCKED,
             status="blocked",
-            error=f"Reiniciada com segurança como {replacement_id}; nenhuma escrita anterior foi repetida.",
+            error=f"Safely restarted as {replacement_id}; no previous write was repeated.",
         )
-        self.store.append_message(job_id, "Recovery", "system", f"Tarefa substituta: {replacement_id}")
+        self.store.append_message(job_id, "Recovery", "system", f"Replacement job: {replacement_id}")
         return self.job(replacement_id)
 
     def cancel_job(self, job_id: str) -> bool:
@@ -320,17 +322,20 @@ class ZenlessCore:
     ) -> dict[str, Any]:
         objective = content.strip()
         if not objective:
-            objective = "Analise os anexos enviados e implemente o pedido compatível no Roblox Studio."
+            objective = "Analyze the submitted attachments and implement the compatible Studio request."
         if job_id:
             existing = self.store.load_task(job_id)
             if existing and str(existing.get("status")) in {"running", "waiting"}:
                 raise CoreError(
                     "JOB_ALREADY_RUNNING",
-                    "A tarefa atual ainda está em execução; pause, conclua ou cancele antes de enviar outra.",
+                    "The current job is still running. Pause, complete, or cancel it before sending another request.",
                     status=409,
                 )
+        task_options = TaskOptions.from_api(options)
+        self._preflight_providers(task_options)
         job = self.create_job(objective, options=options, attachments=attachments)
-        message_id = uuid.uuid4().hex
+        user_messages = [message for message in self.messages(job["id"]) if message["role"] == "user"]
+        message_id = user_messages[-1]["id"] if user_messages else uuid.uuid4().hex
         return {"messageId": message_id, "jobId": job["id"]}
 
     def cancel_generation(self, job_id: str) -> bool:
@@ -343,20 +348,63 @@ class ZenlessCore:
                 continue
         return result
 
+    def _preflight_providers(self, options: TaskOptions) -> None:
+        required = ["chatgpt"]
+        if options.independent_review:
+            required.append("deepseek")
+        if options.create_3d_asset:
+            required.append("hunyuan")
+        for provider in required:
+            if self.connections()[provider] == "READY":
+                continue
+            try:
+                ready = self.bridge.wait_for_provider(provider, timeout=0.5)
+            except BridgeError as exc:
+                self._set_connection(provider, "ERR")
+                raise CoreError(
+                    "PROVIDER_UNAVAILABLE",
+                    f"{PROVIDER_LABELS[provider]} is unavailable.",
+                    status=503,
+                    details={"provider": provider},
+                ) from exc
+            if ready:
+                self._set_connection(provider, "READY")
+                continue
+            if self.connections()[provider] != "ERR":
+                self._set_connection(provider, "LOGIN")
+            raise CoreError(
+                "PROVIDER_LOGIN_REQUIRED",
+                f"{PROVIDER_LABELS[provider]} requires login.",
+                status=409,
+                details={"provider": provider},
+            )
+
     def messages(self, job_id: str) -> list[dict[str, Any]]:
         result = []
         for row in self.store.task_messages(job_id):
             role = "user" if row["role"] == "user" else ("system" if row["role"] == "error" else "zenless")
-            result.append(
-                {
-                    "id": f"msg-{row['id']}",
-                    "role": role,
-                    "content": row["content"],
-                    "timestamp": _milliseconds(row["created_at"]),
-                    "jobId": job_id,
-                }
-            )
+            message = {
+                "id": f"msg-{row['id']}",
+                "role": role,
+                "content": row["content"],
+                "timestamp": _milliseconds(row["created_at"]),
+                "jobId": job_id,
+            }
+            action = self._message_action(str(row["content"]))
+            if action:
+                message["action"] = action
+            result.append(message)
         return result
+
+    @staticmethod
+    def _message_action(content: str) -> dict[str, str] | None:
+        normalized = content.casefold()
+        if "login" not in normalized and "authenticate" not in normalized:
+            return None
+        for provider, label in PROVIDER_LABELS.items():
+            if provider in normalized or label.casefold() in normalized:
+                return {"type": "LOGIN", "provider": provider}
+        return None
 
     def context(self, job_id: str, *, refresh: bool = False) -> list[dict[str, Any]]:
         if refresh:
@@ -366,7 +414,7 @@ class ZenlessCore:
             return [self._public_context(item) for item in stored]
         task = self.store.load_task(job_id)
         if task is None:
-            raise CoreError("JOB_NOT_FOUND", "Tarefa não encontrada.", status=404)
+            raise CoreError("JOB_NOT_FOUND", "Job not found.", status=404)
         items = self._derive_context_items(job_id, task.get("context") or {})
         if items:
             self.store.replace_context_items(job_id, items)
@@ -375,12 +423,12 @@ class ZenlessCore:
     def context_item(self, item_id: str) -> dict[str, Any]:
         item = self.store.context_item(item_id)
         if item is None:
-            raise CoreError("CONTEXT_NOT_FOUND", "Item de contexto não encontrado.", status=404)
+            raise CoreError("CONTEXT_NOT_FOUND", "Context item not found.", status=404)
         return self._public_context(item)
 
     def set_context_state(self, item_id: str, state: str) -> bool:
         if not self.store.set_context_state(item_id, state):
-            raise CoreError("CONTEXT_NOT_FOUND", "Item de contexto não encontrado.", status=404)
+            raise CoreError("CONTEXT_NOT_FOUND", "Context item not found.", status=404)
         item = self.store.context_item(item_id)
         if item:
             self.events.publish("CONTEXT_UPDATED", {"items": self.context(str(item["job_id"]))})
@@ -398,8 +446,11 @@ class ZenlessCore:
             name = str(arguments.get("file_path") or arguments.get("target_file") or raw.get("tool") or "change")
             content = json.dumps(arguments, ensure_ascii=False, indent=2)
             diff = [
-                {"type": "hunk", "content": f"@@ StudioMCP {raw.get('tool', '')} @@"},
-                *({"type": "added", "content": line, "newLine": line_no} for line_no, line in enumerate(content.splitlines(), 1)),
+                {"type": "hunk", "content": f"@@ Studio {raw.get('tool', '')} @@"},
+                *(
+                    {"type": "added", "content": line, "newLine": line_no}
+                    for line_no, line in enumerate(content.splitlines(), 1)
+                ),
             ]
             files.append(
                 {
@@ -429,7 +480,7 @@ class ZenlessCore:
             "warnings": issues if risk not in {"HIGH", "CRITICAL"} else [],
             "suggestions": [str(item) for item in raw.get("required_changes", [])],
             "summary": str(raw.get("summary", "")),
-            "reviewer": "DeepSeek",
+            "reviewer": "Reviewer",
             "timestamp": _milliseconds(task["updated_at"]),
             "files": self.changes(job_id),
             "ready": bool(raw),
@@ -438,14 +489,14 @@ class ZenlessCore:
     def approve_changes(self, job_id: str, approved: bool, note: str = "") -> bool:
         decision = "approve" if approved else "reject"
         if not self.orchestrator.approve_active(job_id, ("changes:", "repair:"), decision, note):
-            raise CoreError("NO_CHANGE_GATE", "Nenhuma alteração está aguardando decisão.", status=409)
+            raise CoreError("NO_CHANGE_GATE", "No change is waiting for a decision.", status=409)
         return True
 
     def edit_changes(self, job_id: str, _file_id: str, content: str) -> bool:
         if not content.strip():
-            raise CoreError("EMPTY_EDIT", "A observação de edição está vazia.")
+            raise CoreError("EMPTY_EDIT", "The edit note is empty.")
         if not self.orchestrator.approve_active(job_id, ("changes:", "repair:"), "edit", content):
-            raise CoreError("NO_CHANGE_GATE", "Nenhuma alteração está aguardando edição.", status=409)
+            raise CoreError("NO_CHANGE_GATE", "No change is waiting for an edit.", status=409)
         return True
 
     def visual(self, job_id: str) -> dict[str, Any]:
@@ -490,24 +541,24 @@ class ZenlessCore:
 
     def approve_visual(self, job_id: str) -> bool:
         if not self.orchestrator.approve_active(job_id, ("visual",), "approve"):
-            raise CoreError("NO_VISUAL_GATE", "Nenhum conceito visual aguarda aprovação.", status=409)
+            raise CoreError("NO_VISUAL_GATE", "No visual concept is waiting for approval.", status=409)
         self.events.publish("VISUAL_APPROVED", {"view": "FRONT"})
         return True
 
     def edit_visual(self, job_id: str, prompt: str) -> bool:
         if not prompt.strip():
-            raise CoreError("EMPTY_VISUAL_EDIT", "Descreva o ajuste visual desejado.")
+            raise CoreError("EMPTY_VISUAL_EDIT", "Describe the requested visual adjustment.")
         if not self.orchestrator.approve_active(job_id, ("visual",), "edit", prompt):
-            raise CoreError("NO_VISUAL_GATE", "Nenhum conceito visual aguarda edição.", status=409)
+            raise CoreError("NO_VISUAL_GATE", "No visual concept is waiting for an edit.", status=409)
         return True
 
     def regenerate_visual(self, job_id: str, view: str = "") -> bool:
         normalized = view.strip().casefold()
         if normalized and normalized not in {"front", "back", "left", "right", "top", "bottom"}:
-            raise CoreError("INVALID_VISUAL_VIEW", "Vista visual inválida.")
+            raise CoreError("INVALID_VISUAL_VIEW", "Invalid visual view.")
         note = f"regen:view:{normalized}" if normalized else "regen:all"
         if not self.orchestrator.approve_active(job_id, ("visual",), "edit", note):
-            raise CoreError("NO_VISUAL_GATE", "Nenhum conceito visual aguarda regeneração.", status=409)
+            raise CoreError("NO_VISUAL_GATE", "No visual concept is waiting for regeneration.", status=409)
         return True
 
     def model(self, job_id: str) -> dict[str, Any]:
@@ -522,10 +573,16 @@ class ZenlessCore:
             assets = [candidate for candidate in self.store.assets(job_id) if candidate["kind"] in {"GLB", "GLTF"}]
             asset = assets[0] if assets else None
         if asset is None:
-            state = "GENERATING" if stage == Stage.GENERATING_3D.value else ("FAILED" if stage in {Stage.FAILED.value, Stage.BLOCKED.value} else "EMPTY")
+            state = (
+                "GENERATING"
+                if stage == Stage.GENERATING_3D.value
+                else ("FAILED" if stage in {Stage.FAILED.value, Stage.BLOCKED.value} else "EMPTY")
+            )
             return {
                 "state": state,
-                "geometryStatus": "GENERATING" if state == "GENERATING" else ("FAILED" if state == "FAILED" else "IDLE"),
+                "geometryStatus": "GENERATING"
+                if state == "GENERATING"
+                else ("FAILED" if state == "FAILED" else "IDLE"),
                 "textureStatus": "IDLE",
             }
         approved = str(model.get("status") or "") == "APPROVED"
@@ -539,17 +596,19 @@ class ZenlessCore:
 
     def approve_model(self, job_id: str) -> bool:
         if not self.orchestrator.approve_active(job_id, ("3d",), "approve"):
-            raise CoreError("NO_MODEL_GATE", "Nenhum modelo 3D aguarda aprovação.", status=409)
+            raise CoreError("NO_MODEL_GATE", "No 3D model is waiting for approval.", status=409)
         self.events.publish("MODEL_APPROVED", {})
         return True
 
     def regenerate_model(self, job_id: str, target: str) -> bool:
         if target not in {"geometry", "texture"}:
-            raise CoreError("INVALID_MODEL_TARGET", "Alvo 3D inválido.")
+            raise CoreError("INVALID_MODEL_TARGET", "Invalid 3D target.")
         if not self.bridge.wait_for_provider("hunyuan", timeout=0.5):
-            raise CoreError("PROVIDER_LOGIN_REQUIRED", "Hunyuan requer login.", status=409)
+            raise CoreError(
+                "PROVIDER_LOGIN_REQUIRED", "3D Generator requires login.", status=409, details={"provider": "hunyuan"}
+            )
         if not self.orchestrator.approve_active(job_id, ("3d",), "edit", f"regen:{target}"):
-            raise CoreError("NO_MODEL_GATE", "Nenhum modelo 3D aguarda regeneração.", status=409)
+            raise CoreError("NO_MODEL_GATE", "No 3D model is waiting for regeneration.", status=409)
         return True
 
     def assets(self) -> list[dict[str, Any]]:
@@ -572,14 +631,18 @@ class ZenlessCore:
     def asset_file(self, asset_id: str) -> tuple[Path, str, str]:
         asset = self.store.asset(asset_id)
         if asset is None:
-            raise CoreError("ASSET_NOT_FOUND", "Ativo não encontrado.", status=404)
+            raise CoreError("ASSET_NOT_FOUND", "Asset not found.", status=404)
         path = Path(str(asset["path"])).resolve()
         if not self._is_within(path, self.data_root) or not path.is_file():
-            raise CoreError("ASSET_UNAVAILABLE", "Ativo local indisponível.", status=404)
+            raise CoreError("ASSET_UNAVAILABLE", "Local asset unavailable.", status=404)
         return path, str(asset["mime"]), str(asset["name"])
 
     def studio_state(self) -> dict[str, str]:
-        return {"state": "ONLINE" if self.connections()["studio"] == "READY" else ("CONNECTING" if self.connections()["studio"] == "CONNECTING" else "OFFLINE")}
+        return {
+            "state": "ONLINE"
+            if self.connections()["studio"] == "READY"
+            else ("CONNECTING" if self.connections()["studio"] == "CONNECTING" else "OFFLINE")
+        }
 
     def studio_tree(self) -> list[dict[str, Any]]:
         with self._studio_lock:
@@ -591,7 +654,7 @@ class ZenlessCore:
                 self.studio.start()
             studios = self.studio.list_studios()
             if not studios:
-                raise MCPError("Nenhuma instância do Roblox Studio conectada.")
+                raise MCPError("No Studio instance is connected.")
             target = studios[0]
             result = self.studio.call_tool(
                 "search_game_tree",
@@ -612,7 +675,7 @@ class ZenlessCore:
         except Exception as exc:
             self._set_connection("studio", "ERR")
             self.events.publish("STUDIO_STATE_CHANGED", {"state": "OFFLINE"})
-            self._report("studio", "refresh", exc, "Abra o Roblox Studio em Edit e habilite MCP Servers.")
+            self._report("studio", "refresh", exc, "Open Studio in Edit mode and enable MCP servers.")
             raise CoreError("STUDIO_UNAVAILABLE", str(exc), status=503) from exc
 
     def search_studio(self, query: str) -> list[dict[str, Any]]:
@@ -627,14 +690,14 @@ class ZenlessCore:
         with self._studio_lock:
             node = self._studio_nodes.get(node_id)
         if node is None:
-            raise CoreError("STUDIO_NODE_NOT_FOUND", "Objeto do Studio não encontrado.", status=404)
+            raise CoreError("STUDIO_NODE_NOT_FOUND", "Studio object not found.", status=404)
         return dict(node)
 
     def set_studio_reference(self, node_id: str, action: str) -> bool:
         with self._studio_lock:
             node = self._studio_nodes.get(node_id)
             if node is None:
-                raise CoreError("STUDIO_NODE_NOT_FOUND", "Objeto do Studio não encontrado.", status=404)
+                raise CoreError("STUDIO_NODE_NOT_FOUND", "Studio object not found.", status=404)
             if action == "lock":
                 node["locked"] = True
             elif action == "unlock":
@@ -642,19 +705,19 @@ class ZenlessCore:
             elif action == "context":
                 node["usedAsContext"] = True
             else:
-                raise CoreError("INVALID_STUDIO_ACTION", "Ação de referência inválida.")
+                raise CoreError("INVALID_STUDIO_ACTION", "Invalid reference action.")
         self.events.publish("STUDIO_TREE_UPDATED", {"tree": self.studio_tree()})
         return True
 
     def start_test(self, job_id: str, profile: str = "STANDARD") -> bool:
         self._require_task(job_id)
         if not self.qa.start_manual(job_id, profile):
-            raise CoreError("TEST_ALREADY_RUNNING", "Já existe um teste em execução.", status=409)
+            raise CoreError("TEST_ALREADY_RUNNING", "A test is already running.", status=409)
         return True
 
     def stop_test(self, job_id: str) -> bool:
         if not self.qa.stop(job_id):
-            raise CoreError("TEST_NOT_RUNNING", "Nenhum teste está em execução.", status=409)
+            raise CoreError("TEST_NOT_RUNNING", "No test is running.", status=409)
         return True
 
     def test_state(self, job_id: str) -> dict[str, Any]:
@@ -736,10 +799,15 @@ class ZenlessCore:
 
     def set_model(self, provider: str, model: str) -> bool:
         if provider not in {"chatgpt", "deepseek", "hunyuan"} or not model.strip():
-            raise CoreError("INVALID_MODEL", "Modelo ou provedor inválido.")
+            raise CoreError("INVALID_MODEL", "Invalid model or provider.")
         if model != "auto":
             if not self.bridge.wait_for_provider(provider, timeout=0.5):
-                raise CoreError("PROVIDER_LOGIN_REQUIRED", f"{provider} requer login.", status=409)
+                raise CoreError(
+                    "PROVIDER_LOGIN_REQUIRED",
+                    f"{PROVIDER_LABELS[provider]} requires login.",
+                    status=409,
+                    details={"provider": provider},
+                )
             self.bridge.request(provider, "select_model", {"model": model}, task_id="settings", timeout=15)
         current = self.settings()
         if provider == "hunyuan":
@@ -784,7 +852,12 @@ class ZenlessCore:
         except Exception as exc:
             self._set_connection("browser", "ERR")
             self._set_boot("BROWSER", "OFF")
-            self._report("browser", "startup", exc, "WebView2 continuará disponível; Playwright será preparado no login se necessário.")
+            self._report(
+                "browser",
+                "startup",
+                exc,
+                "The embedded browser remains available; the managed browser will be prepared during login if needed.",
+            )
         self._refresh_provider_states()
         try:
             self.refresh_studio()
@@ -805,7 +878,9 @@ class ZenlessCore:
         except Exception as exc:
             self._set_connection(provider, "ERR")
             self.events.publish("AGENT_STATUS_CHANGED", {"agent": provider, "status": "ERR"})
-            self._report("browser", f"login:{provider}", exc, "Tente Login novamente; senha, MFA e CAPTCHA permanecem manuais.")
+            self._report(
+                "browser", f"login:{provider}", exc, "Retry login. Password, MFA, and CAPTCHA steps remain manual."
+            )
 
     def _refresh_provider_states(self) -> None:
         statuses = self.bridge.provider_status()
@@ -868,30 +943,49 @@ class ZenlessCore:
             text = str(task.get("final_text") or event.message)
             self.events.publish(
                 "CHAT_MESSAGE",
-                {
-                    "message": {
-                        "id": uuid.uuid4().hex,
-                        "role": "zenless",
-                        "content": text,
-                        "timestamp": int(time.time() * 1000),
-                        "jobId": event.task_id,
-                    }
-                },
+                {"message": self._event_chat_message(event.task_id, text, "zenless")},
             )
-        elif event.stage == Stage.FAILED:
-            self.events.publish("JOB_FAILED", {"jobId": event.task_id, "reason": event.message})
+        elif event.stage in {Stage.BLOCKED, Stage.FAILED}:
+            if event.stage == Stage.FAILED:
+                self.events.publish("JOB_FAILED", {"jobId": event.task_id, "reason": event.message})
+            self.events.publish(
+                "CHAT_MESSAGE",
+                {"message": self._event_chat_message(event.task_id, event.message, "system")},
+            )
+
+    def _event_chat_message(self, job_id: str, content: str, role: str) -> dict[str, Any]:
+        stored = self.messages(job_id)
+        for message in reversed(stored):
+            if message["content"] == content and message["role"] == role:
+                return message
+        result: dict[str, Any] = {
+            "id": uuid.uuid4().hex,
+            "role": role,
+            "content": content,
+            "timestamp": int(time.time() * 1000),
+            "jobId": job_id,
+        }
+        action = self._message_action(content)
+        if action:
+            result["action"] = action
+        return result
 
     def _register_model_from_event(self, event: PipelineEvent) -> None:
         try:
             payload = json.loads(event.detail)
-        except (TypeError, json.JSONDecodeError):
+        except TypeError, json.JSONDecodeError:
             payload = {}
         path_text = str(payload.get("path") or "") if isinstance(payload, dict) else ""
         if not path_text:
             return
         path = Path(path_text).resolve()
         if not self._is_within(path, self.data_root) or not path.is_file():
-            self._report("asset", "hunyuan", RuntimeError("Hunyuan retornou caminho fora do armazenamento Zenless."), "Use o download interno autorizado.")
+            self._report(
+                "asset",
+                "hunyuan",
+                RuntimeError("The 3D generator returned a path outside local storage."),
+                "Use the authorized internal download flow.",
+            )
             return
         asset = self._register_file_asset(path, job_id=event.task_id, kind="GLB")
         self.events.publish("ASSETS_UPDATED", {"assets": self.assets()})
@@ -936,7 +1030,7 @@ class ZenlessCore:
     def _require_task(self, job_id: str) -> dict[str, Any]:
         task = self.store.load_task(job_id)
         if task is None:
-            raise CoreError("JOB_NOT_FOUND", "Tarefa não encontrada.", status=404)
+            raise CoreError("JOB_NOT_FOUND", "Job not found.", status=404)
         return task
 
     @staticmethod
@@ -1013,7 +1107,13 @@ class ZenlessCore:
             payload = json.loads(text)
         except json.JSONDecodeError:
             payload = []
-        raw_items = payload if isinstance(payload, list) else payload.get("results", payload.get("instances", [])) if isinstance(payload, dict) else []
+        raw_items = (
+            payload
+            if isinstance(payload, list)
+            else payload.get("results", payload.get("instances", []))
+            if isinstance(payload, dict)
+            else []
+        )
         nodes: dict[str, dict[str, Any]] = {}
         roots: list[dict[str, Any]] = []
         for index, raw in enumerate(raw_items if isinstance(raw_items, list) else []):
@@ -1031,7 +1131,7 @@ class ZenlessCore:
     def _register_file_asset(self, path: Path, *, job_id: str, kind: str) -> str:
         resolved = path.resolve()
         if not self._is_within(resolved, self.data_root) or not resolved.is_file():
-            raise CoreError("INVALID_ASSET_PATH", "O ativo não pertence ao armazenamento Zenless.")
+            raise CoreError("INVALID_ASSET_PATH", "The asset does not belong to local storage.")
         hasher = hashlib.sha256()
         with resolved.open("rb") as stream:
             while chunk := stream.read(1024 * 1024):

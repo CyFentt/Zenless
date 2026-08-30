@@ -36,7 +36,7 @@ class LocalWebBridge:
         port: int = 0,
     ) -> None:
         if host != "127.0.0.1":
-            raise ValueError("A bridge web do Zenless aceita somente 127.0.0.1.")
+            raise ValueError("The web bridge only accepts 127.0.0.1.")
         self.core = core
         self.frontend_root = frontend_root.resolve()
         self.host = host
@@ -52,21 +52,21 @@ class LocalWebBridge:
     @property
     def base_url(self) -> str:
         if not self.port:
-            raise RuntimeError("Bridge ainda não iniciou.")
+            raise RuntimeError("Bridge has not started.")
         return f"http://{self.host}:{self.port}"
 
     def start(self, timeout: float = 20.0) -> str:
         if self._thread is not None and self._thread.is_alive():
             return self.base_url
         if not (self.frontend_root / "index.html").is_file():
-            raise RuntimeError(f"Frontend compilado não encontrado: {self.frontend_root}")
+            raise RuntimeError(f"Compiled frontend not found: {self.frontend_root}")
         self._ready.clear()
         self._stopped.clear()
         self._start_error = None
         self._thread = threading.Thread(target=self._thread_main, name="Zenless-WebBridge", daemon=True)
         self._thread.start()
         if not self._ready.wait(timeout):
-            raise RuntimeError("Bridge web não confirmou inicialização.")
+            raise RuntimeError("The web bridge did not confirm startup.")
         if self._start_error is not None:
             raise RuntimeError(str(self._start_error)) from self._start_error
         return self.base_url
@@ -116,7 +116,7 @@ class LocalWebBridge:
         server = getattr(site, "_server", None)
         sockets = server.sockets if server is not None else None
         if not sockets:
-            raise RuntimeError("Bridge local não recebeu uma porta.")
+            raise RuntimeError("The local bridge did not receive a port.")
         self.port = int(sockets[0].getsockname()[1])
         self.core.set_runtime_port(self.port)
 
@@ -130,7 +130,7 @@ class LocalWebBridge:
             self._validate_local_request(request)
             if request.path.startswith("/api/") and request.path != "/api/session":
                 if not secrets.compare_digest(request.headers.get("X-Zenless-Token", ""), self.token):
-                    raise CoreError("UNAUTHORIZED", "Sessão local inválida.", status=401)
+                    raise CoreError("UNAUTHORIZED", "Invalid local session.", status=401)
             response = await handler(request)
         except CoreError as exc:
             response = web.json_response(
@@ -138,13 +138,9 @@ class LocalWebBridge:
                 status=exc.status,
             )
         except web.HTTPException as exc:
-            response = web.json_response(
-                {"code": f"HTTP_{exc.status}", "message": exc.reason}, status=exc.status
-            )
+            response = web.json_response({"code": f"HTTP_{exc.status}", "message": exc.reason}, status=exc.status)
         except json.JSONDecodeError:
-            response = web.json_response(
-                {"code": "INVALID_JSON", "message": "JSON inválido."}, status=400
-            )
+            response = web.json_response({"code": "INVALID_JSON", "message": "Invalid JSON."}, status=400)
         except Exception as exc:
             self.core.diagnostics.report(
                 severity="ERROR",
@@ -153,10 +149,10 @@ class LocalWebBridge:
                 message=str(exc),
                 exc=exc,
                 request_id=request_id,
-                recovery_action="Repita a ação; se persistir, consulte Settings > Logs.",
+                recovery_action="Retry the action. If it persists, open Settings > Logs.",
             )
             response = web.json_response(
-                {"code": "INTERNAL_ERROR", "message": "Falha interna controlada."}, status=500
+                {"code": "INTERNAL_ERROR", "message": "Controlled internal failure."}, status=500
             )
         response.headers["X-Request-Id"] = request_id
         response.headers["X-Content-Type-Options"] = "nosniff"
@@ -167,14 +163,14 @@ class LocalWebBridge:
     def _validate_local_request(self, request: web.Request) -> None:
         remote = request.remote or ""
         if remote not in {"127.0.0.1", "::1"}:
-            raise CoreError("LOCAL_ONLY", "A bridge aceita somente conexões locais.", status=403)
+            raise CoreError("LOCAL_ONLY", "The bridge accepts local connections only.", status=403)
         host = request.host.casefold()
         allowed_hosts = {f"127.0.0.1:{self.port}", f"localhost:{self.port}"}
         if self.port and host not in allowed_hosts:
-            raise CoreError("INVALID_HOST", "Host local inválido.", status=403)
+            raise CoreError("INVALID_HOST", "Invalid local host.", status=403)
         origin = request.headers.get("Origin")
         if origin and origin not in {f"http://127.0.0.1:{self.port}", f"http://localhost:{self.port}"}:
-            raise CoreError("INVALID_ORIGIN", "Origem não autorizada.", status=403)
+            raise CoreError("INVALID_ORIGIN", "Unauthorized origin.", status=403)
 
     def _add_routes(self, app: web.Application) -> None:
         app.router.add_get("/api/session", self._session)
@@ -253,7 +249,7 @@ class LocalWebBridge:
         body = await self._json_body(request)
         title = str(body.get("title") or "").strip()
         if not title:
-            raise CoreError("EMPTY_JOB", "Título da tarefa vazio.")
+            raise CoreError("EMPTY_JOB", "Task title is empty.")
         return await self._idempotent(
             request,
             "create-job",
@@ -284,7 +280,7 @@ class LocalWebBridge:
             job_id = str(body.get("jobId") or "") or None
             raw_options = body.get("options")
             if raw_options is not None and not isinstance(raw_options, dict):
-                raise CoreError("INVALID_TASK_OPTIONS", "Opções da tarefa inválidas.")
+                raise CoreError("INVALID_TASK_OPTIONS", "Invalid task options.")
             options = raw_options if isinstance(raw_options, dict) else None
         dispatched = False
 
@@ -318,7 +314,7 @@ class LocalWebBridge:
         action = request.match_info["action"]
         states = {"include": "included", "exclude": "excluded", "lock": "locked", "unlock": "included"}
         if action not in states:
-            raise CoreError("INVALID_CONTEXT_ACTION", "Ação de contexto inválida.", status=404)
+            raise CoreError("INVALID_CONTEXT_ACTION", "Invalid context action.", status=404)
         return self._json({"ok": self.core.set_context_state(request.match_info["item_id"], states[action])})
 
     async def _changes(self, request: web.Request) -> web.Response:
@@ -392,7 +388,7 @@ class LocalWebBridge:
     async def _studio_action(self, request: web.Request) -> web.Response:
         action = request.match_info["action"]
         if action not in {"lock", "unlock", "context"}:
-            raise CoreError("INVALID_STUDIO_ACTION", "Ação de Studio inválida.", status=404)
+            raise CoreError("INVALID_STUDIO_ACTION", "Invalid Studio action.", status=404)
         return self._json({"ok": self.core.set_studio_reference(request.match_info["node_id"], action)})
 
     async def _start_test(self, request: web.Request) -> web.Response:
@@ -420,7 +416,7 @@ class LocalWebBridge:
 
     async def _websocket(self, request: web.Request) -> web.WebSocketResponse:
         if not secrets.compare_digest(request.query.get("token", ""), self.token):
-            raise CoreError("UNAUTHORIZED", "Sessão WebSocket inválida.", status=401)
+            raise CoreError("UNAUTHORIZED", "Invalid WebSocket session.", status=401)
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue[CoreEvent] = asyncio.Queue(maxsize=500)
 
@@ -439,9 +435,6 @@ class LocalWebBridge:
             if not loop.is_closed():
                 loop.call_soon_threadsafe(put)
 
-        # Subscribe before completing the HTTP upgrade. Otherwise the client can
-        # publish immediately after ws_connect() returns while this handler is
-        # still between prepare() and subscribe(), losing the first event.
         unsubscribe = self.core.events.subscribe(enqueue)
         socket = web.WebSocketResponse(heartbeat=20, max_msg_size=64 * 1024)
         sender_task: asyncio.Task[None] | None = None
@@ -471,11 +464,9 @@ class LocalWebBridge:
             candidate = self.frontend_root / "index.html"
         return web.FileResponse(candidate)
 
-    async def _multipart_chat(
-        self, request: web.Request
-    ) -> tuple[str, str | None, list[Path], dict[str, Any] | None]:
+    async def _multipart_chat(self, request: web.Request) -> tuple[str, str | None, list[Path], dict[str, Any] | None]:
         if request.content_length and request.content_length > self.MAX_MULTIPART_BYTES:
-            raise CoreError("UPLOAD_TOO_LARGE", "Upload total acima de 96 MB.", status=413)
+            raise CoreError("UPLOAD_TOO_LARGE", "Total upload exceeds 96 MB.", status=413)
         reader = await request.multipart()
         content = ""
         job_id: str | None = None
@@ -502,15 +493,15 @@ class LocalWebBridge:
                     try:
                         parsed_options = json.loads(raw_options)
                     except json.JSONDecodeError as exc:
-                        raise CoreError("INVALID_TASK_OPTIONS", "Opções da tarefa inválidas.") from exc
+                        raise CoreError("INVALID_TASK_OPTIONS", "Invalid task options.") from exc
                     if not isinstance(parsed_options, dict):
-                        raise CoreError("INVALID_TASK_OPTIONS", "Opções da tarefa inválidas.")
+                        raise CoreError("INVALID_TASK_OPTIONS", "Invalid task options.")
                     options = parsed_options
                     continue
                 if part.name != "attachments":
                     continue
                 if len(files) >= self.MAX_ATTACHMENTS:
-                    raise CoreError("TOO_MANY_ATTACHMENTS", "Máximo de 5 anexos.", status=413)
+                    raise CoreError("TOO_MANY_ATTACHMENTS", "Maximum of 5 attachments.", status=413)
                 filename = self._safe_filename(part.filename or f"attachment-{len(files) + 1}")
                 target = upload_root / f"{uuid.uuid4().hex[:10]}-{filename}"
                 size = 0
@@ -519,11 +510,11 @@ class LocalWebBridge:
                         size += len(chunk)
                         total += len(chunk)
                         if size > self.MAX_ATTACHMENT_BYTES or total > self.MAX_MULTIPART_BYTES:
-                            raise CoreError("UPLOAD_TOO_LARGE", "Anexo acima do limite permitido.", status=413)
+                            raise CoreError("UPLOAD_TOO_LARGE", "Attachment exceeds the allowed limit.", status=413)
                         stream.write(chunk)
                 files.append(target.resolve())
             if not content.strip() and not files:
-                raise CoreError("EMPTY_MESSAGE", "Mensagem e anexos vazios.")
+                raise CoreError("EMPTY_MESSAGE", "Message and attachments are empty.")
             return content, job_id, files, options
         except Exception:
             for path in files:
@@ -536,10 +527,10 @@ class LocalWebBridge:
 
     async def _json_body(self, request: web.Request) -> dict[str, Any]:
         if request.content_length and request.content_length > self.MAX_JSON_BYTES:
-            raise CoreError("JSON_TOO_LARGE", "Corpo JSON acima de 2 MB.", status=413)
+            raise CoreError("JSON_TOO_LARGE", "JSON body exceeds 2 MB.", status=413)
         payload = await request.json(loads=json.loads)
         if not isinstance(payload, dict):
-            raise CoreError("INVALID_JSON_SHAPE", "O corpo JSON precisa ser um objeto.")
+            raise CoreError("INVALID_JSON_SHAPE", "The JSON body must be an object.")
         return payload
 
     async def _optional_json_body(self, request: web.Request) -> dict[str, Any]:
@@ -558,20 +549,20 @@ class LocalWebBridge:
         if not key:
             return self._json(await callback())
         if not re.fullmatch(r"[A-Za-z0-9._:-]{8,128}", key):
-            raise CoreError("INVALID_IDEMPOTENCY_KEY", "Idempotency-Key inválida.")
+            raise CoreError("INVALID_IDEMPOTENCY_KEY", "Invalid Idempotency-Key.")
         operation = self.core.store.claim_operation(key, kind, resource_id)
         if operation["kind"] != kind:
-            raise CoreError("IDEMPOTENCY_CONFLICT", "A chave já pertence a outra operação.", status=409)
+            raise CoreError("IDEMPOTENCY_CONFLICT", "The key already belongs to another operation.", status=409)
         if operation["state"] == "complete":
             return self._json(operation["response"])
         if operation["state"] == "pending" and not operation.get("claimed"):
-            raise CoreError("IDEMPOTENCY_PENDING", "A operação idempotente ainda está em execução.", status=409)
+            raise CoreError("IDEMPOTENCY_PENDING", "The idempotent operation is still running.", status=409)
         if operation["state"] != "pending":
-            raise CoreError("IDEMPOTENCY_FAILED", "A tentativa anterior não foi concluída.", status=409)
+            raise CoreError("IDEMPOTENCY_FAILED", "The previous attempt did not complete.", status=409)
         try:
             payload = await callback()
             if not isinstance(payload, dict):
-                raise CoreError("INVALID_OPERATION_RESULT", "Resultado idempotente inválido.", status=500)
+                raise CoreError("INVALID_OPERATION_RESULT", "Invalid idempotent operation result.", status=500)
             self.core.store.finish_operation(key, "complete", payload)
             return self._json(payload)
         except Exception as exc:

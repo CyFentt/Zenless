@@ -34,9 +34,9 @@ def proposal(*, replacement: str = "local value = 2", read_only: bool = False) -
         ]
     return json.dumps(
         {
-            "summary": "Implementação planejada",
+            "summary": "Planned implementation",
             "actions": actions,
-            "final_message": "Pronto",
+            "final_message": "Ready",
             "visual_prompt": "",
             "model_3d_prompt": "",
             "tests": ["Play Solo"],
@@ -48,9 +48,9 @@ def review(verdict: str = "approve") -> str:
     return json.dumps(
         {
             "verdict": verdict,
-            "summary": "Revisão concluída",
-            "issues": [] if verdict == "approve" else ["Ajustar implementação"],
-            "required_changes": [] if verdict == "approve" else ["Corrigir o bloco"],
+            "summary": "Review completed",
+            "issues": [] if verdict == "approve" else ["Adjust implementation"],
+            "required_changes": [] if verdict == "approve" else ["Fix the block"],
             "tests_required": ["Play Solo"],
             "risk": "low",
             "confidence": 0.95,
@@ -71,10 +71,12 @@ class FakeBridge:
         self.prompts.append((provider, prompt))
         queue = self.responses.get(provider, [])
         if not queue:
-            raise AssertionError(f"Sem resposta mock para {provider}")
+            raise AssertionError(f"No mock response for {provider}")
         return queue.pop(0)
 
-    def request(self, provider: str, action: str, payload: dict[str, Any], *, task_id: str, timeout: float) -> dict[str, Any]:
+    def request(
+        self, provider: str, action: str, payload: dict[str, Any], *, task_id: str, timeout: float
+    ) -> dict[str, Any]:
         return {"status": "ok", "artifact_name": "asset.glb", "text": "generated"}
 
 
@@ -97,9 +99,12 @@ class FakeVisualBridge(FakeBridge):
         def chunk(kind: bytes, data: bytes) -> bytes:
             return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
 
-        return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0)) + chunk(
-            b"IDAT", zlib.compress(scanlines)
-        ) + chunk(b"IEND", b"")
+        return (
+            b"\x89PNG\r\n\x1a\n"
+            + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(scanlines))
+            + chunk(b"IEND", b"")
+        )
 
     def request(
         self,
@@ -168,7 +173,9 @@ class FakeStudio:
     def list_studios(self) -> list[StudioTarget]:
         return [StudioTarget("studio-1", "Unit Test Studio", {})]
 
-    def call_tool(self, name: str, arguments: dict[str, Any], *, studio_id: str = "", timeout: float = 0) -> MCPToolResult:
+    def call_tool(
+        self, name: str, arguments: dict[str, Any], *, studio_id: str = "", timeout: float = 0
+    ) -> MCPToolResult:
         self.calls.append((name, dict(arguments)))
         if name == "start_stop_play":
             self.in_play = bool(arguments.get("is_start"))
@@ -194,14 +201,14 @@ class OrchestratorTests(unittest.TestCase):
     def make_system(
         self,
         folder: str,
-        bridge: FakeBridge,
-        studio: FakeStudio,
+        bridge: Any,
+        studio: Any,
     ) -> tuple[ZenlessOrchestrator, SQLiteStore]:
         store = SQLiteStore(Path(folder) / "state.db")
         orchestrator = ZenlessOrchestrator(
             store=store,
-            bridge=bridge,  # type: ignore[arg-type]
-            studio=studio,  # type: ignore[arg-type]
+            bridge=bridge,
+            studio=studio,
             run_root=Path(folder) / "runs",
             play_test_seconds=1,
         )
@@ -229,7 +236,7 @@ class OrchestratorTests(unittest.TestCase):
             if thread is None or not thread.is_alive():
                 return
             time.sleep(0.02)
-        self.fail("Orquestrador não concluiu dentro do timeout")
+        self.fail("Orchestrator did not finish within the timeout")
 
     def test_create_review_approve_apply_and_play_test(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
@@ -293,7 +300,7 @@ class OrchestratorTests(unittest.TestCase):
             studio = FakeStudio()
             orchestrator, store = self.make_system(folder, bridge, studio)
             task_id = "visual"
-            store.create_task(task_id, "Crie o objeto", TaskOptions(visual_first=True, create_3d_asset=False))
+            store.create_task(task_id, "Create the object", TaskOptions(visual_first=True, create_3d_asset=False))
             store.update_task(task_id, stage=Stage.GENERATING_CONCEPT, status="running")
             visual = orchestrator._generate_visual_version(
                 task_id,
@@ -313,8 +320,8 @@ class OrchestratorTests(unittest.TestCase):
             bridge = FakeHunyuanBridge({})
             orchestrator, store = self.make_system(folder, bridge, FakeStudio())
             task_id = "requires-approved-visual"
-            store.create_task(task_id, "Crie o objeto", TaskOptions())
-            with self.assertRaisesRegex(BridgeError, "versão visual aprovada"):
+            store.create_task(task_id, "Create the object", TaskOptions())
+            with self.assertRaisesRegex(BridgeError, "approved visual version"):
                 orchestrator._generate_hunyuan_model(task_id, "mesh", 1, "all")
 
     def test_rejected_change_never_reaches_multi_edit(self) -> None:
@@ -322,7 +329,7 @@ class OrchestratorTests(unittest.TestCase):
             bridge = FakeBridge({"chatgpt": [proposal()], "deepseek": [review()]})
             studio = FakeStudio()
             orchestrator, store = self.make_system(folder, bridge, studio)
-            task_id = orchestrator.submit("Não aplique", TaskOptions(create_3d_asset=False))
+            task_id = orchestrator.submit("Do not apply", TaskOptions(create_3d_asset=False))
             self.finish_with_gate_decisions(orchestrator, task_id, ["reject"])
             self.assertEqual(store.load_task(task_id)["stage"], Stage.BLOCKED.value)
             self.assertNotIn("multi_edit", [name for name, _ in studio.calls])
@@ -331,13 +338,17 @@ class OrchestratorTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             bridge = FakeBridge(
                 {
-                    "chatgpt": [proposal(), proposal(replacement="local value = 3"), proposal(replacement="local value = 4")],
+                    "chatgpt": [
+                        proposal(),
+                        proposal(replacement="local value = 3"),
+                        proposal(replacement="local value = 4"),
+                    ],
                     "deepseek": [review("revise"), review(), review(), review()],
                 }
             )
             studio = FakeStudio(["Error: simulated failure", ""])
             orchestrator, store = self.make_system(folder, bridge, studio)
-            task_id = orchestrator.submit("Corrija e teste", TaskOptions(create_3d_asset=False, max_revisions=2))
+            task_id = orchestrator.submit("Fix and test", TaskOptions(create_3d_asset=False, max_revisions=2))
             self.finish_with_gate_decisions(orchestrator, task_id, ["approve", "approve"], timeout=18)
             self.assertEqual(store.load_task(task_id)["stage"], Stage.COMPLETE.value)
             calls = [name for name, _ in studio.calls]
@@ -350,7 +361,7 @@ class OrchestratorTests(unittest.TestCase):
             bridge = FakeBridge({"chatgpt": [proposal()], "deepseek": [review(), review()]})
             studio = FakeStudio(fail_console=True)
             orchestrator, store = self.make_system(folder, bridge, studio)
-            task_id = orchestrator.submit("Teste falha segura", TaskOptions(create_3d_asset=False))
+            task_id = orchestrator.submit("Test safe failure", TaskOptions(create_3d_asset=False))
             self.finish_with_gate_decisions(orchestrator, task_id, ["approve"])
             self.assertEqual(store.load_task(task_id)["stage"], Stage.FAILED.value)
             self.assertEqual(
@@ -365,7 +376,7 @@ class OrchestratorTests(unittest.TestCase):
             studio = FakeStudio()
             orchestrator, store = self.make_system(folder, bridge, studio)
             options = TaskOptions(create_3d_asset=False, independent_review=False, automatic_play_test=False)
-            task_id = orchestrator.submit("Somente leia", options)
+            task_id = orchestrator.submit("Read only", options)
             self.finish_with_gate_decisions(orchestrator, task_id, [])
             self.assertEqual(store.load_task(task_id)["stage"], Stage.COMPLETE.value)
             self.assertEqual([name for name, _ in studio.calls].count("script_search"), 1)
@@ -386,14 +397,14 @@ class OrchestratorTests(unittest.TestCase):
             bridge = FakeBridge({"chatgpt": [proposal()], "deepseek": [review()]})
             studio = FakeStudio()
             orchestrator, store = self.make_system(folder, bridge, studio)
-            first = orchestrator.submit("Primeira tarefa", TaskOptions(create_3d_asset=False))
+            first = orchestrator.submit("First job", TaskOptions(create_3d_asset=False))
             deadline = time.monotonic() + 5
             while time.monotonic() < deadline:
                 if store.load_task(first)["stage"] == Stage.WAITING_CHANGE_APPROVAL.value:
                     break
                 time.sleep(0.02)
-            with self.assertRaisesRegex(OrchestratorError, "tarefa ativa"):
-                orchestrator.submit("Segunda tarefa", TaskOptions(create_3d_asset=False))
+            with self.assertRaisesRegex(OrchestratorError, "task is already active"):
+                orchestrator.submit("Second job", TaskOptions(create_3d_asset=False))
             self.assertTrue(orchestrator.approve_active(first, ("changes:",), "reject"))
             self.assertTrue(orchestrator.wait_for_idle(5))
             self.assertEqual(store.load_task(first)["stage"], Stage.BLOCKED.value)

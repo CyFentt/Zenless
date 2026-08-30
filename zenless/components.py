@@ -25,8 +25,6 @@ class ComponentStatus:
 
 
 class WebView2Runtime:
-    """Detects and provisions Microsoft's Evergreen WebView2 per user."""
-
     REGISTRY_PATHS = (
         rf"SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{WEBVIEW2_APP_ID}",
         rf"SOFTWARE\Microsoft\EdgeUpdate\Clients\{WEBVIEW2_APP_ID}",
@@ -39,7 +37,7 @@ class WebView2Runtime:
         executable = self._runtime_executable()
         if executable is not None:
             return ComponentStatus("WebView2", True, executable.parent.name, str(executable))
-        return ComponentStatus("WebView2", False, detail="Runtime ausente")
+        return ComponentStatus("WebView2", False, detail="Runtime unavailable")
 
     def ensure(self, installer: Path, *, tick: TickCallback | None = None) -> ComponentStatus:
         current = self.detect()
@@ -54,12 +52,12 @@ class WebView2Runtime:
         while process.poll() is None:
             if time.monotonic() >= deadline:
                 process.terminate()
-                raise TimeoutError("A instalação segura do WebView2 excedeu 6 minutos.")
+                raise TimeoutError("Secure WebView2 installation exceeded six minutes.")
             if tick is not None:
                 tick()
             time.sleep(0.1)
         if process.returncode not in {0, 2147747880}:
-            raise RuntimeError(f"O instalador oficial do WebView2 retornou {process.returncode}.")
+            raise RuntimeError(f"The official WebView2 installer returned {process.returncode}.")
         for _attempt in range(60):
             current = self.detect()
             if current.ready:
@@ -67,19 +65,21 @@ class WebView2Runtime:
             if tick is not None:
                 tick()
             time.sleep(0.25)
-        raise RuntimeError("O WebView2 terminou a instalação, mas o Runtime ainda não foi detectado.")
+        raise RuntimeError("WebView2 installation completed, but the runtime was not detected.")
 
     @staticmethod
     def verify_installer(installer: Path) -> None:
         if not installer.is_file():
-            raise FileNotFoundError("Bootstrapper oficial do WebView2 não foi incluído no Zenless.")
+            raise FileNotFoundError("The official WebView2 bootstrapper is not included.")
         digest = hashlib.sha256(installer.read_bytes()).hexdigest()
         if digest != WEBVIEW2_BOOTSTRAPPER_SHA256:
-            raise RuntimeError("A integridade do bootstrapper WebView2 não confere; instalação cancelada.")
+            raise RuntimeError("WebView2 bootstrapper integrity verification failed; installation cancelled.")
 
     @staticmethod
     def _valid_version(version: str) -> bool:
-        return bool(version and version != "0.0.0.0" and any(character.isdigit() and character != "0" for character in version))
+        return bool(
+            version and version != "0.0.0.0" and any(character.isdigit() and character != "0" for character in version)
+        )
 
     def _registry_version(self) -> str:
         if os.name != "nt":

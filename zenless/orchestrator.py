@@ -127,7 +127,7 @@ class ZenlessOrchestrator:
     ) -> str:
         objective = prompt.strip()
         if not objective:
-            raise ValueError("O pedido está vazio.")
+            raise ValueError("The request is empty.")
         task_id = uuid.uuid4().hex
         cancel_event = threading.Event()
         pause_event = threading.Event()
@@ -140,7 +140,7 @@ class ZenlessOrchestrator:
         with self._state_lock:
             if self._tasks:
                 raise OrchestratorError(
-                    "Já existe uma tarefa ativa. Conclua, rejeite ou feche a etapa atual antes de enviar outro pedido."
+                    "A task is already active. Complete, reject, or close the current stage before submitting another request."
                 )
             try:
                 self.store.create_task(task_id, objective, options)
@@ -149,7 +149,7 @@ class ZenlessOrchestrator:
                 self._pause[task_id] = pause_event
                 self.current_task_id = task_id
                 self.store.append_message(task_id, "User", "user", objective)
-                self._emit(task_id, Stage.NEW, "Pedido recebido e colocado na fila.")
+                self._emit(task_id, Stage.NEW, "Request received and queued.")
                 thread.start()
             except Exception:
                 self._tasks.pop(task_id, None)
@@ -161,7 +161,7 @@ class ZenlessOrchestrator:
     def approve(self, task_id: str, gate: str, decision: str, note: str = "") -> bool:
         normalized = decision.strip().lower()
         if normalized not in {"approve", "reject", "edit"}:
-            raise ValueError("Decisão de aprovação inválida.")
+            raise ValueError("Invalid approval decision.")
         with self._state_lock:
             target = self._gates.get((task_id, gate))
         if target is None:
@@ -202,7 +202,7 @@ class ZenlessOrchestrator:
                 return False
             self._paused_from[task_id] = current
             pause_event.set()
-        self._emit(task_id, Stage.PAUSED, "Tarefa pausada em um checkpoint seguro.", "warning")
+        self._emit(task_id, Stage.PAUSED, "Task paused at a safe checkpoint.", "warning")
         return True
 
     def resume(self, task_id: str) -> bool:
@@ -212,7 +212,7 @@ class ZenlessOrchestrator:
             if pause_event is None or previous is None:
                 return False
             pause_event.clear()
-        self._emit(task_id, previous, "Tarefa retomada.")
+        self._emit(task_id, previous, "Task resumed.")
         return True
 
     def active_task(self) -> dict[str, Any] | None:
@@ -247,8 +247,6 @@ class ZenlessOrchestrator:
         task_id: str,
         timeout: float = 360.0,
     ) -> str:
-        """Forward provider deltas without treating a partial response as durable state."""
-
         message_id = uuid.uuid4().hex
         task = self.store.load_task(task_id) or {}
         try:
@@ -281,8 +279,6 @@ class ZenlessOrchestrator:
                     stream_callback=lambda delta: publish("stream_delta", str(delta)),
                 )
             except TypeError as exc:
-                # Compatibility with the extension bridge and old test doubles. Python
-                # rejects the unexpected keyword before those transports do any work.
                 if "stream_callback" not in str(exc):
                     raise
                 return self.bridge.send_prompt(provider, prompt, task_id=task_id, timeout=timeout)
@@ -309,7 +305,7 @@ class ZenlessOrchestrator:
         except (MCPError, ProtocolError, OrchestratorError) as exc:
             self._finish_error(task_id, Stage.FAILED, str(exc))
         except Exception as exc:
-            self._finish_error(task_id, Stage.FAILED, f"Falha interna controlada: {exc}")
+            self._finish_error(task_id, Stage.FAILED, f"Controlled internal failure: {exc}")
         finally:
             release_route = getattr(self.bridge, "release_task_route", None)
             if callable(release_route):
@@ -332,12 +328,20 @@ class ZenlessOrchestrator:
         attachment_paths: tuple[Path, ...],
     ) -> None:
         self._check_control(task_id, cancel_event)
-        self._emit(task_id, Stage.COLLECTING_CONTEXT, "Lendo o projeto real no Roblox Studio.")
+        required = [("chatgpt", "Builder")]
+        if options.independent_review:
+            required.append(("deepseek", "Reviewer"))
+        if options.create_3d_asset:
+            required.append(("hunyuan", "3D Generator"))
+        for provider, label in required:
+            if not self.bridge.wait_for_provider(provider, timeout=2):
+                raise BridgeError(f"{label} requires login.")
+        self._emit(task_id, Stage.COLLECTING_CONTEXT, "Reading the active Studio project.")
         if not self.studio.running:
             self.studio.start()
         studios = self.studio.list_studios()
         if not studios:
-            raise OrchestratorError("Nenhuma instância do Roblox Studio está conectada ao StudioMCP.")
+            raise OrchestratorError("No Studio instance is connected.")
         target = studios[0]
         self.store.update_task(task_id, studio_id=target.studio_id)
         analysis = self.brain.analyze(
@@ -349,9 +353,9 @@ class ZenlessOrchestrator:
         self.store.update_task(task_id, context_json=context)
 
         if not self.bridge.wait_for_provider("chatgpt", timeout=2):
-            raise BridgeError("ChatGPT requer login no WebView2 ou Playwright interno.")
+            raise BridgeError("Builder requires login.")
         if attachment_paths:
-            self._emit(task_id, Stage.COLLECTING_CONTEXT, "Enviando anexos validados ao ChatGPT.")
+            self._emit(task_id, Stage.COLLECTING_CONTEXT, "Uploading validated attachments to the builder.")
             uploaded = self.bridge.request(
                 "chatgpt",
                 "upload_files",
@@ -360,7 +364,7 @@ class ZenlessOrchestrator:
                 timeout=120,
             )
             if str(uploaded.get("status", "ok")).casefold() != "ok":
-                raise BridgeError("O provedor recusou os anexos desta tarefa.")
+                raise BridgeError("The provider rejected this job's attachments.")
 
         proposal, evidence = self._build_proposal(
             task_id,
@@ -388,10 +392,10 @@ class ZenlessOrchestrator:
 
         mutating = [action for action in proposal.actions if not is_read_only(action.tool)]
         if not mutating:
-            final_text = proposal.final_message or proposal.summary or "Nenhuma alteração persistente foi necessária."
-            self.store.append_message(task_id, "ChatGPT", "assistant", final_text)
+            final_text = proposal.final_message or proposal.summary or "No persistent changes were required."
+            self.store.append_message(task_id, "Builder", "assistant", final_text)
             self.store.update_task(task_id, final_text=final_text)
-            self._emit(task_id, Stage.COMPLETE, "Concluído sem alterações persistentes.", "success")
+            self._emit(task_id, Stage.COMPLETE, "Completed without persistent changes.", "success")
             return
         self._bind_mutation_preconditions(task_id, target.studio_id, mutating)
         self.store.update_task(task_id, proposal_json=proposal.to_dict())
@@ -406,15 +410,14 @@ class ZenlessOrchestrator:
                     task_id,
                     gate_name,
                     Stage.WAITING_CHANGE_APPROVAL,
-                    "Alterações prontas; aguardando sua aprovação antes do Studio.",
+                    "Changes are ready and awaiting approval before reaching Studio.",
                     detail,
                     cancel_event,
                 )
                 if decision == "reject":
-                    self._emit(task_id, Stage.BLOCKED, "Alterações rejeitadas pelo usuário.", "warning", note)
-                    return
+                    raise TaskBlocked("Changes were rejected by the user." + (f" {note}" if note else ""))
                 if decision == "edit":
-                    self._emit(task_id, Stage.REVISING, "ChatGPT ajustando a proposta conforme sua observação.")
+                    self._emit(task_id, Stage.REVISING, "Builder is revising the proposal from your feedback.")
                     proposal = self._request_revision(task_id, objective, context, proposal, review, note)
                     proposal, review = self._review_and_revise(
                         task_id,
@@ -433,32 +436,30 @@ class ZenlessOrchestrator:
                     )
                     mutating = [action for action in proposal.actions if not is_read_only(action.tool)]
                     if not mutating:
-                        self._emit(task_id, Stage.COMPLETE, "Revisão concluiu que nenhuma escrita era necessária.", "success")
+                        self._emit(task_id, Stage.COMPLETE, "The revision found that no write was required.", "success")
                         return
                     self._bind_mutation_preconditions(task_id, target.studio_id, mutating)
                     self.store.update_task(task_id, proposal_json=proposal.to_dict())
                     continue
                 break
 
-        self._emit(task_id, Stage.APPLYING, "Aplicando o bloco aprovado via StudioMCP.")
+        self._emit(task_id, Stage.APPLYING, "Applying the approved changes through the Studio bridge.")
         apply_evidence = self._apply_actions(task_id, target.studio_id, mutating)
 
-        console_output = "[QA automático desativado pelo usuário.]"
+        console_output = "[Automatic QA disabled by the user.]"
         if options.automatic_play_test:
-            console_output = self._run_quality_test(
-                task_id, target.studio_id, cancel_event, apply_evidence, False
-            )
+            console_output = self._run_quality_test(task_id, target.studio_id, cancel_event, apply_evidence, False)
             fix_count = 0
             while self._console_has_errors(console_output):
                 if not options.auto_fix_errors or fix_count >= options.max_test_fixes:
                     raise OrchestratorError(
-                        "O Play Test retornou erros e o limite de correções foi atingido.\n" + console_output[-6000:]
+                        "The play test returned errors and reached the correction limit.\n" + console_output[-6000:]
                     )
                 fix_count += 1
                 self._emit(
                     task_id,
                     Stage.REPAIRING,
-                    f"ChatGPT preparando correção {fix_count}/{options.max_test_fixes} a partir do Output real.",
+                    f"Builder is preparing correction {fix_count}/{options.max_test_fixes} from the actual output.",
                     "warning",
                 )
                 repair = self._request_repair(task_id, objective, proposal, console_output, apply_evidence)
@@ -481,20 +482,17 @@ class ZenlessOrchestrator:
                         task_id,
                         f"repair:{fix_count}",
                         Stage.WAITING_CHANGE_APPROVAL,
-                        f"Correção {fix_count} pronta; aguardando aprovação.",
+                        f"Correction {fix_count} is ready and awaiting approval.",
                         self._proposal_detail(repair, repair_review),
                         cancel_event,
                     )
                     if decision != "approve":
-                        self._emit(task_id, Stage.BLOCKED, "Correção não aprovada.", "warning", note)
-                        return
+                        raise TaskBlocked("The correction was not approved." + (f" {note}" if note else ""))
                 repair_actions = [action for action in repair.actions if not is_read_only(action.tool)]
                 self._bind_mutation_preconditions(task_id, target.studio_id, repair_actions)
                 apply_evidence.extend(self._apply_actions(task_id, target.studio_id, repair_actions))
                 proposal = repair
-                console_output = self._run_quality_test(
-                    task_id, target.studio_id, cancel_event, apply_evidence, True
-                )
+                console_output = self._run_quality_test(task_id, target.studio_id, cancel_event, apply_evidence, True)
 
         proposal, apply_evidence, console_output = self._final_review_and_repair(
             task_id,
@@ -507,10 +505,10 @@ class ZenlessOrchestrator:
             cancel_event,
             target.studio_id,
         )
-        final_text = proposal.final_message or proposal.summary or "Alterações aplicadas e verificadas."
+        final_text = proposal.final_message or proposal.summary or "Changes applied and verified."
         self.store.append_message(task_id, "Orchestrator", "assistant", final_text)
         self.store.update_task(task_id, final_text=final_text)
-        self._emit(task_id, Stage.COMPLETE, "Implementação concluída e liberada.", "success")
+        self._emit(task_id, Stage.COMPLETE, "Implementation completed and released.", "success")
 
     def _collect_context(self, task_id: str, studio_id: str, analysis: BrainAnalysis) -> dict[str, Any]:
         calls: list[tuple[str, dict[str, Any]]] = [
@@ -533,7 +531,7 @@ class ZenlessOrchestrator:
                 continue
             result = self.studio.call_tool(tool_name, arguments, studio_id=studio_id, timeout=90)
             context["reads"][tool_name + f":{len(context['reads'])}"] = result.compact(28_000)
-            self._emit(task_id, Stage.COLLECTING_CONTEXT, f"Contexto coletado: {tool_name}.", "success")
+            self._emit(task_id, Stage.COLLECTING_CONTEXT, f"Context collected: {tool_name}.", "success")
         context["tool_count"] = len(self.studio.tools)
         return self.brain.compact_context(context)
 
@@ -554,15 +552,15 @@ class ZenlessOrchestrator:
             self._emit(
                 task_id,
                 Stage.CREATING,
-                f"ChatGPT criando o bloco estratégico (rodada {research_round}/2).",
+                f"Builder is creating the strategic plan (round {research_round}/2).",
             )
             prompt = principal_prompt(objective, context, tools, evidence, research_round)
             raw = self._send_agent_prompt("chatgpt", prompt, task_id=task_id)
-            self.store.append_message(task_id, "ChatGPT", "agent", raw)
+            self.store.append_message(task_id, "Builder", "agent", raw)
             proposal = self._parse_proposal(raw)
             errors = validate_proposal(proposal.actions, set(self.studio.tools))
             if errors:
-                raise OrchestratorError("Proposta bloqueada pela política: " + " | ".join(errors))
+                raise OrchestratorError("The proposal was blocked by policy: " + " | ".join(errors))
             reads = [action for action in proposal.actions if is_read_only(action.tool)]
             if not reads:
                 break
@@ -573,12 +571,12 @@ class ZenlessOrchestrator:
                     continue
                 seen_reads.add(key)
                 unique_reads.append(action)
-            self._emit(task_id, Stage.COLLECTING_CONTEXT, "Executando leituras pedidas pelo agente principal.")
+            self._emit(task_id, Stage.COLLECTING_CONTEXT, "Running the reads requested by the builder.")
             evidence.extend(self._execute_read_actions(task_id, studio_id, unique_reads))
             if research_round == 2:
                 proposal.actions = [action for action in proposal.actions if not is_read_only(action.tool)]
         if proposal is None:
-            raise OrchestratorError("ChatGPT não gerou uma proposta.")
+            raise OrchestratorError("The builder did not produce a proposal.")
         return proposal, evidence
 
     def _execute_read_actions(
@@ -605,7 +603,7 @@ class ZenlessOrchestrator:
                 }
             )
             kind = "warning" if result.is_error else "success"
-            self._emit(task_id, Stage.COLLECTING_CONTEXT, f"Leitura concluída: {action.tool}.", kind)
+            self._emit(task_id, Stage.COLLECTING_CONTEXT, f"Read completed: {action.tool}.", kind)
         return results
 
     def _review_and_revise(
@@ -623,38 +621,38 @@ class ZenlessOrchestrator:
         if not options.independent_review:
             return proposal, None
         if not self.bridge.wait_for_provider("deepseek", timeout=2):
-            raise BridgeError("DeepSeek requer login para a revisão independente.")
+            raise BridgeError("Reviewer requires login for independent review.")
 
         review: ReviewResult | None = None
         revisions = 0
         while True:
             self._check_control(task_id, cancel_event)
-            self._emit(task_id, Stage.REVIEWING, "DeepSeek revisando o bloco independentemente.")
+            self._emit(task_id, Stage.REVIEWING, "Reviewer is independently reviewing the plan.")
             raw = self._send_agent_prompt(
                 "deepseek",
                 review_prompt(objective, context, proposal, evidence),
                 task_id=task_id,
             )
-            self.store.append_message(task_id, "DeepSeek", "reviewer", raw)
+            self.store.append_message(task_id, "Reviewer", "reviewer", raw)
             review = self._parse_review(raw)
             if review.approved:
-                self._emit(task_id, Stage.REVIEWING, "Revisão independente aprovada.", "success", review.summary)
+                self._emit(task_id, Stage.REVIEWING, "Independent review approved.", "success", review.summary)
                 return proposal, review
             if review.verdict == "block":
-                raise TaskBlocked("DeepSeek bloqueou o bloco: " + (review.summary or "sem resumo"))
+                raise TaskBlocked("Reviewer blocked the plan: " + (review.summary or "no summary"))
             if revisions >= options.max_revisions:
-                raise OrchestratorError("Limite de revisões atingido sem aprovação independente.")
+                raise OrchestratorError("The revision limit was reached without independent approval.")
             revisions += 1
             self._emit(
                 task_id,
                 Stage.REVISING,
-                f"ChatGPT corrigindo apontamentos ({revisions}/{options.max_revisions}).",
+                f"Builder is addressing review feedback ({revisions}/{options.max_revisions}).",
                 "warning",
             )
             proposal = self._request_revision(task_id, objective, context, proposal, review, "")
             errors = validate_proposal(proposal.actions, set(self.studio.tools))
             if errors:
-                raise OrchestratorError("Revisão gerou ações bloqueadas: " + " | ".join(errors))
+                raise OrchestratorError("The revision produced blocked actions: " + " | ".join(errors))
 
     def _request_revision(
         self,
@@ -667,7 +665,7 @@ class ZenlessOrchestrator:
     ) -> AgentProposal:
         effective_review = review or ReviewResult(
             verdict="revise",
-            summary="O usuário pediu ajustes.",
+            summary="The user requested adjustments.",
             required_changes=[user_note] if user_note else [],
         )
         raw = self._send_agent_prompt(
@@ -675,7 +673,7 @@ class ZenlessOrchestrator:
             revision_prompt(objective, context, proposal, effective_review, user_note),
             task_id=task_id,
         )
-        self.store.append_message(task_id, "ChatGPT", "agent", raw)
+        self.store.append_message(task_id, "Builder", "agent", raw)
         return self._parse_proposal(raw)
 
     def _handle_visual_and_3d(
@@ -702,7 +700,7 @@ class ZenlessOrchestrator:
                         visual_master_prompt(objective, visual_prompt, revision_note),
                         task_id=task_id,
                     )
-                    self.store.append_message(task_id, "ChatGPT", "visual-spec", raw_master)
+                    self.store.append_message(task_id, "Builder", "visual-spec", raw_master)
                     master = extract_json_object(raw_master)
                 version += 1
                 visual = self._generate_visual_version(
@@ -731,14 +729,14 @@ class ZenlessOrchestrator:
                     }
                     if version >= 3:
                         raise OrchestratorError(
-                            "Visual QA rejeitou três versões: " + str(qa.get("summary") or qa.get("warnings"))
+                            "Visual QA rejected three versions: " + str(qa.get("summary") or qa.get("warnings"))
                         )
                     target_views = failed or set(self._visual_views())
                     revision_note = "regen:qa"
                     self._emit(
                         task_id,
                         Stage.GENERATING_CONCEPT,
-                        f"Visual QA pediu regeneração da versão {version}.",
+                        f"Visual QA requested regeneration of version {version}.",
                         "warning",
                         json.dumps(qa, ensure_ascii=False),
                     )
@@ -747,7 +745,7 @@ class ZenlessOrchestrator:
                     task_id,
                     f"visual:{version}",
                     Stage.WAITING_VISUAL_APPROVAL,
-                    f"Seis vistas PNG da versão {version} prontas; aguardando aprovação.",
+                    f"Six PNG views for version {version} are ready and awaiting approval.",
                     json.dumps({"version": version, "master": master, "qa": qa}, ensure_ascii=False),
                     cancel_event,
                 )
@@ -756,16 +754,18 @@ class ZenlessOrchestrator:
                     self.store.update_context_section(task_id, "visual", visual)
                     break
                 if decision == "reject":
-                    raise OrchestratorError("Conceito visual rejeitado: " + note)
-                revision_note = note.strip() or "Revisar o conceito mantendo a identidade do objeto."
+                    raise OrchestratorError("Visual concept rejected: " + note)
+                revision_note = note.strip() or "Revise the concept while preserving the object's identity."
                 target_views = self._visual_regen_targets(revision_note)
 
         if options.create_3d_asset:
             model_prompt = proposal.model_3d_prompt.strip()
             if not model_prompt:
-                raise TaskBlocked("ChatGPT não forneceu um prompt 3D; Hunyuan não será acionado sem especificação.")
+                raise TaskBlocked(
+                    "The builder did not provide a 3D prompt, so the 3D generator cannot run without a specification."
+                )
             if not self.bridge.wait_for_provider("hunyuan", timeout=2):
-                raise BridgeError("Hunyuan3D não está conectado para gerar o ativo solicitado.")
+                raise BridgeError("The 3D generator is not connected to create the requested asset.")
             target = "all"
             model_version = 0
             while True:
@@ -781,7 +781,7 @@ class ZenlessOrchestrator:
                     task_id,
                     f"3d:{model_version}",
                     Stage.WAITING_3D_APPROVAL,
-                    f"Geometria e textura 3D da versão {model_version} prontas; aguardando aprovação.",
+                    f"3D geometry and texture for version {model_version} are ready and awaiting approval.",
                     detail,
                     cancel_event,
                 )
@@ -790,9 +790,9 @@ class ZenlessOrchestrator:
                     self.store.update_context_section(task_id, "model", response)
                     break
                 if decision == "reject":
-                    raise OrchestratorError("Modelo 3D rejeitado: " + note)
+                    raise OrchestratorError("3D model rejected: " + note)
                 normalized = note.strip().casefold()
-                target = "texture" if "texture" in normalized or "textura" in normalized else "geometry"
+                target = "texture" if "texture" in normalized or "material" in normalized else "geometry"
 
     @staticmethod
     def _visual_views() -> tuple[str, ...]:
@@ -810,7 +810,7 @@ class ZenlessOrchestrator:
         self._emit(
             task_id,
             Stage.GENERATING_CONCEPT,
-            f"Gerando seis vistas ortográficas reais (versão {version}).",
+            f"Generating six actual orthographic views (version {version}).",
         )
         version_dir = self.run_root.parent / "assets" / task_id / "concept" / f"v{version}"
         version_dir.mkdir(parents=True, exist_ok=True)
@@ -835,10 +835,10 @@ class ZenlessOrchestrator:
                     timeout=435,
                 )
                 if str(response.get("status", "ok")).casefold() != "ok":
-                    raise BridgeError(str(response.get("error") or f"Falha ao gerar a vista {view}."))
+                    raise BridgeError(str(response.get("error") or f"Failed to generate the {view} view."))
                 artifact = Path(str(response.get("artifact_path") or output)).resolve()
                 if artifact != output.resolve() or not artifact.is_file():
-                    raise BridgeError(f"A vista {view} não produziu o PNG autorizado.")
+                    raise BridgeError(f"The {view} view did not produce the authorized PNG.")
             width, height, digest = self._validate_png(output)
             asset_id = f"{task_id}-concept-v{version}-{view}"
             self.store.register_asset(
@@ -873,8 +873,8 @@ class ZenlessOrchestrator:
             return {
                 "approved": False,
                 "failed_views": duplicates,
-                "warnings": ["Duas ou mais vistas têm conteúdo PNG idêntico."],
-                "summary": "Visual QA determinístico detectou direções duplicadas.",
+                "warnings": ["Two or more views have identical PNG content."],
+                "summary": "Deterministic visual QA detected duplicate directions.",
             }
         upload = self.bridge.request(
             "chatgpt",
@@ -884,29 +884,29 @@ class ZenlessOrchestrator:
             timeout=120,
         )
         if int(upload.get("uploaded") or 0) != 6:
-            raise BridgeError("Visual QA exige o upload confirmado das seis vistas separadas.")
+            raise BridgeError("Visual QA requires confirmed uploads for all six separate views.")
         raw = self._send_agent_prompt(
             "chatgpt",
             visual_qa_prompt(master, version),
             task_id=task_id,
         )
-        self.store.append_message(task_id, "ChatGPT", "visual-qa", raw)
+        self.store.append_message(task_id, "Builder", "visual-qa", raw)
         qa = extract_json_object(raw)
         return {
             "approved": bool(qa.get("approved")),
             "failed_views": [str(item).casefold() for item in qa.get("failed_views", [])],
             "warnings": [str(item) for item in qa.get("warnings", [])],
-            "summary": str(qa.get("summary") or "Visual QA sem resumo."),
+            "summary": str(qa.get("summary") or "Visual QA provided no summary."),
         }
 
     @staticmethod
     def _validate_png(path: Path) -> tuple[int, int, str]:
         raw = path.read_bytes()
         if len(raw) < 33 or raw[:8] != b"\x89PNG\r\n\x1a\n" or raw[12:16] != b"IHDR":
-            raise OrchestratorError(f"PNG inválido ou truncado: {path.name}")
+            raise OrchestratorError(f"Invalid or truncated PNG: {path.name}")
         width, height = struct.unpack(">II", raw[16:24])
         if width < 256 or height < 256 or max(width, height) / min(width, height) > 1.15:
-            raise OrchestratorError(f"Vista {path.name} precisa ser quase quadrada e ter ao menos 256 px.")
+            raise OrchestratorError(f"View {path.name} must be nearly square and at least 256 px.")
         return width, height, hashlib.sha256(raw).hexdigest()
 
     def _visual_regen_targets(self, note: str) -> set[str] | None:
@@ -923,38 +923,38 @@ class ZenlessOrchestrator:
         version: int,
         target: str,
     ) -> dict[str, Any]:
-        capabilities_response = self.bridge.request(
-            "hunyuan", "capabilities", {}, task_id=task_id, timeout=45
-        )
+        capabilities_response = self.bridge.request("hunyuan", "capabilities", {}, task_id=task_id, timeout=45)
         capabilities = capabilities_response.get("capabilities")
         caps = capabilities if isinstance(capabilities, dict) else {}
         required = {"upload_files", "geometry", "texture"}
         missing = sorted(name for name in required if not bool(caps.get(name)))
         if missing:
-            raise BridgeError("CAPABILITY_UNAVAILABLE: Hunyuan sem " + ", ".join(missing) + ".")
+            raise BridgeError("CAPABILITY_UNAVAILABLE: 3D Generator is missing " + ", ".join(missing) + ".")
         task = self.store.load_task(task_id) or {}
         raw_context = task.get("context")
         context: dict[str, Any] = raw_context if isinstance(raw_context, dict) else {}
         raw_visual = context.get("visual")
         visual: dict[str, Any] = raw_visual if isinstance(raw_visual, dict) else {}
         if str(visual.get("status") or "").upper() != "APPROVED":
-            raise BridgeError("Hunyuan exige uma versão visual aprovada antes da geração 3D.")
+            raise BridgeError("The 3D generator requires an approved visual version before generation.")
         references = [
             str(visual[view]["path"])
             for view in self._visual_views()
             if isinstance(visual.get(view), dict) and Path(str(visual[view].get("path") or "")).is_file()
         ]
         if len(references) != len(self._visual_views()):
-            raise BridgeError("Hunyuan exige as seis vistas PNG aprovadas (frente, trás, esquerda, direita, topo e base).")
+            raise BridgeError(
+                "The 3D generator requires all six approved PNG views: front, back, left, right, top, and bottom."
+            )
         try:
             max_images = max(1, min(6, int(caps.get("max_image_inputs") or 1)))
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             max_images = 1
         references = references[:max_images]
         self._emit(
             task_id,
             Stage.GENERATING_3D,
-            f"Hunyuan: geometria e PBR separados com {len(references)} referência(s) suportada(s).",
+            f"3D Generator is creating separate geometry and PBR materials from {len(references)} supported reference(s).",
         )
         raw_previous = context.get("model")
         previous: dict[str, Any] = raw_previous if isinstance(raw_previous, dict) else {}
@@ -964,7 +964,7 @@ class ZenlessOrchestrator:
                 "hunyuan", "upload_files", {"files": references}, task_id=task_id, timeout=120
             )
             if int(uploaded.get("uploaded") or 0) != len(references):
-                raise BridgeError("Hunyuan não confirmou todas as referências visuais suportadas.")
+                raise BridgeError("The 3D generator did not confirm all supported visual references.")
             geometry = self.bridge.request(
                 "hunyuan",
                 "generate_geometry",
@@ -972,7 +972,7 @@ class ZenlessOrchestrator:
                 task_id=task_id,
                 timeout=615,
             )
-            geometry_path = self._validated_glb_artifact(geometry, "geometria")
+            geometry_path = self._validated_glb_artifact(geometry, "geometry")
             geometry_asset = f"{task_id}-geometry-v{version}"
             self.store.register_asset(
                 geometry_asset,
@@ -984,7 +984,7 @@ class ZenlessOrchestrator:
                 metadata={"phase": "geometry", "version": version, "references": len(references)},
             )
         if not geometry_path or not Path(geometry_path).is_file():
-            raise BridgeError("A etapa de textura/PBR exige uma geometria GLB local válida.")
+            raise BridgeError("The texture and PBR stage requires valid local GLB geometry.")
         texture_inputs = [geometry_path, *references]
         uploaded_texture = self.bridge.request(
             "hunyuan",
@@ -994,15 +994,18 @@ class ZenlessOrchestrator:
             timeout=120,
         )
         if int(uploaded_texture.get("uploaded") or 0) != len(texture_inputs[:max_images]):
-            raise BridgeError("Hunyuan não confirmou os insumos da etapa de textura/PBR.")
+            raise BridgeError("The 3D generator did not confirm the texture and PBR inputs.")
         textured = self.bridge.request(
             "hunyuan",
             "generate_texture",
-            {"prompt": prompt + "\nPreserve the approved geometry; generate final texture and PBR materials.", "timeout_ms": 600_000},
+            {
+                "prompt": prompt + "\nPreserve the approved geometry; generate final texture and PBR materials.",
+                "timeout_ms": 600_000,
+            },
             task_id=task_id,
             timeout=615,
         )
-        textured_path = self._validated_glb_artifact(textured, "textura/PBR")
+        textured_path = self._validated_glb_artifact(textured, "texture/PBR")
         textured_asset = f"{task_id}-textured-v{version}"
         self.store.register_asset(
             textured_asset,
@@ -1030,18 +1033,20 @@ class ZenlessOrchestrator:
     @staticmethod
     def _validated_glb_artifact(response: dict[str, Any], phase: str) -> str:
         if str(response.get("status", "ok")).casefold() != "ok":
-            raise BridgeError(str(response.get("error") or f"Hunyuan falhou na etapa {phase}."))
+            raise BridgeError(str(response.get("error") or f"The 3D generator failed during {phase}."))
         path_text = str(response.get("artifact_path") or "").strip()
         if not path_text:
             error = str(response.get("download_error") or "").strip()
-            raise BridgeError(error or f"Hunyuan concluiu {phase} sem arquivo GLB local.")
+            raise BridgeError(error or f"The 3D generator completed {phase} without a local GLB file.")
         path = Path(path_text).resolve()
         if path.suffix.casefold() != ".glb":
-            raise BridgeError(f"Hunyuan retornou {path.suffix or 'formato desconhecido'} em {phase}; GLB é obrigatório.")
+            raise BridgeError(
+                f"The 3D generator returned {path.suffix or 'an unknown format'} during {phase}; GLB is required."
+            )
         try:
             load_glb(path)
         except GLBError as exc:
-            raise BridgeError(f"GLB inválido em {phase}: {exc}") from exc
+            raise BridgeError(f"Invalid GLB during {phase}: {exc}") from exc
         return str(path)
 
     def _apply_actions(
@@ -1057,7 +1062,7 @@ class ZenlessOrchestrator:
             decision = classify_action(action, set(self.studio.tools))
             if not decision.allowed or decision.risk == "critical":
                 raise OrchestratorError(
-                    f"Ação {action.tool} bloqueada na aplicação: {'; '.join(decision.reasons)}"
+                    f"Action {action.tool} was blocked during application: {'; '.join(decision.reasons)}"
                 )
             operation_payload = {
                 "tool": action.tool,
@@ -1079,14 +1084,14 @@ class ZenlessOrchestrator:
                     self._emit(
                         task_id,
                         Stage.APPLYING,
-                        f"Mutação {index}/{len(actions)} já confirmada; replay idempotente evitado.",
+                        f"Mutation {index}/{len(actions)} was already confirmed; idempotent replay prevented.",
                         "success",
                         operation_id,
                     )
                     continue
                 raise OrchestratorError(
-                    f"RECOVERY_REQUIRED: a operação {operation_id} ficou em estado {state or 'desconhecido'}; "
-                    "Zenless não repetirá uma escrita sem revisão humana."
+                    f"RECOVERY_REQUIRED: operation {operation_id} remained in state {state or 'unknown'}; "
+                    "the orchestrator will not repeat a write without human review."
                 )
 
             operation_evidence: list[dict[str, Any]] = []
@@ -1096,19 +1101,19 @@ class ZenlessOrchestrator:
                 before_hash = ""
                 if action.tool == "multi_edit":
                     if not expected_hash:
-                        raise OrchestratorError("MUTATION_PRECONDITION_MISSING: multi_edit sem hash esperado.")
+                        raise OrchestratorError("MUTATION_PRECONDITION_MISSING: multi_edit has no expected hash.")
                     source = self._read_script_source(studio_id, arguments)
                     before_hash = self._source_hash(source)
                     if before_hash != expected_hash:
                         raise OrchestratorError(
-                            "STUDIO_CHANGED: o script foi alterado depois da proposta; a escrita foi bloqueada "
-                            f"(esperado {expected_hash[:12]}, atual {before_hash[:12]})."
+                            "STUDIO_CHANGED: the script changed after the proposal, so the write was blocked "
+                            f"(expected {expected_hash[:12]}, current {before_hash[:12]})."
                         )
                     self._snapshot_script(task_id, arguments, run_dir, index, source)
                 self._emit(
                     task_id,
                     Stage.APPLYING,
-                    f"StudioMCP aplicando {index}/{len(actions)}: {action.tool}.",
+                    f"Studio bridge is applying {index}/{len(actions)}: {action.tool}.",
                     detail=f"{action.reason}\noperation_id={operation_id}",
                 )
                 result = self.studio.call_tool(action.tool, arguments, studio_id=studio_id, timeout=240)
@@ -1124,7 +1129,7 @@ class ZenlessOrchestrator:
                 }
                 operation_evidence.append(item)
                 if result.is_error:
-                    raise OrchestratorError(f"StudioMCP falhou em {action.tool}: {result.compact(6000)}")
+                    raise OrchestratorError(f"Studio bridge failed at {action.tool}: {result.compact(6000)}")
                 if action.tool == "multi_edit":
                     operation_evidence.extend(
                         self._verify_script(task_id, studio_id, arguments, expected_hash, operation_id)
@@ -1164,16 +1169,16 @@ class ZenlessOrchestrator:
             self._emit(
                 task_id,
                 current_stage,
-                f"Pré-condição vinculada ao estado atual de {arguments.get('file_path', 'script')}.",
+                f"Precondition bound to the current state of {arguments.get('file_path', 'script')}.",
                 "success",
             )
 
     def _read_script_source(self, studio_id: str, arguments: dict[str, Any]) -> str:
         if arguments.get("className") or "script_read" not in self.studio.tools:
-            raise OrchestratorError("MUTATION_PRECONDITION_UNAVAILABLE: script_read é obrigatório antes de multi_edit.")
+            raise OrchestratorError("MUTATION_PRECONDITION_UNAVAILABLE: script_read is required before multi_edit.")
         target = str(arguments.get("file_path", "")).strip()
         if not target:
-            raise OrchestratorError("multi_edit não informou file_path para snapshot e pré-condição.")
+            raise OrchestratorError("multi_edit did not provide file_path for the snapshot and precondition.")
         result = self.studio.call_tool(
             "script_read",
             {"target_file": target, "should_read_entire_file": True},
@@ -1181,7 +1186,7 @@ class ZenlessOrchestrator:
             timeout=90,
         )
         if result.is_error:
-            raise OrchestratorError(f"Não foi possível reler {target}: {result.compact(3000)}")
+            raise OrchestratorError(f"Could not read back {target}: {result.compact(3000)}")
         return result.text
 
     @staticmethod
@@ -1199,7 +1204,7 @@ class ZenlessOrchestrator:
         target = str(arguments.get("file_path", ""))
         safe_name = re.sub(r"[^A-Za-z0-9_.-]+", "_", target)[-100:] or "script"
         (run_dir / f"before-{index:02d}-{safe_name}.luau.txt").write_text(source, encoding="utf-8")
-        self._emit(task_id, Stage.APPLYING, f"Snapshot criado antes de editar {target}.", "success")
+        self._emit(task_id, Stage.APPLYING, f"Snapshot created before editing {target}.", "success")
 
     def _verify_script(
         self,
@@ -1219,19 +1224,17 @@ class ZenlessOrchestrator:
             if replacement and replacement not in source:
                 missing.append(replacement[:160])
         if missing:
-            raise OrchestratorError(
-                f"READ_BACK_MISMATCH: {target} não contém {len(missing)} substituição(ões) esperada(s)."
-            )
+            raise OrchestratorError(f"READ_BACK_MISMATCH: {target} is missing {len(missing)} expected replacement(s).")
         post_hash = self._source_hash(source)
         if post_hash == expected_hash and any(
             isinstance(edit, dict) and edit.get("old_string") != edit.get("new_string")
             for edit in arguments.get("edits", [])
         ):
-            raise OrchestratorError(f"READ_BACK_MISMATCH: {target} manteve o hash anterior após a edição.")
+            raise OrchestratorError(f"READ_BACK_MISMATCH: {target} kept the previous hash after editing.")
         self._emit(
             task_id,
             Stage.APPLYING,
-            f"Fonte pós-edição relida: {target}.",
+            f"Post-edit source read back: {target}.",
             "success",
         )
         return [
@@ -1254,23 +1257,21 @@ class ZenlessOrchestrator:
         cancel_event: threading.Event,
     ) -> str:
         if "start_stop_play" not in self.studio.tools:
-            raise OrchestratorError("A versão atual do StudioMCP não oferece start_stop_play.")
-        self._emit(task_id, Stage.TESTING, "Iniciando Play Test real no Studio.")
+            raise OrchestratorError("The current Studio bridge does not provide start_stop_play.")
+        self._emit(task_id, Stage.TESTING, "Starting an actual play test in Studio.")
         started = False
         console_output = ""
         try:
-            result = self.studio.call_tool(
-                "start_stop_play", {"is_start": True}, studio_id=studio_id, timeout=60
-            )
+            result = self.studio.call_tool("start_stop_play", {"is_start": True}, studio_id=studio_id, timeout=60)
             if result.is_error:
-                raise OrchestratorError("Falha ao iniciar Play Test: " + result.compact(3000))
+                raise OrchestratorError("Failed to start the play test: " + result.compact(3000))
             started = True
             if cancel_event.wait(self.play_test_seconds):
                 self._check_control(task_id, cancel_event)
             if "get_console_output" in self.studio.tools:
                 console = self.studio.call_tool("get_console_output", {}, studio_id=studio_id, timeout=60)
                 if console.is_error:
-                    raise OrchestratorError("Falha ao ler o Output: " + console.compact(3000))
+                    raise OrchestratorError("Failed to read the output: " + console.compact(3000))
                 console_output = console.text
         finally:
             if started:
@@ -1279,13 +1280,13 @@ class ZenlessOrchestrator:
                         "start_stop_play", {"is_start": False}, studio_id=studio_id, timeout=60
                     )
                     if stopped.is_error:
-                        raise OrchestratorError("O Studio recusou Stop: " + stopped.compact(3000))
+                        raise OrchestratorError("Studio refused to stop: " + stopped.compact(3000))
                 except MCPError as exc:
-                    raise OrchestratorError(f"Falha ao parar o Play Test: {exc}") from exc
+                    raise OrchestratorError(f"Failed to stop the play test: {exc}") from exc
         kind = "warning" if self._console_has_errors(console_output) else "success"
-        message = "Play Test retornou erros." if kind == "warning" else "Play Test concluído sem erros detectados."
+        message = "Play test returned errors." if kind == "warning" else "Play test completed with no detected errors."
         self._emit(task_id, Stage.TESTING, message, kind, console_output[-5000:])
-        self.store.append_message(task_id, "Roblox Studio", "test", console_output or "[Output vazio]")
+        self.store.append_message(task_id, "Studio", "test", console_output or "[Empty output]")
         return console_output
 
     def _run_quality_test(
@@ -1296,7 +1297,7 @@ class ZenlessOrchestrator:
         evidence: list[dict[str, Any]],
         rerun: bool,
     ) -> str:
-        self._emit(task_id, Stage.TESTING, "QA Breaker preparando testes baseados nas mudanças.")
+        self._emit(task_id, Stage.TESTING, "QA is preparing tests based on the changes.")
         if self.qa_callback is not None:
             return self.qa_callback(task_id, studio_id, cancel_event, evidence, rerun)
         return self._play_test(task_id, studio_id, cancel_event)
@@ -1314,11 +1315,11 @@ class ZenlessOrchestrator:
             repair_prompt(objective, proposal, console_output, source_evidence),
             task_id=task_id,
         )
-        self.store.append_message(task_id, "ChatGPT", "agent", raw)
+        self.store.append_message(task_id, "Builder", "agent", raw)
         repair = self._parse_proposal(raw)
         errors = validate_proposal(repair.actions, set(self.studio.tools))
         if errors:
-            raise OrchestratorError("Correção bloqueada pela política: " + " | ".join(errors))
+            raise OrchestratorError("The correction was blocked by policy: " + " | ".join(errors))
         return repair
 
     def _final_review_and_repair(
@@ -1334,14 +1335,14 @@ class ZenlessOrchestrator:
         studio_id: str,
     ) -> tuple[AgentProposal, list[dict[str, Any]], str]:
         if not self.bridge.wait_for_provider("deepseek", timeout=2):
-            raise BridgeError("DeepSeek requer login para a revisão final independente obrigatória.")
+            raise BridgeError("Reviewer requires login for the mandatory independent final review.")
         revisions = 0
         while True:
             self._check_control(task_id, cancel_event)
             self._emit(
                 task_id,
                 Stage.FINAL_REVIEW,
-                "DeepSeek revisando o estado final, read-back e QA reais.",
+                "Reviewer is examining the final state, read-back, and actual QA evidence.",
             )
             final_state = self._collect_final_state(studio_id, mutation_evidence)
             latest_test = self.store.latest_test_run(task_id)
@@ -1360,27 +1361,27 @@ class ZenlessOrchestrator:
                 final_review_prompt(objective, final_state, mutation_evidence, qa_result, warnings),
                 task_id=task_id,
             )
-            self.store.append_message(task_id, "DeepSeek", "final-reviewer", raw)
+            self.store.append_message(task_id, "Reviewer", "final-reviewer", raw)
             review = self._parse_review(raw)
             self.store.update_task(task_id, final_review_json=review.to_dict())
             if review.approved:
                 self._emit(
                     task_id,
                     Stage.FINAL_REVIEW,
-                    "Revisão final independente aprovada com evidências pós-mudança.",
+                    "Independent final review approved with post-change evidence.",
                     "success",
                     review.summary,
                 )
                 return proposal, mutation_evidence, console_output
             if review.verdict == "block":
-                raise TaskBlocked("DeepSeek bloqueou o estado final: " + review.summary)
+                raise TaskBlocked("Reviewer blocked the final state: " + review.summary)
             if revisions >= options.max_revisions:
-                raise TaskBlocked("Revisão final não aprovou após o limite de correções: " + review.summary)
+                raise TaskBlocked("Final review did not approve after the correction limit: " + review.summary)
             revisions += 1
             self._emit(
                 task_id,
                 Stage.FIXING,
-                f"Preparando correção final {revisions}/{options.max_revisions}.",
+                f"Preparing final correction {revisions}/{options.max_revisions}.",
                 "warning",
                 review.summary,
             )
@@ -1390,11 +1391,11 @@ class ZenlessOrchestrator:
                 {**context, "final_state": final_state, "qa": qa_result},
                 proposal,
                 review,
-                "Corrija somente os problemas encontrados na revisão final.",
+                "Fix only the issues found during final review.",
             )
             errors = validate_proposal(repair.actions, set(self.studio.tools))
             if errors:
-                raise OrchestratorError("Correção final bloqueada pela política: " + " | ".join(errors))
+                raise OrchestratorError("The final correction was blocked by policy: " + " | ".join(errors))
             repair, repair_review = self._review_and_revise(
                 task_id,
                 objective,
@@ -1407,7 +1408,7 @@ class ZenlessOrchestrator:
             )
             repair_actions = [action for action in repair.actions if not is_read_only(action.tool)]
             if not repair_actions:
-                raise TaskBlocked("A correção final não propôs nenhuma ação verificável.")
+                raise TaskBlocked("The final correction proposed no verifiable action.")
             self._bind_mutation_preconditions(task_id, studio_id, repair_actions)
             self.store.update_task(
                 task_id,
@@ -1419,13 +1420,13 @@ class ZenlessOrchestrator:
                     task_id,
                     f"final-repair:{revisions}",
                     Stage.WAITING_CHANGE_APPROVAL,
-                    f"Correção da revisão final {revisions} aguarda aprovação.",
+                    f"Final review correction {revisions} is awaiting approval.",
                     self._proposal_detail(repair, repair_review),
                     cancel_event,
                 )
                 if decision != "approve":
-                    raise TaskBlocked("Correção final não aprovada: " + note)
-            self._emit(task_id, Stage.APPLYING, "Aplicando correção aprovada da revisão final.")
+                    raise TaskBlocked("Final correction was not approved: " + note)
+            self._emit(task_id, Stage.APPLYING, "Applying the approved final review correction.")
             mutation_evidence.extend(self._apply_actions(task_id, studio_id, repair_actions))
             proposal = repair
             if options.automatic_play_test:
@@ -1437,7 +1438,7 @@ class ZenlessOrchestrator:
                     True,
                 )
                 if self._console_has_errors(console_output):
-                    raise TaskBlocked("O rerun após a correção final ainda retornou erros.")
+                    raise TaskBlocked("The rerun after the final correction still returned errors.")
 
     def _collect_final_state(
         self,
@@ -1501,7 +1502,9 @@ class ZenlessOrchestrator:
             return arguments
         properties = tool.input_schema.get("properties", {})
         if "datamodel_type" in properties and "datamodel_type" not in arguments:
-            enum = properties["datamodel_type"].get("enum", []) if isinstance(properties["datamodel_type"], dict) else []
+            enum = (
+                properties["datamodel_type"].get("enum", []) if isinstance(properties["datamodel_type"], dict) else []
+            )
             arguments["datamodel_type"] = "Edit" if "Edit" in enum or not enum else enum[0]
         return arguments
 
@@ -1524,11 +1527,11 @@ class ZenlessOrchestrator:
         data = extract_json_object(raw)
         proposal = AgentProposal.from_dict(data, raw)
         if not proposal.summary and not proposal.final_message:
-            raise ProtocolError("A proposta não contém summary nem final_message.")
+            raise ProtocolError("The proposal contains neither summary nor final_message.")
         if len(proposal.actions) > 16:
-            raise ProtocolError("A proposta excede 16 ações.")
+            raise ProtocolError("The proposal exceeds 16 actions.")
         if any(not action.tool for action in proposal.actions):
-            raise ProtocolError("A proposta contém uma ação sem nome de ferramenta.")
+            raise ProtocolError("The proposal contains an action without a tool name.")
         return proposal
 
     @staticmethod
@@ -1536,9 +1539,9 @@ class ZenlessOrchestrator:
         data = extract_json_object(raw)
         review = ReviewResult.from_dict(data, raw)
         if review.verdict not in {"approve", "approved", "revise", "block"}:
-            raise ProtocolError(f"Veredito de revisão inválido: {review.verdict}")
+            raise ProtocolError(f"Invalid review verdict: {review.verdict}")
         if not review.summary:
-            raise ProtocolError("A revisão não contém summary.")
+            raise ProtocolError("The review contains no summary.")
         return review
 
     @staticmethod
@@ -1559,12 +1562,12 @@ class ZenlessOrchestrator:
 
     def _check_control(self, task_id: str, cancel_event: threading.Event) -> None:
         if cancel_event.is_set():
-            raise TaskCancelled("Tarefa cancelada pelo usuário.")
+            raise TaskCancelled("Task cancelled by the user.")
         with self._state_lock:
             pause_event = self._pause.get(task_id)
         while pause_event is not None and pause_event.is_set():
             if cancel_event.wait(0.1):
-                raise TaskCancelled("Tarefa cancelada pelo usuário.")
+                raise TaskCancelled("Task cancelled by the user.")
 
     def _emit(
         self,
@@ -1581,7 +1584,15 @@ class ZenlessOrchestrator:
             Stage.WAITING_CHANGE_APPROVAL,
             Stage.PAUSED,
         }
-        status = "complete" if stage == Stage.COMPLETE else ("blocked" if stage == Stage.BLOCKED else ("failed" if stage == Stage.FAILED else ("waiting" if waiting else "running")))
+        status = (
+            "complete"
+            if stage == Stage.COMPLETE
+            else (
+                "blocked"
+                if stage == Stage.BLOCKED
+                else ("failed" if stage == Stage.FAILED else ("waiting" if waiting else "running"))
+            )
+        )
         try:
             current = self.store.load_task(task_id)
             if current is not None:

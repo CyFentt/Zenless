@@ -113,7 +113,7 @@ class WebBackendTests(unittest.TestCase):
             frontend.mkdir()
             (frontend / "index.html").write_text("<html>Zenless</html>", encoding="utf-8")
             core = _FakeCore(root)
-            bridge = LocalWebBridge(core=core, frontend_root=frontend)  # type: ignore[arg-type]
+            bridge = LocalWebBridge(core=core, frontend_root=frontend)
             base = bridge.start()
             try:
                 session = self._request(base + "/api/session")
@@ -134,12 +134,14 @@ class WebBackendTests(unittest.TestCase):
 
                 idempotent = {**headers, "Idempotency-Key": "create-job-0001"}
                 first = self._request(base + "/api/jobs", method="POST", payload={"title": "Build"}, headers=idempotent)
-                replay = self._request(base + "/api/jobs", method="POST", payload={"title": "Build"}, headers=idempotent)
+                replay = self._request(
+                    base + "/api/jobs", method="POST", payload={"title": "Build"}, headers=idempotent
+                )
                 self.assertEqual(first, replay)
                 self.assertEqual(core.created, 1)
 
                 chat_headers = {**headers, "Idempotency-Key": "send-chat-0001"}
-                chat_payload = {"content": "Olá", "options": {"risk": "high", "autoTest": True}}
+                chat_payload = {"content": "Hello", "options": {"risk": "high", "autoTest": True}}
                 self._request(base + "/api/chat", method="POST", payload=chat_payload, headers=chat_headers)
                 self._request(base + "/api/chat", method="POST", payload=chat_payload, headers=chat_headers)
                 self.assertEqual(core.chats, 1)
@@ -152,13 +154,13 @@ class WebBackendTests(unittest.TestCase):
     def test_qa_breaker_runs_bounded_studio_lifecycle(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             store = SQLiteStore(Path(folder) / "state.db")
-            store.create_task("job-qa", "Ajuste simples de texto", TaskOptions())
+            store.create_task("job-qa", "Simple text adjustment", TaskOptions())
             events = EventBus()
             studio = _QAStudio()
             qa = QABreaker(
                 store=store,
-                studio=studio,  # type: ignore[arg-type]
-                bridge=_OfflineBridge(),  # type: ignore[arg-type]
+                studio=studio,
+                bridge=_OfflineBridge(),
                 events=events,
                 play_test_seconds=1,
             )
@@ -170,7 +172,7 @@ class WebBackendTests(unittest.TestCase):
                 cancel_event=threading.Event(),
             )
             self.assertNotIn("ERROR:", output)
-            self.assertEqual(store.latest_test_run("job-qa")["status"], "PASSED")  # type: ignore[index]
+            self.assertEqual(store.latest_test_run("job-qa")["status"], "PASSED")
             play_calls = [args["is_start"] for name, args in studio.calls if name == "start_stop_play"]
             self.assertEqual(play_calls, [True, False])
             event_names = [event.type for event in events.recent(100)]
@@ -182,13 +184,13 @@ class WebBackendTests(unittest.TestCase):
             store = SQLiteStore(Path(folder) / "state.db")
             store.create_task(
                 "job-high-risk",
-                "Alterar um texto simples",
+                "Change a simple text value",
                 TaskOptions.from_api({"risk": "high"}),
             )
             qa = QABreaker(
                 store=store,
-                studio=_QAStudio(),  # type: ignore[arg-type]
-                bridge=_OfflineBridge(),  # type: ignore[arg-type]
+                studio=_QAStudio(),
+                bridge=_OfflineBridge(),
                 events=EventBus(),
                 play_test_seconds=1,
             )

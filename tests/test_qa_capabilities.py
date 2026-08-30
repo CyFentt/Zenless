@@ -86,7 +86,7 @@ class _CapabilityStudio:
             return MCPToolResult(name, "", False, ("text",))
         if name == "script_grep":
             if self.marker:
-                text = f"ServerScriptService.ZenlessQAHarness:1: -- {MULTIPLAYER_HARNESS_PROTOCOL}"
+                text = f'ServerScriptService.ZenlessQAHarness:1: protocol = "{MULTIPLAYER_HARNESS_PROTOCOL}"'
             else:
                 text = "No matches found"
             return MCPToolResult(name, text, False, ("text",))
@@ -137,8 +137,8 @@ class QACapabilityTests(unittest.TestCase):
     def _qa(self, studio: _CapabilityStudio) -> QABreaker:
         return QABreaker(
             store=self.store,
-            studio=studio,  # type: ignore[arg-type]
-            bridge=_OfflineBridge(),  # type: ignore[arg-type]
+            studio=studio,
+            bridge=_OfflineBridge(),
             events=EventBus(),
             play_test_seconds=1,
         )

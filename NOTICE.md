@@ -1,12 +1,12 @@
-# Zenless — avisos e atribuições
+# Legal notices
 
-Zenless é distribuído por Fentalware como software livre sob GPL-3.0.
+Zenless is distributed as free software under GPL-3.0.
 
-- A arquitetura da ponte e parte da pesquisa de compatibilidade foram informadas pelo projeto open source **ZeroScript Free 1.5.3**, de sebattfg, também GPL-3.0. A implementação Python, o protocolo autenticado, o orquestrador, os gates e a HUD conectada foram reconstruídos para o Zenless.
-- `aiohttp`, `pywebview`, `Playwright`, `websockets`, React, Three.js e suas dependências mantêm suas licenças próprias.
-- O instalador **Microsoft Edge WebView2 Evergreen** incluído é o redistribuível oficial da Microsoft. Antes da execução, o Zenless valida a assinatura Authenticode da Microsoft; o pacote final também registra checksums SHA-256.
-- `StudioMCP.exe` pertence ao Roblox Studio e não é redistribuído.
-- O logotipo e a identidade visual foram fornecidos pelo proprietário do projeto.
-- Roblox, Microsoft, OpenAI/ChatGPT, DeepSeek e Tencent/Hunyuan são marcas de seus respectivos proprietários. Não há afiliação oficial declarada.
+- The bridge architecture and compatibility research were informed by the GPL-3.0 open-source project ZeroScript Free 1.5.3. The Python implementation, authenticated protocol, orchestrator, approval gates, and connected interface were rebuilt for Zenless.
+- aiohttp, pywebview, Playwright, websockets, React, Three.js, and their dependencies retain their own licenses.
+- The bundled Microsoft Edge WebView2 Evergreen installer is the official redistributable. Zenless validates its Authenticode signature before execution and records SHA-256 checksums in the release process.
+- StudioMCP is owned by its respective platform and is not redistributed.
+- The logo and visual identity were supplied by the project owner.
+- Product and provider names referenced by required integrations are trademarks of their respective owners. No official affiliation is claimed.
 
-O Zenless não coleta senhas nem exporta cookies. A autenticação acontece diretamente nas páginas dos provedores; cada sessão permanece no perfil local privado do navegador gerenciado.
+Zenless does not collect passwords or export cookies. Authentication occurs directly on provider pages and each session remains in its private local browser profile.

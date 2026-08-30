@@ -175,9 +175,7 @@ class SQLiteStore:
             )
             columns = {str(row["name"]) for row in connection.execute("PRAGMA table_info(tasks)")}
             if "final_review_json" not in columns:
-                connection.execute(
-                    "ALTER TABLE tasks ADD COLUMN final_review_json TEXT NOT NULL DEFAULT '{}'"
-                )
+                connection.execute("ALTER TABLE tasks ADD COLUMN final_review_json TEXT NOT NULL DEFAULT '{}'")
 
     def create_task(self, task_id: str, prompt: str, options: TaskOptions) -> None:
         timestamp = now_iso()
@@ -201,7 +199,7 @@ class SQLiteStore:
     def update_task(self, task_id: str, **changes: Any) -> None:
         unknown = set(changes) - self._TASK_COLUMNS
         if unknown:
-            raise ValueError(f"Campos de tarefa desconhecidos: {sorted(unknown)}")
+            raise ValueError(f"Unknown task fields: {sorted(unknown)}")
         if not changes:
             return
         encoded: dict[str, Any] = {}
@@ -218,7 +216,7 @@ class SQLiteStore:
         with closing(self._connect()) as connection:
             cursor = connection.execute(f"UPDATE tasks SET {assignments} WHERE id = ?", values)
             if cursor.rowcount != 1:
-                raise KeyError(f"Tarefa não encontrada: {task_id}")
+                raise KeyError(f"Task not found: {task_id}")
 
     def append_event(self, event: PipelineEvent) -> None:
         timestamp = event.created_at or now_iso()
@@ -260,18 +258,16 @@ class SQLiteStore:
 
     def update_context_section(self, task_id: str, section: str, value: dict[str, Any]) -> None:
         if not section or len(section) > 80:
-            raise ValueError("Seção de contexto inválida.")
+            raise ValueError("Invalid context section.")
         with closing(self._connect()) as connection:
             connection.execute("BEGIN IMMEDIATE")
-            row = connection.execute(
-                "SELECT context_json FROM tasks WHERE id = ?", (task_id,)
-            ).fetchone()
+            row = connection.execute("SELECT context_json FROM tasks WHERE id = ?", (task_id,)).fetchone()
             if row is None:
                 connection.execute("ROLLBACK")
-                raise KeyError(f"Tarefa não encontrada: {task_id}")
+                raise KeyError(f"Task not found: {task_id}")
             try:
                 context = json.loads(row["context_json"])
-            except (TypeError, json.JSONDecodeError):
+            except TypeError, json.JSONDecodeError:
                 context = {}
             if not isinstance(context, dict):
                 context = {}
@@ -283,8 +279,6 @@ class SQLiteStore:
             connection.execute("COMMIT")
 
     def recover_interrupted_tasks(self) -> list[dict[str, Any]]:
-        """Checkpoint tasks left active by a previous process without replaying writes."""
-
         unsafe_stages = {
             Stage.APPLYING.value,
             Stage.TESTING.value,
@@ -305,13 +299,13 @@ class SQLiteStore:
                     next_stage = Stage.BLOCKED.value
                     next_status = "blocked"
                     reason = (
-                        "Recuperação segura bloqueou a repetição automática de uma operação que pode ter "
-                        "alterado o Studio. Revise as evidências de mutação antes de iniciar outra tarefa."
+                        "Safe recovery blocked automatic replay of an operation that may have changed "
+                        "Studio. Review mutation evidence before starting another task."
                     )
                 else:
                     next_stage = Stage.PAUSED.value
                     next_status = "waiting"
-                    reason = "Checkpoint recuperado após encerramento inesperado; retomar reinicia apenas a fase pré-mudança."
+                    reason = "Checkpoint recovered after an unexpected shutdown; resuming restarts only the pre-change phase."
                 connection.execute(
                     "UPDATE tasks SET stage = ?, status = ?, error = ?, updated_at = ? WHERE id = ?",
                     (next_stage, next_status, reason, timestamp, task_id),
@@ -373,23 +367,17 @@ class SQLiteStore:
     def recent_tasks(self, limit: int = 20) -> list[dict[str, Any]]:
         safe_limit = max(1, min(200, int(limit)))
         with closing(self._connect()) as connection:
-            rows = connection.execute(
-                "SELECT * FROM tasks ORDER BY updated_at DESC LIMIT ?", (safe_limit,)
-            ).fetchall()
+            rows = connection.execute("SELECT * FROM tasks ORDER BY updated_at DESC LIMIT ?", (safe_limit,)).fetchall()
         return [self._decode_task(row) for row in rows]
 
     def task_events(self, task_id: str) -> list[dict[str, Any]]:
         with closing(self._connect()) as connection:
-            rows = connection.execute(
-                "SELECT * FROM events WHERE task_id = ? ORDER BY id", (task_id,)
-            ).fetchall()
+            rows = connection.execute("SELECT * FROM events WHERE task_id = ? ORDER BY id", (task_id,)).fetchall()
         return [dict(row) for row in rows]
 
     def task_messages(self, task_id: str) -> list[dict[str, Any]]:
         with closing(self._connect()) as connection:
-            rows = connection.execute(
-                "SELECT * FROM messages WHERE task_id = ? ORDER BY id", (task_id,)
-            ).fetchall()
+            rows = connection.execute("SELECT * FROM messages WHERE task_id = ? ORDER BY id", (task_id,)).fetchall()
         return [dict(row) for row in rows]
 
     def claim_operation(self, key: str, kind: str, resource_id: str = "") -> dict[str, Any]:
@@ -397,9 +385,7 @@ class SQLiteStore:
         claimed = False
         with closing(self._connect()) as connection:
             connection.execute("BEGIN IMMEDIATE")
-            row = connection.execute(
-                "SELECT * FROM operations WHERE idempotency_key = ?", (key,)
-            ).fetchone()
+            row = connection.execute("SELECT * FROM operations WHERE idempotency_key = ?", (key,)).fetchone()
             if row is None:
                 claimed = True
                 connection.execute(
@@ -409,9 +395,7 @@ class SQLiteStore:
                     """,
                     (key, kind, resource_id, timestamp, timestamp),
                 )
-                row = connection.execute(
-                    "SELECT * FROM operations WHERE idempotency_key = ?", (key,)
-                ).fetchone()
+                row = connection.execute("SELECT * FROM operations WHERE idempotency_key = ?", (key,)).fetchone()
             connection.execute("COMMIT")
         operation = self._decode_operation(row)
         operation["claimed"] = claimed
@@ -419,7 +403,7 @@ class SQLiteStore:
 
     def finish_operation(self, key: str, state: str, response: dict[str, Any]) -> None:
         if state not in {"complete", "failed", "cancelled"}:
-            raise ValueError("Estado final de operação inválido.")
+            raise ValueError("Invalid final operation state.")
         with closing(self._connect()) as connection:
             cursor = connection.execute(
                 """
@@ -429,13 +413,11 @@ class SQLiteStore:
                 (state, json.dumps(response, ensure_ascii=False), now_iso(), key),
             )
             if cursor.rowcount != 1:
-                raise KeyError(f"Operação não encontrada: {key}")
+                raise KeyError(f"Operation not found: {key}")
 
     def operation(self, key: str) -> dict[str, Any] | None:
         with closing(self._connect()) as connection:
-            row = connection.execute(
-                "SELECT * FROM operations WHERE idempotency_key = ?", (key,)
-            ).fetchone()
+            row = connection.execute("SELECT * FROM operations WHERE idempotency_key = ?", (key,)).fetchone()
         return self._decode_operation(row) if row else None
 
     def register_asset(
@@ -543,7 +525,7 @@ class SQLiteStore:
 
     def set_context_state(self, item_id: str, state: str) -> bool:
         if state not in {"included", "excluded", "locked"}:
-            raise ValueError("Estado de contexto inválido.")
+            raise ValueError("Invalid context state.")
         with closing(self._connect()) as connection:
             cursor = connection.execute(
                 "UPDATE context_items SET state = ?, updated_at = ? WHERE id = ?",
@@ -647,6 +629,6 @@ class SQLiteStore:
         raw = data.pop(source, "{}")
         try:
             data[target] = json.loads(raw)
-        except (TypeError, json.JSONDecodeError):
+        except TypeError, json.JSONDecodeError:
             data[target] = {}
         return data

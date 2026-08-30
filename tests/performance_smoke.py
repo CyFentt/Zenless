@@ -38,7 +38,7 @@ def main() -> int:
                 tree_rss = current_rss + sum(item.memory_info().rss for item in descendants if item.is_running())
                 peak_tree_rss = max(peak_tree_rss, tree_rss)
                 cpu_samples.append(process.cpu_percent(interval=0.15))
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
+            except psutil.NoSuchProcess, psutil.AccessDenied:
                 break
         return_code = child.wait(timeout=5)
         elapsed = time.perf_counter() - started

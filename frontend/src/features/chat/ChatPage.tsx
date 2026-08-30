@@ -2,9 +2,10 @@ import { useState, useRef, useEffect, lazy, Suspense } from 'react';
 import { Paperclip, ArrowUp, Settings2, X } from 'lucide-react';
 import { useStore } from '@/store';
 import { getApi } from '@/services';
+import { ApiError } from '@/services/api/realApi';
 import { frontendDiagnostics } from '@/services/diagnostics';
 import { Tooltip } from '@/components/Tooltip';
-import { DEFAULT_TASK_OPTIONS, type TaskOptions } from '@/types';
+import { DEFAULT_TASK_OPTIONS, type ChatMessage, type ProviderId, type TaskOptions } from '@/types';
 const TaskOptionsPanel = lazy(() => import('./TaskOptionsPanel').then((m) => ({ default: m.TaskOptionsPanel })));
 
 export function ChatPage() {
@@ -12,10 +13,17 @@ export function ChatPage() {
   const streamingMessageId = useStore((s) => s.streamingMessageId);
   const streamingContent = useStore((s) => s.streamingContent);
   const addMessage = useStore((s) => s.addMessage);
+  const setMessages = useStore((s) => s.setMessages);
+  const reconcileMessage = useStore((s) => s.reconcileMessage);
+  const upsertJob = useStore((s) => s.upsertJob);
   const currentJobId = useStore((s) => s.currentJobId);
   const setCurrentJobId = useStore((s) => s.setCurrentJobId);
+  const setConnections = useStore((s) => s.setConnections);
+  const setAgents = useStore((s) => s.setAgents);
 
   const [input, setInput] = useState('');
+  const [sending, setSending] = useState(false);
+  const [loggingProvider, setLoggingProvider] = useState<ProviderId | null>(null);
   const [showOptions, setShowOptions] = useState(false);
   const [options, setOptions] = useState<TaskOptions>(DEFAULT_TASK_OPTIONS);
   const [attachments, setAttachments] = useState<{ id: string; file: File; previewUrl?: string }[]>([]);
@@ -30,17 +38,51 @@ export function ChatPage() {
 
   const handleSend = async () => {
     const content = input.trim();
-    if (!content && attachments.length === 0) return;
+    if ((!content && attachments.length === 0) || sending) return;
     const files = attachments.map((attachment) => attachment.file);
     const displayContent = content || files.map((file) => file.name).join(', ');
+    const localId = `pending_${crypto.randomUUID?.() ?? `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`}`;
     setInput('');
-    addMessage({ id: `msg_${Date.now()}`, role: 'user', content: displayContent, timestamp: Date.now(), jobId: currentJobId ?? undefined });
+    setSending(true);
+    addMessage({ id: localId, role: 'user', content: displayContent, timestamp: Date.now(), jobId: currentJobId ?? undefined });
     setAttachments((prev) => { prev.forEach((attachment) => attachment.previewUrl && URL.revokeObjectURL(attachment.previewUrl)); return []; });
     try {
       const result = await getApi().sendMessage(content, currentJobId ?? undefined, files, options);
-      if (result.jobId) setCurrentJobId(result.jobId);
+      reconcileMessage(localId, result.messageId, result.jobId);
+      if (result.jobId) {
+        setCurrentJobId(result.jobId);
+        const [job, snapshot] = await Promise.all([getApi().getJob(result.jobId), getApi().getMessages(result.jobId)]);
+        upsertJob(job);
+        setMessages(snapshot);
+      }
     } catch (error) {
       frontendDiagnostics.capture(error, 'chat', 'Failed to send message', { jobId: currentJobId ?? undefined });
+      addMessage({
+        id: `error_${crypto.randomUUID?.() ?? Date.now()}`,
+        role: 'system',
+        content: chatErrorMessage(error),
+        timestamp: Date.now(),
+        action: chatErrorAction(error),
+      });
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const handleProviderLogin = async (provider: ProviderId) => {
+    if (loggingProvider) return;
+    setLoggingProvider(provider);
+    setConnections({ [provider]: 'CONNECTING' });
+    try {
+      await getApi().loginProvider(provider);
+      const [connections, agents] = await Promise.all([getApi().getConnections(), getApi().getAgents()]);
+      setConnections(connections);
+      setAgents(agents);
+    } catch (error) {
+      frontendDiagnostics.capture(error, 'chat', 'Failed to open provider login');
+      addMessage({ id: `login_error_${Date.now()}`, role: 'system', content: 'The login window could not be opened.', timestamp: Date.now() });
+    } finally {
+      setLoggingProvider(null);
     }
   };
 
@@ -64,9 +106,7 @@ export function ChatPage() {
 
   return (
     <div className="flex h-full">
-      {/* Main chat area */}
       <div className="flex-1 flex flex-col min-w-0">
-        {/* Messages */}
         <div ref={scrollRef} className="flex-1 overflow-y-auto scrollbar-zen">
           <div className="max-w-3xl mx-auto px-6 py-4 space-y-1">
             {messages.length === 0 && !streamingMessageId && (
@@ -75,18 +115,15 @@ export function ChatPage() {
               </div>
             )}
             {messages.map((msg) => (
-              <ChatMessageRow key={msg.id} role={msg.role} content={msg.content} timestamp={msg.timestamp} />
+              <ChatMessageRow key={msg.id} message={msg} logging={loggingProvider === msg.action?.provider} onLogin={handleProviderLogin} />
             ))}
             {streamingMessageId && (
-              <ChatMessageRow role="zenless" content={streamingContent + '▊'} timestamp={Date.now()} streaming />
+              <ChatMessageRow message={{ id: streamingMessageId, role: 'zenless', content: streamingContent + '▊', timestamp: Date.now() }} streaming onLogin={handleProviderLogin} />
             )}
           </div>
         </div>
-
-        {/* Input area */}
         <div className="shrink-0 border-t border-ink-600 px-6 py-3">
           <div className="max-w-3xl mx-auto">
-            {/* Attachments */}
             {attachments.length > 0 && (
               <div className="flex flex-wrap gap-1.5 mb-2">
                 {attachments.map((att) => (
@@ -126,15 +163,13 @@ export function ChatPage() {
                   <Settings2 size={14} strokeWidth={1.5} />
                 </button>
               </Tooltip>
-              <button onClick={handleSend} disabled={!input.trim() && attachments.length === 0} className="w-8 h-8 flex items-center justify-center text-ink-0 bg-ink-700 border border-ink-500 disabled:opacity-30 hover:bg-ink-600 transition-colors" aria-label="Send">
+              <button onClick={handleSend} disabled={sending || (!input.trim() && attachments.length === 0)} className="w-8 h-8 flex items-center justify-center text-ink-0 bg-ink-700 border border-ink-500 disabled:opacity-30 hover:bg-ink-600 transition-colors" aria-label="Send">
                 <ArrowUp size={14} strokeWidth={1.5} />
               </button>
             </div>
           </div>
         </div>
       </div>
-
-      {/* Options panel */}
       {showOptions && (
         <Suspense fallback={null}>
           <TaskOptionsPanel options={options} onChange={setOptions} onClose={() => setShowOptions(false)} />
@@ -144,14 +179,13 @@ export function ChatPage() {
   );
 }
 
-function ChatMessageRow({ role, content, timestamp, streaming }: { role: 'user' | 'zenless' | 'system'; content: string; timestamp: number; streaming?: boolean }) {
-  const isUser = role === 'user';
-  const time = new Date(timestamp).toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' });
-
-  const parts = content.split(/(```[\s\S]*?```)/g);
+function ChatMessageRow({ message, streaming, logging, onLogin }: { message: ChatMessage; streaming?: boolean; logging?: boolean; onLogin: (provider: ProviderId) => Promise<void> }) {
+  const isUser = message.role === 'user';
+  const time = new Date(message.timestamp).toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' });
+  const parts = message.content.split(/(```[\s\S]*?```)/g);
 
   return (
-    <div className={`py-2 ${isUser ? '' : ''} ${streaming ? 'opacity-80' : ''}`}>
+    <div className={`py-2 ${streaming ? 'opacity-80' : ''}`}>
       <div className="flex items-baseline gap-2 mb-1">
         <span className={`text-2xs uppercase tracking-widest font-medium ${isUser ? 'text-ink-100' : 'text-ink-0'}`}>{isUser ? 'YOU' : 'ZENLESS'}</span>
         <span className="text-2xs text-ink-400 font-mono">{time}</span>
@@ -169,6 +203,26 @@ function ChatMessageRow({ role, content, timestamp, streaming }: { role: 'user' 
           return <span key={idx}>{part}</span>;
         })}
       </div>
+      {message.action?.type === 'LOGIN' && (
+        <button disabled={logging} onClick={() => void onLogin(message.action!.provider)} className="mt-2 px-3 h-7 text-2xs uppercase tracking-wider text-ink-0 border border-ink-500 hover:bg-ink-800 disabled:opacity-50">
+          {logging ? 'OPENING' : 'LOGIN'}
+        </button>
+      )}
     </div>
   );
+}
+
+function chatErrorAction(error: unknown): ChatMessage['action'] {
+  if (!(error instanceof ApiError) || error.code !== 'PROVIDER_LOGIN_REQUIRED' || !error.details || typeof error.details !== 'object') return undefined;
+  const provider = (error.details as { provider?: unknown }).provider;
+  return provider === 'chatgpt' || provider === 'deepseek' || provider === 'hunyuan' ? { type: 'LOGIN', provider } : undefined;
+}
+
+function chatErrorMessage(error: unknown): string {
+  const action = chatErrorAction(error);
+  if (action) {
+    const labels: Record<ProviderId, string> = { chatgpt: 'Builder', deepseek: 'Reviewer', hunyuan: '3D Generator' };
+    return `${labels[action.provider]} requires login.`;
+  }
+  return error instanceof Error && error.message.trim() ? error.message : 'The message could not be sent.';
 }

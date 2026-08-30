@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type {
+  AgentId,
   AgentInfo,
   Asset,
   BootStep,
@@ -21,85 +22,84 @@ import type {
   SocketStatus,
 } from '@/types';
 
-interface AppState {
-  // Boot
-  booted: boolean;
-  bootSteps: BootStep[];
+const CANONICAL_AGENTS: AgentInfo[] = [
+  { id: 'chatgpt', name: 'Builder', status: 'CONNECTING' },
+  { id: 'deepseek', name: 'Reviewer', status: 'CONNECTING' },
+  { id: 'hunyuan', name: '3D Generator', status: 'CONNECTING' },
+  { id: 'studio', name: 'Studio', status: 'CONNECTING' },
+];
 
-  // Navigation
+function normalizeAgents(agents: AgentInfo[], connections: ConnectionInfo): AgentInfo[] {
+  return CANONICAL_AGENTS.map((canonical) => ({
+    ...canonical,
+    status: connections[canonical.id],
+    ...agents.find((agent) => agent.id === canonical.id),
+    name: canonical.name,
+  }));
+}
+
+function uniqueMessages(messages: ChatMessage[]): ChatMessage[] {
+  const result = new Map<string, ChatMessage>();
+  messages.forEach((message) => result.set(message.id, message));
+  return [...result.values()].sort((left, right) => left.timestamp - right.timestamp);
+}
+
+interface AppState {
+  booted: boolean;
+  backendReady: boolean;
+  runtimeHydrated: boolean;
+  bootError: string;
+  bootSteps: BootStep[];
   activePage: string;
   setActivePage: (page: string) => void;
-
-  // Socket
   socketStatus: SocketStatus;
-
-  // Connections / Agents
   connections: ConnectionInfo;
   agents: AgentInfo[];
-
-  // Jobs
   jobs: Job[];
   currentJobId: string | null;
   setCurrentJobId: (id: string | null) => void;
-
-  // Chat
   messages: ChatMessage[];
   streamingMessageId: string | null;
   streamingContent: string;
-
-  // Context
   contextItems: ContextItem[];
-
-  // Changes
   changedFiles: ChangedFile[];
   selectedFileId: string | null;
   setSelectedFileId: (id: string | null) => void;
-
-  // Visual
   views: ViewTile[];
   conceptVersion: number;
   conceptStatus: string;
   conceptPrompt: string;
-
-  // 3D Model
   modelInfo: ModelInfo;
-
-  // Assets
   assets: Asset[];
-
-  // Studio
   studioState: StudioState;
   studioTree: StudioNode[];
   selectedStudioNode: StudioNode | null;
   setSelectedStudioNode: (node: StudioNode | null) => void;
   studioQuery: string;
   setStudioQuery: (q: string) => void;
-
-  // Test
   testState: TestState;
   testLogs: TestLog[];
   testCases: TestCaseResult[];
   testFailures: TestFailure[];
   logFilter: string;
   setLogFilter: (f: string) => void;
-
-  // Settings
   settings: Settings | null;
-
-  // Diagnostics
   diagnostics: Diagnostic[];
-
-  // Setters (batch updates from events)
-  setBooted: (b: boolean) => void;
+  setBackendReady: (ready: boolean) => void;
+  setRuntimeHydrated: (hydrated: boolean) => void;
+  setBootError: (error: string) => void;
   setBootSteps: (steps: BootStep[]) => void;
   setSocketStatus: (s: SocketStatus) => void;
   setConnections: (c: Partial<ConnectionInfo>) => void;
   setAgents: (a: AgentInfo[]) => void;
+  upsertAgent: (id: AgentId, patch: Partial<AgentInfo>) => void;
   setJobs: (j: Job[]) => void;
   addJob: (j: Job) => void;
+  upsertJob: (j: Job) => void;
   updateJob: (id: string, patch: Partial<Job>) => void;
   setMessages: (m: ChatMessage[]) => void;
   addMessage: (m: ChatMessage) => void;
+  reconcileMessage: (localId: string, serverId: string, jobId?: string) => void;
   setStreaming: (id: string | null) => void;
   appendStreamDelta: (delta: string) => void;
   finishStream: () => void;
@@ -124,6 +124,9 @@ interface AppState {
 
 export const useStore = create<AppState>((set) => ({
   booted: false,
+  backendReady: false,
+  runtimeHydrated: false,
+  bootError: '',
   bootSteps: [],
 
   activePage: 'home',
@@ -139,7 +142,7 @@ export const useStore = create<AppState>((set) => ({
     hunyuan: 'OFF',
     studio: 'OFF',
   },
-  agents: [],
+  agents: CANONICAL_AGENTS,
 
   jobs: [],
   currentJobId: null,
@@ -182,17 +185,41 @@ export const useStore = create<AppState>((set) => ({
 
   diagnostics: [],
 
-  setBooted: (b) => set({ booted: b }),
+  setBackendReady: (backendReady) => set((state) => ({ backendReady, booted: backendReady && state.runtimeHydrated })),
+  setRuntimeHydrated: (runtimeHydrated) => set((state) => ({ runtimeHydrated, booted: runtimeHydrated && state.backendReady })),
+  setBootError: (bootError) => set({ bootError }),
   setBootSteps: (steps) => set({ bootSteps: steps }),
   setSocketStatus: (s) => set({ socketStatus: s }),
-  setConnections: (c) => set((state) => ({ connections: { ...state.connections, ...c } })),
-  setAgents: (a) => set({ agents: a }),
-  setJobs: (j) => set({ jobs: j }),
-  addJob: (j) => set((state) => ({ jobs: [j, ...state.jobs] })),
+  setConnections: (patch) => set((state) => {
+    const connections = { ...state.connections, ...patch };
+    return { connections, agents: normalizeAgents(state.agents, connections) };
+  }),
+  setAgents: (agents) => set((state) => ({ agents: normalizeAgents(agents, state.connections) })),
+  upsertAgent: (id, patch) => set((state) => ({
+    agents: normalizeAgents(
+      state.agents.some((agent) => agent.id === id)
+        ? state.agents.map((agent) => (agent.id === id ? { ...agent, ...patch, id } : agent))
+        : [...state.agents, { ...CANONICAL_AGENTS.find((agent) => agent.id === id)!, ...patch, id }],
+      state.connections,
+    ).map((agent) => (agent.id === id ? { ...agent, ...patch, id, name: CANONICAL_AGENTS.find((item) => item.id === id)!.name } : agent)),
+  })),
+  setJobs: (jobs) => set({ jobs: [...new Map(jobs.map((job) => [job.id, job])).values()] }),
+  addJob: (job) => set((state) => ({ jobs: [job, ...state.jobs.filter((item) => item.id !== job.id)] })),
+  upsertJob: (job) => set((state) => ({ jobs: [job, ...state.jobs.filter((item) => item.id !== job.id)] })),
   updateJob: (id, patch) =>
     set((state) => ({ jobs: state.jobs.map((j) => (j.id === id ? { ...j, ...patch, updatedAt: Date.now() } : j)) })),
-  setMessages: (m) => set({ messages: m }),
-  addMessage: (m) => set((state) => ({ messages: [...state.messages, m] })),
+  setMessages: (messages) => set({ messages: uniqueMessages(messages) }),
+  addMessage: (message) => set((state) => ({ messages: uniqueMessages([...state.messages, message]) })),
+  reconcileMessage: (localId, serverId, jobId) => set((state) => {
+    if (state.messages.some((message) => message.id === serverId)) {
+      return { messages: state.messages.filter((message) => message.id !== localId) };
+    }
+    return {
+      messages: state.messages.map((message) => (
+        message.id === localId ? { ...message, id: serverId, jobId: jobId ?? message.jobId } : message
+      )),
+    };
+  }),
   setStreaming: (id) => set({ streamingMessageId: id, streamingContent: '' }),
   appendStreamDelta: (delta) => set((state) => ({ streamingContent: state.streamingContent + delta })),
   finishStream: () =>
@@ -204,7 +231,7 @@ export const useStore = create<AppState>((set) => ({
         content: state.streamingContent,
         timestamp: Date.now(),
       };
-      return { messages: [...state.messages, msg], streamingMessageId: null, streamingContent: '' };
+      return { messages: uniqueMessages([...state.messages, msg]), streamingMessageId: null, streamingContent: '' };
     }),
   setContextItems: (c) => set({ contextItems: c }),
   setChangedFiles: (f) => set({ changedFiles: f }),

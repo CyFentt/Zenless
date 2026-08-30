@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import importlib
 import json
 import queue
 import sys
@@ -270,8 +271,7 @@ class WebViewHost:
 
     @staticmethod
     def _devtools(window: Any, method: str, parameters: dict[str, Any]) -> dict[str, Any]:
-        from System import Action  # type: ignore[reportMissingImports]
-
+        Action = getattr(importlib.import_module("System"), "Action")
         native = window.native
         holder: dict[str, Any] = {}
 

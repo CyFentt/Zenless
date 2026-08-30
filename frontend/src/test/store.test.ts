@@ -1,18 +1,24 @@
-import { describe, it, expect } from 'vitest';
+import { beforeEach, describe, it, expect } from 'vitest';
 import { useStore } from '@/store';
 import { MockZenlessAPI } from '@/services/mock/mockApi';
 import { MockZenlessSocket } from '@/services/websocket/mockSocket';
 import { handleEvent } from '@/store/eventHandler';
+
+const initialState = useStore.getState();
+
+beforeEach(() => useStore.setState(initialState, true));
 
 describe('Store', () => {
   it('starts with boot false', () => {
     expect(useStore.getState().booted).toBe(false);
   });
 
-  it('setBooted changes state', () => {
-    useStore.getState().setBooted(true);
+  it('boots only after backend readiness and frontend hydration', () => {
+    useStore.getState().setBackendReady(true);
+    expect(useStore.getState().booted).toBe(false);
+    useStore.getState().setRuntimeHydrated(true);
     expect(useStore.getState().booted).toBe(true);
-    useStore.getState().setBooted(false);
+    useStore.getState().setRuntimeHydrated(false);
   });
 
   it('preserves a boot stage received before the bootstrap snapshot', () => {
@@ -52,6 +58,24 @@ describe('Store', () => {
     useStore.getState().setConnections({ deepseek: 'ERR' });
     expect(useStore.getState().connections.deepseek).toBe('ERR');
     expect(useStore.getState().connections.chatgpt).toBe('READY');
+  });
+
+  it('upserts agent status events without an initial snapshot', () => {
+    useStore.setState({ agents: [] });
+    handleEvent({ type: 'AGENT_STATUS_CHANGED', data: { agent: 'chatgpt', status: 'LOGIN' } });
+    expect(useStore.getState().agents.find((agent) => agent.id === 'chatgpt')).toMatchObject({ name: 'Builder', status: 'LOGIN' });
+    handleEvent({ type: 'AGENT_STATUS_CHANGED', data: { agent: 'chatgpt', status: 'READY' } });
+    expect(useStore.getState().agents.filter((agent) => agent.id === 'chatgpt')).toEqual([
+      expect.objectContaining({ name: 'Builder', status: 'READY' }),
+    ]);
+  });
+
+  it('deduplicates messages by authoritative ID', () => {
+    const message = { id: 'msg-1', role: 'zenless' as const, content: 'Ready', timestamp: 100 };
+    useStore.getState().setMessages([message, { ...message, content: 'Updated' }]);
+    expect(useStore.getState().messages).toEqual([{ ...message, content: 'Updated' }]);
+    useStore.getState().addMessage({ ...message, content: 'Final' });
+    expect(useStore.getState().messages).toEqual([{ ...message, content: 'Final' }]);
   });
 
   it('addTestLog appends', () => {
@@ -137,7 +161,6 @@ describe('MockZenlessSocket', () => {
     socket.on('event', (event: { type: string }) => events.push(event.type));
     socket.connect();
     await new Promise((r) => setTimeout(r, 700));
-    // Hunyuan status change should fire after ~3s
     await new Promise((r) => setTimeout(r, 3500));
     expect(events).toContain('CONNECTION_CHANGED');
     socket.disconnect();
@@ -146,9 +169,7 @@ describe('MockZenlessSocket', () => {
 
 describe('Pipeline Stage Labels', () => {
   it('all stages have labels', () => {
-    // Import from types
     const stages = ['NEW', 'COLLECTING_CONTEXT', 'PLANNING', 'GENERATING_CONCEPT', 'WAITING_IMAGE_APPROVAL', 'GENERATING_3D', 'WAITING_3D_APPROVAL', 'BUILDING', 'REVIEWING', 'REVISING', 'WAITING_CHANGE_APPROVAL', 'APPLYING', 'TESTING', 'FIXING', 'FINAL_REVIEW', 'COMPLETE', 'PAUSED', 'BLOCKED', 'FAILED'];
-    // Just verify stages are valid strings
     expect(stages.length).toBe(19);
     expect(stages).toContain('COMPLETE');
     expect(stages).toContain('FAILED');

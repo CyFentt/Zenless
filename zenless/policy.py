@@ -62,17 +62,17 @@ def is_read_only(tool: str) -> bool:
 def classify_action(action: ProposalAction, available_tools: set[str]) -> PolicyDecision:
     reasons: list[str] = []
     if action.tool not in available_tools:
-        return PolicyDecision(False, "blocked", (f"Ferramenta MCP indisponível: {action.tool}",))
+        return PolicyDecision(False, "blocked", (f"MCP tool unavailable: {action.tool}",))
     if action.tool in ORCHESTRATOR_ONLY_TOOLS:
-        return PolicyDecision(False, "blocked", (f"{action.tool} é controlada internamente pelo Zenless",))
+        return PolicyDecision(False, "blocked", (f"{action.tool} is controlled internally",))
     if action.tool in DISALLOWED_AUTOMATED_TOOLS:
-        return PolicyDecision(False, "critical", (f"{action.tool} não pode ser proposta por uma IA web",))
+        return PolicyDecision(False, "critical", (f"{action.tool} cannot be proposed by a web agent",))
     if not isinstance(action.arguments, dict):
-        return PolicyDecision(False, "blocked", ("Argumentos não são um objeto JSON",))
+        return PolicyDecision(False, "blocked", ("Arguments are not a JSON object",))
 
     serialized = json.dumps(action.arguments, ensure_ascii=False, default=str)
     if len(serialized.encode("utf-8")) > 512_000:
-        return PolicyDecision(False, "blocked", ("Ação excede 512 KiB",))
+        return PolicyDecision(False, "blocked", ("Action exceeds 512 KiB",))
 
     if is_read_only(action.tool):
         return PolicyDecision(True, "low")
@@ -81,34 +81,32 @@ def classify_action(action: ProposalAction, available_tools: set[str]) -> Policy
     for pattern in DESTRUCTIVE_PATTERNS:
         if re.search(pattern, serialized, flags=re.IGNORECASE):
             risk = "critical"
-            reasons.append(f"Padrão destrutivo detectado: {pattern}")
+            reasons.append(f"Destructive pattern detected: {pattern}")
 
     if action.tool == "multi_edit":
         file_path = str(action.arguments.get("file_path", ""))
         edits = action.arguments.get("edits")
         if not file_path.startswith(("game.", "Workspace.", "ServerScriptService.", "ReplicatedStorage.", "Starter")):
-            reasons.append("Caminho de script inválido ou pouco específico")
+            reasons.append("Script path is invalid or insufficiently specific")
         if not isinstance(edits, list) or not edits:
-            reasons.append("multi_edit precisa de uma lista de edições")
+            reasons.append("multi_edit requires a non-empty edit list")
         elif len(edits) > 40:
-            reasons.append("multi_edit excede 40 substituições")
+            reasons.append("multi_edit exceeds 40 replacements")
         for edit in edits if isinstance(edits, list) else []:
             if not isinstance(edit, dict):
-                reasons.append("Edição não é um objeto")
+                reasons.append("Edit is not an object")
                 continue
             old = edit.get("old_string")
             new = edit.get("new_string")
             if not isinstance(old, str) or not isinstance(new, str) or old == new:
-                reasons.append("Edição exige old_string/new_string distintos")
+                reasons.append("Edit requires distinct old_string and new_string values")
             if isinstance(old, str) and old and new == "":
                 risk = "high"
-                reasons.append("A edição remove conteúdo existente")
+                reasons.append("Edit removes existing content")
 
     if reasons:
         blocked = risk == "critical" or any(
-            marker in reason
-            for reason in reasons
-            for marker in ("inválido", "precisa", "excede", "não é", "exige")
+            marker in reason for reason in reasons for marker in ("invalid", "requires", "exceeds", "not an object")
         )
         return PolicyDecision(not blocked, risk, tuple(dict.fromkeys(reasons)))
     return PolicyDecision(True, risk)
@@ -117,10 +115,10 @@ def classify_action(action: ProposalAction, available_tools: set[str]) -> Policy
 def validate_proposal(actions: list[ProposalAction], available_tools: set[str]) -> list[str]:
     errors: list[str] = []
     if len(actions) > 16:
-        errors.append("A proposta excede 16 ações MCP.")
+        errors.append("Proposal exceeds 16 MCP actions.")
     for index, action in enumerate(actions[:16], start=1):
         decision = classify_action(action, available_tools)
         if not decision.allowed:
-            detail = "; ".join(decision.reasons) or "bloqueada pela política"
-            errors.append(f"Ação {index} ({action.tool}): {detail}")
+            detail = "; ".join(decision.reasons) or "blocked by policy"
+            errors.append(f"Action {index} ({action.tool}): {detail}")
     return errors

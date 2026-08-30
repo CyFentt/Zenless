@@ -27,7 +27,7 @@ class StudioMCPConcurrencyTests(unittest.TestCase):
                 active -= 1
             return MCPToolResult(name, str(arguments["id"]), False, ("text",))
 
-        client._call_tool = fake_call  # type: ignore[method-assign]
+        client._call_tool = fake_call
 
         def worker(index: int) -> None:
             results.append(client.call_tool("slow", {"id": index}).text)

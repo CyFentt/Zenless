@@ -47,12 +47,6 @@ class _Session:
 
 
 class BrowserBridge:
-    """Authenticated localhost bridge for the Zenless WebExtension.
-
-    The extension owns browser cookies and logged-in sessions. This bridge only
-    exchanges task envelopes; it never receives or requests cookies/passwords.
-    """
-
     def __init__(
         self,
         *,
@@ -63,7 +57,7 @@ class BrowserBridge:
         status_callback: StatusCallback | None = None,
     ) -> None:
         if len(token) < 32:
-            raise ValueError("O token da bridge precisa ter ao menos 32 caracteres.")
+            raise ValueError("The bridge token must contain at least 32 characters.")
         self.token = token
         self.runtime_file = runtime_file
         self.host = host
@@ -98,16 +92,16 @@ class BrowserBridge:
             if self.running:
                 return
             if self._thread is not None and self._thread.is_alive():
-                raise BridgeError("A bridge anterior ainda está encerrando.")
+                raise BridgeError("The previous bridge instance is still stopping.")
             self._ready.clear()
             self._stop_requested.clear()
             self._start_error = ""
             self._thread = threading.Thread(target=self._serve, name="Zenless-BrowserBridge", daemon=True)
             self._thread.start()
         if not self._ready.wait(timeout):
-            raise BridgeError("A bridge não confirmou inicialização no tempo esperado.")
+            raise BridgeError("The bridge did not confirm startup within the expected time.")
         if self._stop_requested.is_set():
-            raise BridgeError("A inicialização da bridge foi cancelada.")
+            raise BridgeError("Bridge startup was canceled.")
         if self._start_error:
             raise BridgeError(self._start_error)
         self._write_runtime_file()
@@ -123,7 +117,7 @@ class BrowserBridge:
             self._sessions.clear()
         for session in sessions:
             try:
-                session.connection.close(1001, "Zenless encerrado")
+                session.connection.close(1001, "Application closed")
             except Exception:
                 pass
         thread = self._thread
@@ -133,11 +127,11 @@ class BrowserBridge:
             if thread is None or not thread.is_alive():
                 self._thread = None
             else:
-                self._start_error = "A bridge não encerrou no prazo cooperativo."
+                self._start_error = "The bridge did not stop within the cooperative timeout."
         self._server = None
-        self._fail_all("Bridge encerrada.")
+        self._fail_all("Bridge stopped.")
         self._remove_runtime_file()
-        self._emit_status("bridge", "Disconnected", "Bridge local parada")
+        self._emit_status("bridge", "Disconnected", "Local bridge stopped")
 
     def provider_status(self) -> dict[str, dict[str, Any]]:
         with self._sessions_lock:
@@ -171,14 +165,14 @@ class BrowserBridge:
         timeout: float = 240.0,
     ) -> dict[str, Any]:
         if provider not in self._provider_locks:
-            raise BridgeError(f"Provider não suportado: {provider}")
+            raise BridgeError("Unsupported browser service.")
         if not action or len(action) > 64:
-            raise BridgeError("Ação da bridge inválida.")
+            raise BridgeError("Invalid bridge action.")
         with self._provider_locks[provider]:
             with self._sessions_lock:
                 session = self._sessions.get(provider)
             if session is None:
-                raise BridgeError(f"Sessão {provider} não conectada. Faça login e mantenha a aba aberta.")
+                raise BridgeError("The browser service is not connected. Sign in and keep the tab open.")
 
             command = make_envelope(
                 "agent.command",
@@ -193,14 +187,14 @@ class BrowserBridge:
             try:
                 session.send(command)
                 if not pending.event.wait(max(1.0, timeout)):
-                    raise BridgeError(f"{provider} excedeu {timeout:.0f}s na ação {action}.")
+                    raise BridgeError(f"The browser service exceeded {timeout:.0f}s while running {action}.")
                 if pending.error:
                     raise BridgeError(pending.error)
                 if pending.response is None:
-                    raise BridgeError(f"{provider} terminou sem resposta válida.")
+                    raise BridgeError("The browser service finished without a valid response.")
                 return dict(pending.response.payload)
             except ConnectionClosed as exc:
-                raise BridgeError(f"Conexão {provider} foi encerrada: {exc}") from exc
+                raise BridgeError(f"The browser service connection was closed: {exc}") from exc
             finally:
                 with self._pending_lock:
                     self._pending.pop(command.id, None)
@@ -208,7 +202,7 @@ class BrowserBridge:
     def send_prompt(self, provider: str, prompt: str, *, task_id: str, timeout: float = 360.0) -> str:
         clean_prompt = prompt.strip()
         if not clean_prompt:
-            raise BridgeError("Prompt vazio.")
+            raise BridgeError("Prompt is empty.")
         response = self.request(
             provider,
             "send_prompt",
@@ -218,11 +212,11 @@ class BrowserBridge:
         )
         status = str(response.get("status", "ok"))
         if status == "requires_attention":
-            reason = str(response.get("error") or response.get("message") or "A aba requer atenção manual.")
+            reason = str(response.get("error") or response.get("message") or "The tab requires manual attention.")
             raise BridgeError(reason)
         text = str(response.get("text", "")).strip()
         if not text:
-            raise BridgeError(f"{provider} respondeu sem texto.")
+            raise BridgeError("The browser service returned no text.")
         return text
 
     def _serve(self) -> None:
@@ -247,10 +241,10 @@ class BrowserBridge:
                     ).start()
                 server.serve_forever()
         except OSError as exc:
-            self._start_error = f"Não foi possível abrir {self.host}:{self.port}: {exc}"
+            self._start_error = f"Could not open {self.host}:{self.port}: {exc}"
             self._ready.set()
         except Exception as exc:
-            self._start_error = f"Falha inesperada na bridge: {exc}"
+            self._start_error = f"Unexpected bridge failure: {exc}"
             self._ready.set()
         finally:
             self._server = None
@@ -263,16 +257,16 @@ class BrowserBridge:
             query = parse_qs(urlsplit(path).query)
             supplied = query.get("token", [""])[0]
             if not secrets.compare_digest(supplied, self.token):
-                connection.close(1008, "Token inválido")
+                connection.close(1008, "Invalid token")
                 return
 
             hello = parse_envelope(connection.recv(timeout=12))
             if hello.type != "bridge.hello" or hello.source not in {"extension", "native-host"}:
-                connection.close(1008, "Handshake inválido")
+                connection.close(1008, "Invalid handshake")
                 return
             provider = hello.provider
             if provider not in self._provider_locks:
-                connection.close(1008, "Provider inválido")
+                connection.close(1008, "Invalid service")
                 return
             session = _Session(
                 provider=provider,
@@ -285,7 +279,7 @@ class BrowserBridge:
                 self._sessions[provider] = session
             if previous is not None and previous.connection is not connection:
                 try:
-                    previous.connection.close(1000, "Nova aba assumiu a sessão")
+                    previous.connection.close(1000, "A new tab replaced this session")
                 except Exception:
                     pass
             session.send(
@@ -297,14 +291,14 @@ class BrowserBridge:
                     payload={"accepted": True, "protocol": 1},
                 )
             )
-            self._emit_status(provider, "Connected", f"aba {session.tab_id} via {session.transport}")
+            self._emit_status(provider, "Connected", f"tab {session.tab_id} via {session.transport}")
 
             while True:
                 raw = connection.recv()
                 envelope = parse_envelope(raw)
                 session.last_seen = time.monotonic()
                 self._route_envelope(envelope)
-        except (ConnectionClosed, TimeoutError):
+        except ConnectionClosed, TimeoutError:
             pass
         except ProtocolError as exc:
             try:
@@ -319,8 +313,8 @@ class BrowserBridge:
                 with self._sessions_lock:
                     if self._sessions.get(session.provider) is session:
                         self._sessions.pop(session.provider, None)
-                self._fail_provider(session.provider, f"Sessão {session.provider} desconectada.")
-                self._emit_status(session.provider, "Disconnected", "Aba indisponível")
+                self._fail_provider(session.provider, "The browser service session disconnected.")
+                self._emit_status(session.provider, "Disconnected", "Tab unavailable")
 
     def _route_envelope(self, envelope: Envelope) -> None:
         if envelope.type == "bridge.heartbeat":
@@ -340,7 +334,7 @@ class BrowserBridge:
         if pending is None or pending.provider != envelope.provider:
             return
         if envelope.type == "agent.error":
-            pending.error = str(envelope.payload.get("error", "Falha no agente web."))
+            pending.error = str(envelope.payload.get("error", "Web agent failure."))
         else:
             pending.response = envelope
         pending.event.set()
@@ -385,5 +379,5 @@ class BrowserBridge:
             data = json.loads(self.runtime_file.read_text(encoding="utf-8"))
             if int(data.get("pid", -1)) == os.getpid():
                 self.runtime_file.unlink(missing_ok=True)
-        except (OSError, ValueError, json.JSONDecodeError):
+        except OSError, ValueError, json.JSONDecodeError:
             pass

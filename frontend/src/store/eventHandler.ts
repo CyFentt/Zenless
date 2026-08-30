@@ -14,29 +14,30 @@ export function handleEvent(event: ZenlessEvent) {
             ? steps.map((step) => (step.stage === event.data.stage ? { ...step, state: event.data.state } : step))
             : [...steps, { stage: event.data.stage, state: event.data.state }],
         );
+        if (event.data.stage === 'UI' && event.data.state === 'READY') store.setBackendReady(true);
       }
       break;
     case 'BOOT_COMPLETE':
-      store.setBooted(true);
+      store.setBackendReady(true);
       break;
     case 'CONNECTION_CHANGED':
       store.setConnections(event.data);
       break;
     case 'AGENT_STATUS_CHANGED':
-      store.setAgents(
-        useStore.getState().agents.map((a) =>
-          a.id === event.data.agent ? { ...a, status: event.data.status } : a,
-        ),
-      );
+      store.upsertAgent(event.data.agent, { status: event.data.status });
       break;
     case 'PIPELINE_STATE_CHANGED':
       store.updateJob(event.data.jobId, { stage: event.data.stage });
       break;
     case 'JOB_CREATED':
-      store.addJob(event.data.job);
+      store.upsertJob(event.data.job);
+      store.setCurrentJobId(event.data.job.id);
       break;
     case 'JOB_UPDATED':
       store.updateJob(event.data.job.id, event.data.job);
+      if (event.data.job.status === 'RUNNING' || event.data.job.status === 'PAUSED' || event.data.job.status === 'NEW') {
+        store.setCurrentJobId(event.data.job.id);
+      }
       break;
     case 'JOB_COMPLETE':
       store.updateJob(event.data.jobId, { status: 'COMPLETE', stage: 'COMPLETE' });

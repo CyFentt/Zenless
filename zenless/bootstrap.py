@@ -33,8 +33,6 @@ BootstrapListener = Callable[[BootstrapEvent], None]
 
 
 class BootstrapBus:
-    """Observable stage state shared by provisioners and the native splash."""
-
     def __init__(self) -> None:
         self._events: dict[str, BootstrapEvent] = {}
         self._listeners: list[BootstrapListener] = []
@@ -79,8 +77,6 @@ class BootstrapBus:
 
 
 class NativeSplash:
-    """Small Win32 splash shown before provisioning; no Tkinter or browser runtime."""
-
     _WM_REDRAW = 0x8001
     _WM_CLOSE_SPLASH = 0x8002
 
@@ -212,7 +208,13 @@ class NativeSplash:
         user32.GetClientRect.restype = wintypes.BOOL
         user32.FillRect.argtypes = [wintypes.HDC, ctypes.POINTER(wintypes.RECT), wintypes.HBRUSH]
         user32.FillRect.restype = ctypes.c_int
-        user32.DrawTextW.argtypes = [wintypes.HDC, wintypes.LPCWSTR, ctypes.c_int, ctypes.POINTER(wintypes.RECT), wintypes.UINT]
+        user32.DrawTextW.argtypes = [
+            wintypes.HDC,
+            wintypes.LPCWSTR,
+            ctypes.c_int,
+            ctypes.POINTER(wintypes.RECT),
+            wintypes.UINT,
+        ]
         user32.DrawTextW.restype = ctypes.c_int
         user32.InvalidateRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT), wintypes.BOOL]
         user32.InvalidateRect.restype = wintypes.BOOL

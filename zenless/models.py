@@ -26,8 +26,6 @@ class Stage(StrEnum):
     BLOCKED = "BLOCKED"
     FAILED = "FAILED"
 
-    # Compatibility names used by the frozen legacy HUD/backend.  The wire
-    # value remains the canonical React contract value.
     CREATING = "PLANNING"
     WAITING_VISUAL_APPROVAL = "WAITING_IMAGE_APPROVAL"
     REPAIRING = "FIXING"
@@ -157,14 +155,12 @@ _STAGE_TRANSITIONS: dict[Stage, set[Stage]] = {
 
 
 def validate_stage_transition(previous: Stage | str, next_stage: Stage | str) -> None:
-    """Reject impossible lifecycle moves while allowing idempotent event updates."""
-
     before = previous if isinstance(previous, Stage) else Stage(previous)
     after = next_stage if isinstance(next_stage, Stage) else Stage(next_stage)
     if before == after:
         return
     if after not in _STAGE_TRANSITIONS.get(before, set()):
-        raise InvalidStageTransition(f"Transição de pipeline inválida: {before.value} -> {after.value}")
+        raise InvalidStageTransition(f"Invalid pipeline transition: {before.value} -> {after.value}")
 
 
 @dataclass(slots=True)
@@ -187,12 +183,11 @@ class TaskOptions:
         def bounded_int(key: str, default: int) -> int:
             try:
                 return max(1, min(5, int(raw.get(key, default))))
-            except (TypeError, ValueError):
+            except TypeError, ValueError:
                 return default
 
         create_3d_asset = bool(raw.get("Create 3D Asset", True))
         return cls(
-            # A 3D job cannot bypass its approved visual reference set.
             visual_first=bool(raw.get("Visual First", True)) or create_3d_asset,
             create_3d_asset=create_3d_asset,
             independent_review=bool(raw.get("Independent Review", True)),
@@ -211,13 +206,11 @@ class TaskOptions:
         def bounded_int(key: str, default: int) -> int:
             try:
                 return max(1, min(5, int(source.get(key, default))))
-            except (TypeError, ValueError):
+            except TypeError, ValueError:
                 return default
 
         create_3d_asset = bool(source.get("create3D", True))
         return cls(
-            # Keep the API contract permissive for non-3D jobs, but make the
-            # Visual First gate mandatory whenever Hunyuan generation is enabled.
             visual_first=bool(source.get("visualFirst", True)) or create_3d_asset,
             create_3d_asset=create_3d_asset,
             independent_review=bool(source.get("review", True)),
@@ -303,18 +296,14 @@ class ReviewResult:
     def from_dict(cls, raw: dict[str, Any], raw_text: str = "") -> "ReviewResult":
         try:
             confidence = max(0.0, min(1.0, float(raw.get("confidence", 0.0))))
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             confidence = 0.0
         return cls(
             verdict=str(raw.get("verdict", "revise")).strip().lower(),
             summary=str(raw.get("summary", "")).strip(),
             issues=[str(item).strip() for item in raw.get("issues", []) if str(item).strip()],
-            required_changes=[
-                str(item).strip() for item in raw.get("required_changes", []) if str(item).strip()
-            ],
-            tests_required=[
-                str(item).strip() for item in raw.get("tests_required", []) if str(item).strip()
-            ],
+            required_changes=[str(item).strip() for item in raw.get("required_changes", []) if str(item).strip()],
+            tests_required=[str(item).strip() for item in raw.get("tests_required", []) if str(item).strip()],
             risk=str(raw.get("risk", "medium")).strip().lower(),
             confidence=confidence,
             raw_text=raw_text,

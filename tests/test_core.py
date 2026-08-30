@@ -6,6 +6,8 @@ import threading
 import unittest
 from pathlib import Path
 
+from zenless.core import CoreError, ZenlessCore
+from zenless.event_bus import EventBus
 from zenless.models import PipelineEvent, Stage, TaskOptions
 from zenless.protocol import ProtocolError, extract_json_object, make_envelope, parse_envelope
 from zenless.store import SQLiteStore
@@ -48,7 +50,7 @@ class CoreTests(unittest.TestCase):
             parse_envelope(json.dumps(bad))
 
     def test_extract_json_from_markdown(self) -> None:
-        value = extract_json_object("texto\n```json\n{\"ok\": true, \"items\": [1]}\n```\nfim")
+        value = extract_json_object('text\n```json\n{"ok": true, "items": [1]}\n```\nend')
         self.assertEqual(value, {"ok": True, "items": [1]})
 
     def test_sqlite_round_trip_and_parallel_writes(self) -> None:
@@ -56,7 +58,7 @@ class CoreTests(unittest.TestCase):
             store = SQLiteStore(Path(folder) / "state.db")
             task_id = "task-sqlite"
             options = TaskOptions()
-            store.create_task(task_id, "Teste", options)
+            store.create_task(task_id, "Test", options)
 
             failures: list[Exception] = []
 
@@ -64,7 +66,7 @@ class CoreTests(unittest.TestCase):
                 try:
                     for item in range(10):
                         store.set_setting(f"worker.{index}.{item}", {"value": item})
-                except Exception as exc:  # pragma: no cover - assertion captures it
+                except Exception as exc:
                     failures.append(exc)
 
             workers = [threading.Thread(target=writer, args=(index,)) for index in range(6)]
@@ -85,8 +87,8 @@ class CoreTests(unittest.TestCase):
     def test_recovery_pauses_pre_mutation_work_and_blocks_uncertain_writes(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             store = SQLiteStore(Path(folder) / "state.db")
-            store.create_task("planning", "Planeje", TaskOptions())
-            store.create_task("applying", "Aplique", TaskOptions())
+            store.create_task("planning", "Plan", TaskOptions())
+            store.create_task("applying", "Apply", TaskOptions())
             store.update_task("planning", stage=Stage.PLANNING, status="running")
             store.update_task("applying", stage=Stage.APPLYING, status="running")
 
@@ -94,7 +96,53 @@ class CoreTests(unittest.TestCase):
 
             self.assertEqual(recovered["planning"]["stage"], Stage.PAUSED.value)
             self.assertEqual(recovered["applying"]["stage"], Stage.BLOCKED.value)
-            self.assertIn("Recuperação segura", recovered["applying"]["reason"])
+            self.assertIn("Safe recovery", recovered["applying"]["reason"])
+
+    def test_provider_preflight_returns_structured_login_requirement(self) -> None:
+        core = object.__new__(ZenlessCore)
+        core.bridge = _ProviderBridge(set())
+        core.events = EventBus()
+        core._connections_lock = threading.RLock()
+        core._connections = {
+            "bridge": "READY",
+            "browser": "READY",
+            "chatgpt": "OFF",
+            "deepseek": "OFF",
+            "hunyuan": "OFF",
+            "studio": "OFF",
+        }
+
+        with self.assertRaises(CoreError) as raised:
+            core._preflight_providers(TaskOptions(create_3d_asset=False, independent_review=False))
+
+        self.assertEqual(raised.exception.code, "PROVIDER_LOGIN_REQUIRED")
+        self.assertEqual(raised.exception.details, {"provider": "chatgpt"})
+        self.assertEqual(core.connections()["chatgpt"], "LOGIN")
+
+    def test_blocked_pipeline_event_publishes_persisted_chat_error(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            core = object.__new__(ZenlessCore)
+            core.store = SQLiteStore(Path(folder) / "state.db")
+            core.events = EventBus()
+            core.store.create_task("blocked", "Build", TaskOptions())
+            core.store.update_task("blocked", stage=Stage.BLOCKED, status="blocked", error="Builder requires login.")
+            core.store.append_message("blocked", "Runtime", "error", "Builder requires login.")
+
+            core._on_pipeline_event(PipelineEvent("blocked", Stage.BLOCKED, "Builder requires login."))
+
+            messages = [event.data["message"] for event in core.events.recent() if event.type == "CHAT_MESSAGE"]
+            self.assertEqual(len(messages), 1)
+            self.assertEqual(messages[0]["id"], "msg-1")
+            self.assertEqual(messages[0]["role"], "system")
+            self.assertEqual(messages[0]["action"], {"type": "LOGIN", "provider": "chatgpt"})
+
+
+class _ProviderBridge:
+    def __init__(self, ready: set[str]) -> None:
+        self.ready = ready
+
+    def wait_for_provider(self, provider: str, timeout: float = 0.0) -> bool:
+        return provider in self.ready
 
 
 if __name__ == "__main__":

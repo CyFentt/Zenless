@@ -1,9 +1,8 @@
-// ── Enumerations ──────────────────────────────────────────────
-export type ConnectionStatus = 'READY' | 'CONNECTING' | 'LOGIN' | 'OFF' | 'ERR';
-export type SocketStatus = 'CONNECTING' | 'CONNECTED' | 'RECONNECTING' | 'DISCONNECTED';
+export type ConnectionStatus = "READY" | "CONNECTING" | "LOGIN" | "OFF" | "ERR";
+export type SocketStatus = "CONNECTING" | "CONNECTED" | "RECONNECTING" | "DISCONNECTED";
 
-export type AgentId = 'chatgpt' | 'deepseek' | 'hunyuan' | 'studio';
-export type ProviderId = Extract<AgentId, 'chatgpt' | 'deepseek' | 'hunyuan'>;
+export type AgentId = "chatgpt" | "deepseek" | "hunyuan" | "studio";
+export type ProviderId = Extract<AgentId, "chatgpt" | "deepseek" | "hunyuan">;
 
 export interface AgentInfo {
   id: AgentId;
@@ -16,52 +15,60 @@ export interface AgentInfo {
 }
 
 export type PipelineStage =
-  | 'NEW'
-  | 'COLLECTING_CONTEXT'
-  | 'PLANNING'
-  | 'GENERATING_CONCEPT'
-  | 'WAITING_IMAGE_APPROVAL'
-  | 'GENERATING_3D'
-  | 'WAITING_3D_APPROVAL'
-  | 'BUILDING'
-  | 'REVIEWING'
-  | 'REVISING'
-  | 'WAITING_CHANGE_APPROVAL'
-  | 'APPLYING'
-  | 'TESTING'
-  | 'FIXING'
-  | 'FINAL_REVIEW'
-  | 'COMPLETE'
-  | 'PAUSED'
-  | 'BLOCKED'
-  | 'FAILED';
+  | "NEW"
+  | "COLLECTING_CONTEXT"
+  | "PLANNING"
+  | "GENERATING_CONCEPT"
+  | "WAITING_IMAGE_APPROVAL"
+  | "GENERATING_3D"
+  | "WAITING_3D_APPROVAL"
+  | "BUILDING"
+  | "REVIEWING"
+  | "REVISING"
+  | "WAITING_CHANGE_APPROVAL"
+  | "APPLYING"
+  | "TESTING"
+  | "FIXING"
+  | "FINAL_REVIEW"
+  | "COMPLETE"
+  | "PAUSED"
+  | "BLOCKED"
+  | "FAILED";
 
 export const STAGE_LABELS: Record<PipelineStage, string> = {
-  NEW: 'NEW',
-  COLLECTING_CONTEXT: 'CONTEXT',
-  PLANNING: 'PLAN',
-  GENERATING_CONCEPT: 'CONCEPT',
-  WAITING_IMAGE_APPROVAL: 'IMG OK',
-  GENERATING_3D: '3D',
-  WAITING_3D_APPROVAL: '3D OK',
-  BUILDING: 'BUILD',
-  REVIEWING: 'REVIEW',
-  REVISING: 'REVISE',
-  WAITING_CHANGE_APPROVAL: 'CHG OK',
-  APPLYING: 'APPLY',
-  TESTING: 'TEST',
-  FIXING: 'FIX',
-  FINAL_REVIEW: 'FINAL',
-  COMPLETE: 'DONE',
-  PAUSED: 'PAUSE',
-  BLOCKED: 'BLOCK',
-  FAILED: 'FAIL',
+  NEW: "NEW",
+  COLLECTING_CONTEXT: "CONTEXT",
+  PLANNING: "PLAN",
+  GENERATING_CONCEPT: "CONCEPT",
+  WAITING_IMAGE_APPROVAL: "IMG OK",
+  GENERATING_3D: "3D",
+  WAITING_3D_APPROVAL: "3D OK",
+  BUILDING: "BUILD",
+  REVIEWING: "REVIEW",
+  REVISING: "REVISE",
+  WAITING_CHANGE_APPROVAL: "CHG OK",
+  APPLYING: "APPLY",
+  TESTING: "TEST",
+  FIXING: "FIX",
+  FINAL_REVIEW: "FINAL",
+  COMPLETE: "DONE",
+  PAUSED: "PAUSE",
+  BLOCKED: "BLOCK",
+  FAILED: "FAIL",
 };
 
-export const PIPELINE_STEPS = ['CONTEXT', 'PLAN', 'BUILD', 'REVIEW', 'APPLY', 'TEST', 'DONE'] as const;
+export const PIPELINE_STEPS = [
+  "CONTEXT",
+  "PLAN",
+  "BUILD",
+  "REVIEW",
+  "APPLY",
+  "TEST",
+  "DONE",
+] as const;
 export type PipelineStep = (typeof PIPELINE_STEPS)[number];
 
-export type JobStatus = 'NEW' | 'RUNNING' | 'PAUSED' | 'BLOCKED' | 'FAILED' | 'COMPLETE';
+export type JobStatus = "NEW" | "RUNNING" | "PAUSED" | "BLOCKED" | "FAILED" | "COMPLETE";
 
 export interface Job {
   id: string;
@@ -82,7 +89,7 @@ export interface TaskOptions {
   autoTest: boolean;
   autoFix: boolean;
   approval: boolean;
-  risk: 'low' | 'medium' | 'high';
+  risk: "low" | "medium" | "high";
   revisions: number;
   fixAttempts: number;
 }
@@ -94,13 +101,17 @@ export const DEFAULT_TASK_OPTIONS: TaskOptions = {
   autoTest: true,
   autoFix: true,
   approval: true,
-  risk: 'medium',
+  risk: "medium",
   revisions: 3,
   fixAttempts: 3,
 };
 
-// ── Chat ──────────────────────────────────────────────────────
-export type ChatRole = 'user' | 'zenless' | 'system';
+export type ChatRole = "user" | "zenless" | "system";
+
+export interface ChatAction {
+  type: "LOGIN";
+  provider: ProviderId;
+}
 
 export interface ChatMessage {
   id: string;
@@ -110,20 +121,20 @@ export interface ChatMessage {
   streaming?: boolean;
   jobId?: string;
   attachments?: ChatAttachment[];
+  action?: ChatAction;
 }
 
 export interface ChatAttachment {
   id: string;
   name: string;
-  type: 'image' | 'file' | 'context';
+  type: "image" | "file" | "context";
   size?: number;
   mime?: string;
   previewUrl?: string;
 }
 
-// ── Context ───────────────────────────────────────────────────
-export type ContextItemType = 'Script' | 'Module' | 'Remote' | 'Local' | 'Service';
-export type ContextState = 'included' | 'excluded' | 'locked';
+export type ContextItemType = "Script" | "Module" | "Remote" | "Local" | "Service";
+export type ContextState = "included" | "excluded" | "locked";
 
 export interface ContextItem {
   id: string;
@@ -134,8 +145,7 @@ export interface ContextItem {
   state: ContextState;
 }
 
-// ── Changes / Review / Diff ───────────────────────────────────
-export type FileStatus = 'M' | 'A' | 'D';
+export type FileStatus = "M" | "A" | "D";
 
 export interface ChangedFile {
   id: string;
@@ -146,7 +156,7 @@ export interface ChangedFile {
   diff: DiffLine[];
 }
 
-export type DiffLineType = 'added' | 'removed' | 'unchanged' | 'hunk';
+export type DiffLineType = "added" | "removed" | "unchanged" | "hunk";
 
 export interface DiffLine {
   type: DiffLineType;
@@ -155,8 +165,8 @@ export interface DiffLine {
   newLine?: number;
 }
 
-export type ReviewDecision = 'APPROVE' | 'REVISE' | 'BLOCK';
-export type ReviewRisk = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+export type ReviewDecision = "APPROVE" | "REVISE" | "BLOCK";
+export type ReviewRisk = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
 
 export interface Review {
   decision: ReviewDecision;
@@ -165,15 +175,14 @@ export interface Review {
   warnings: string[];
   suggestions: string[];
   summary?: string;
-  reviewer: 'DeepSeek' | string;
+  reviewer: string;
   timestamp: number;
   files: ChangedFile[];
   ready: boolean;
 }
 
-// ── Visual ────────────────────────────────────────────────────
-export type ViewName = 'FRONT' | 'BACK' | 'LEFT' | 'RIGHT' | 'TOP' | 'BOTTOM';
-export type ViewState = 'EMPTY' | 'GENERATING' | 'READY' | 'FAILED' | 'APPROVED';
+export type ViewName = "FRONT" | "BACK" | "LEFT" | "RIGHT" | "TOP" | "BOTTOM";
+export type ViewState = "EMPTY" | "GENERATING" | "READY" | "FAILED" | "APPROVED";
 
 export interface ViewTile {
   name: ViewName;
@@ -185,24 +194,22 @@ export interface ViewTile {
 
 export interface ConceptInfo {
   version: number;
-  status: 'GENERATING' | 'READY' | 'APPROVED' | 'FAILED';
+  status: "GENERATING" | "READY" | "APPROVED" | "FAILED";
   prompt?: string;
 }
 
-// ── 3D Model ──────────────────────────────────────────────────
-export type ModelGenState = 'EMPTY' | 'GENERATING' | 'READY' | 'APPROVED' | 'FAILED';
+export type ModelGenState = "EMPTY" | "GENERATING" | "READY" | "APPROVED" | "FAILED";
 
 export interface ModelInfo {
   state: ModelGenState;
-  geometryStatus: 'IDLE' | 'GENERATING' | 'READY' | 'FAILED';
-  textureStatus: 'IDLE' | 'GENERATING' | 'READY' | 'FAILED';
+  geometryStatus: "IDLE" | "GENERATING" | "READY" | "FAILED";
+  textureStatus: "IDLE" | "GENERATING" | "READY" | "FAILED";
   modelUrl?: string;
   filename?: string;
   error?: string;
 }
 
-// ── Assets ────────────────────────────────────────────────────
-export type AssetType = 'IMG' | 'VIEW' | 'GLB' | 'GLTF' | 'TEX' | 'RBX';
+export type AssetType = "IMG" | "VIEW" | "GLB" | "GLTF" | "TEX" | "RBX";
 
 export interface Asset {
   id: string;
@@ -216,8 +223,7 @@ export interface Asset {
   conceptVersion?: number;
 }
 
-// ── Studio ────────────────────────────────────────────────────
-export type StudioState = 'ONLINE' | 'OFFLINE' | 'CONNECTING';
+export type StudioState = "ONLINE" | "OFFLINE" | "CONNECTING";
 
 export interface StudioNode {
   id: string;
@@ -229,9 +235,8 @@ export interface StudioNode {
   usedAsContext?: boolean;
 }
 
-// ── Test ──────────────────────────────────────────────────────
-export type TestStatus = 'IDLE' | 'STARTING' | 'RUNNING' | 'STOPPING' | 'STOPPED' | 'FAILED';
-export type LogLevel = 'ERR' | 'WARN' | 'ZEN' | 'SRV' | 'CLI';
+export type TestStatus = "IDLE" | "STARTING" | "RUNNING" | "STOPPING" | "STOPPED" | "FAILED";
+export type LogLevel = "ERR" | "WARN" | "ZEN" | "SRV" | "CLI";
 
 export interface TestLog {
   id: string;
@@ -249,7 +254,7 @@ export interface TestLog {
   actual?: unknown;
 }
 
-export type TestCaseStatus = 'RUNNING' | 'PASSED' | 'FAILED' | 'SKIPPED';
+export type TestCaseStatus = "RUNNING" | "PASSED" | "FAILED" | "SKIPPED";
 
 export interface TestCaseResult {
   id: string;
@@ -286,7 +291,6 @@ export interface TestState {
   maxFixAttempts: number;
 }
 
-// ── Settings / Models ─────────────────────────────────────────
 export interface ModelOption {
   id: string;
   label: string;
@@ -313,8 +317,7 @@ export interface Settings {
   bridgePort: number;
 }
 
-// ── Diagnostics ───────────────────────────────────────────────
-export type DiagnosticSeverity = 'critical' | 'error' | 'warning' | 'info';
+export type DiagnosticSeverity = "critical" | "error" | "warning" | "info";
 
 export interface Diagnostic {
   id: string;
@@ -336,7 +339,6 @@ export interface Diagnostic {
   timestamp: number;
 }
 
-// ── Connections ───────────────────────────────────────────────
 export interface ConnectionInfo {
   bridge: ConnectionStatus;
   browser: ConnectionStatus;
@@ -346,16 +348,14 @@ export interface ConnectionInfo {
   studio: ConnectionStatus;
 }
 
-// ── Boot ──────────────────────────────────────────────────────
-export type BootStage = 'CORE' | 'STATE' | 'BRIDGE' | 'UI' | 'BROWSER' | 'AI' | 'STUDIO';
-export type BootState = 'READY' | 'CONNECTING' | 'OFF';
+export type BootStage = "CORE" | "STATE" | "BRIDGE" | "UI" | "BROWSER" | "AI" | "STUDIO";
+export type BootState = "READY" | "CONNECTING" | "OFF";
 
 export interface BootStep {
   stage: BootStage;
   state: BootState;
 }
 
-// ── WebSocket Events (discriminated union) ────────────────────
 export interface ZenlessEventMap {
   BOOT_STAGE_CHANGED: { stage: BootStage; state: BootState };
   BOOT_COMPLETE: Record<string, never>;
@@ -376,7 +376,7 @@ export interface ZenlessEventMap {
   VISUAL_GENERATION_CHANGED: { view?: ViewName; state: ViewState };
   VISUAL_READY: { view: ViewName; imageUrl: string };
   VISUAL_APPROVED: { view: ViewName };
-  MODEL_GENERATION_CHANGED: { target: 'geometry' | 'texture'; state: ModelGenState };
+  MODEL_GENERATION_CHANGED: { target: "geometry" | "texture"; state: ModelGenState };
   MODEL_READY: { modelUrl: string; filename?: string };
   MODEL_APPROVED: Record<string, never>;
   ASSETS_UPDATED: { assets: Asset[] };

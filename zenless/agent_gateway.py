@@ -10,8 +10,6 @@ from .webview2_browser import WebView2BrowserController
 
 
 class AgentGateway:
-    """Embedded WebView2 first and Playwright only when a capability needs it."""
-
     _ACTION_CAPABILITIES = {
         "upload_files": "upload_files",
         "select_model": "select_model",
@@ -20,9 +18,7 @@ class AgentGateway:
         "generate_geometry": "geometry",
         "generate_texture": "texture",
     }
-    _HUNYUAN_TRANSACTION_ACTIONS = frozenset(
-        {"capabilities", "upload_files", "generate_geometry", "generate_texture"}
-    )
+    _HUNYUAN_TRANSACTION_ACTIONS = frozenset({"capabilities", "upload_files", "generate_geometry", "generate_texture"})
     _HUNYUAN_REQUIRED_CAPABILITIES = frozenset({"upload_files", "geometry", "texture"})
 
     def __init__(
@@ -53,7 +49,6 @@ class AgentGateway:
         try:
             self.managed.start()
         except BridgeError as exc:
-            # WebView2 remains independently available and is started lazily.
             if self.status_callback is not None:
                 self.status_callback("browser", "Degraded", str(exc))
         if self.allow_extension_fallback and self.extension is not None:
@@ -86,12 +81,8 @@ class AgentGateway:
         return result
 
     def release_task_route(self, task_id: str) -> None:
-        """Forget capability pins after a task so later logins can choose afresh."""
-
         with self._route_lock:
-            self._task_routes = {
-                key: value for key, value in self._task_routes.items() if key[1] != task_id
-            }
+            self._task_routes = {key: value for key, value in self._task_routes.items() if key[1] != task_id}
 
     def wait_for_provider(self, provider: str, timeout: float = 5.0) -> bool:
         if self._stopping.is_set():
@@ -106,8 +97,10 @@ class AgentGateway:
             with self._route_lock:
                 self._routes[provider] = "playwright"
             return True
-        if self.allow_extension_fallback and self.extension is not None and self.extension.wait_for_provider(
-            provider, max(0.0, timeout - managed_timeout - embedded_timeout)
+        if (
+            self.allow_extension_fallback
+            and self.extension is not None
+            and self.extension.wait_for_provider(provider, max(0.0, timeout - managed_timeout - embedded_timeout))
         ):
             with self._route_lock:
                 self._routes[provider] = "extension"
@@ -119,7 +112,9 @@ class AgentGateway:
     def provider_status(self) -> dict[str, dict[str, str]]:
         managed = self.managed.provider_status()
         embedded = self.embedded.provider_status()
-        extension = self.extension.provider_status() if self.allow_extension_fallback and self.extension is not None else {}
+        extension = (
+            self.extension.provider_status() if self.allow_extension_fallback and self.extension is not None else {}
+        )
         with self._route_lock:
             routes = dict(self._routes)
         result: dict[str, dict[str, str]] = {}
@@ -130,7 +125,9 @@ class AgentGateway:
             elif route == "webview2" and provider in embedded:
                 result[provider] = dict(embedded[provider])
             else:
-                result[provider] = dict(embedded.get(provider) or managed.get(provider) or extension.get(provider) or {})
+                result[provider] = dict(
+                    embedded.get(provider) or managed.get(provider) or extension.get(provider) or {}
+                )
         return result
 
     def send_prompt(
@@ -165,7 +162,7 @@ class AgentGateway:
             )
         if route == "extension" and self.allow_extension_fallback and self.extension is not None:
             return self.extension.send_prompt(provider, prompt, task_id=task_id, timeout=timeout)
-        raise BridgeError(f"Nenhuma rota interna autenticada para {provider}.")
+        raise BridgeError(f"No authenticated internal route is available for {provider}.")
 
     def request(
         self,
@@ -243,7 +240,7 @@ class AgentGateway:
             )
         if route == "extension" and self.allow_extension_fallback and self.extension is not None:
             return self.extension.request(provider, action, payload, task_id=task_id, timeout=timeout)
-        raise BridgeError(f"Nenhuma rota interna autenticada para {provider}.")
+        raise BridgeError(f"No authenticated internal route is available for {provider}.")
 
     def _hunyuan_transaction_route(
         self,
@@ -260,13 +257,16 @@ class AgentGateway:
             if all(bool(capabilities.get(name)) for name in self._HUNYUAN_REQUIRED_CAPABILITIES):
                 return pinned, capabilities
             raise BridgeError(
-                "CAPABILITY_UNAVAILABLE: a sessão Hunyuan desta tarefa perdeu uma capacidade necessária; "
-                "a rota não será trocada no meio da transação."
+                "CAPABILITY_UNAVAILABLE: this task session lost a required capability; "
+                "the route cannot change during the transaction."
             )
 
         selected = self._selected_route(provider)
         if selected == "extension":
-            raise BridgeError("CAPABILITY_UNAVAILABLE: Hunyuan exige uma sessão WebView2 ou Playwright com upload, geometria e textura.")
+            raise BridgeError(
+                "CAPABILITY_UNAVAILABLE: the 3D provider requires one WebView2 or Playwright session "
+                "with upload, geometry, and texture capabilities."
+            )
         candidates = [selected]
         alternate = "playwright" if selected == "webview2" else "webview2"
         if self._route_ready(alternate, provider, timeout):
@@ -286,7 +286,8 @@ class AgentGateway:
                 )
             return route, capabilities
         raise BridgeError(
-            "CAPABILITY_UNAVAILABLE: Hunyuan precisa de uma única sessão autenticada com upload, geometria e textura."
+            "CAPABILITY_UNAVAILABLE: the 3D provider needs one authenticated session with upload, "
+            "geometry, and texture capabilities."
         )
 
     def _route_for_action(self, provider: str, action: str, *, task_id: str, timeout: float) -> str:
@@ -314,7 +315,7 @@ class AgentGateway:
                     )
                 return alternate
         raise BridgeError(
-            f"CAPABILITY_UNAVAILABLE: {provider} não expôs {capability} no WebView2 nem no Playwright autenticado."
+            f"CAPABILITY_UNAVAILABLE: {provider} did not expose {capability} through an authenticated route."
         )
 
     def _combined_capabilities(self, provider: str, *, task_id: str, timeout: float) -> dict[str, Any]:
@@ -384,6 +385,6 @@ class AgentGateway:
         if route:
             return route
         if not self.wait_for_provider(provider, 5.0):
-            raise BridgeError(f"{provider} não está autenticado no WebView2 nem no Playwright interno.")
+            raise BridgeError(f"{provider} is not authenticated through an internal route.")
         with self._route_lock:
             return self._routes[provider]

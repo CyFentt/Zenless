@@ -1,32 +1,22 @@
-# Zenless Web
+# Zenless frontend
 
-Fonte canônica da interface React/TypeScript/Vite do Zenless. Produção serve `dist/` pelo Bridge Python local; `bridge/` e Mock Mode são fixtures de desenvolvimento, não o backend do executável.
+This directory is the canonical React, TypeScript, and Vite source. Production serves `dist/` through the authenticated local bridge. `bridge/` and Mock Mode are development fixtures only.
 
-## Desenvolvimento
+## Development
 
-```bash
+```powershell
 npm ci
-npm run dev
-```
-
-`.env.development` ativa o Mock Mode para trabalho isolado de UI. Para testar a interface contra o Core/Bridge Python real, use `VITE_ZENLESS_MOCK=false` e inicie o aplicativo/backend local.
-
-## Gates
-
-```bash
 npm run lint
 npm run typecheck
-npm run test
+npm test
 npm run build
 ```
 
-O gate oficial completo fica em `../build.ps1`; ele força Mock Mode desligado antes do build de produção e só empacota o EXE depois dos gates Python e frontend.
+The complete release gate is `../build.ps1`. It disables Mock Mode for production and packages the executable only after every Python and frontend gate passes.
 
-## Limites
+## Constraints
 
-- A UI apenas solicita ações e renderiza estado/eventos; Core/Orchestrator são autoritativos.
-- Não adicione uma segunda árvore `src/` na raiz do repositório.
-- Não edite `dist/` manualmente.
-- Nunca exponha credenciais, cookies ou caminhos Windows arbitrários ao frontend.
-
-Consulte `FRONTEND_ARCHITECTURE.md`, `BACKEND_CONTRACT.md` e `CODEX_HANDOFF.md`.
+- The UI requests actions and renders authoritative state and events.
+- Do not create a second frontend source tree at the repository root.
+- Do not edit `dist/` manually.
+- Never expose credentials, cookies, or arbitrary local paths to the frontend.

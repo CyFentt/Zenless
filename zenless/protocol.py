@@ -66,39 +66,39 @@ def make_envelope(
 def parse_envelope(raw: str | bytes) -> Envelope:
     if isinstance(raw, bytes):
         if len(raw) > MAX_ENVELOPE_BYTES:
-            raise ProtocolError("Envelope excede o limite de 2 MiB.")
+            raise ProtocolError("Envelope exceeds the 2 MiB limit.")
         try:
             raw = raw.decode("utf-8")
         except UnicodeDecodeError as exc:
-            raise ProtocolError("Envelope não está em UTF-8.") from exc
+            raise ProtocolError("Envelope is not UTF-8 encoded.") from exc
     elif len(raw.encode("utf-8", errors="ignore")) > MAX_ENVELOPE_BYTES:
-        raise ProtocolError("Envelope excede o limite de 2 MiB.")
+        raise ProtocolError("Envelope exceeds the 2 MiB limit.")
 
     try:
         data = json.loads(raw)
     except json.JSONDecodeError as exc:
-        raise ProtocolError("Envelope JSON inválido.") from exc
+        raise ProtocolError("Invalid JSON envelope.") from exc
     if not isinstance(data, dict):
-        raise ProtocolError("Envelope deve ser um objeto JSON.")
+        raise ProtocolError("Envelope must be a JSON object.")
 
     version = data.get("version")
     if version != PROTOCOL_VERSION:
-        raise ProtocolError(f"Versão de protocolo incompatível: {version!r}.")
+        raise ProtocolError(f"Unsupported protocol version: {version!r}.")
     message_id = str(data.get("id", ""))
     if not message_id or len(message_id) > 128:
-        raise ProtocolError("Envelope sem id válido.")
+        raise ProtocolError("Envelope has no valid ID.")
     message_type = str(data.get("type", ""))
     if not MESSAGE_TYPE.fullmatch(message_type):
-        raise ProtocolError("Tipo de envelope inválido.")
+        raise ProtocolError("Invalid envelope type.")
     source = str(data.get("source", ""))
     if source not in {"zenless", "extension", "native-host", "content"}:
-        raise ProtocolError("Origem de envelope inválida.")
+        raise ProtocolError("Invalid envelope source.")
     provider = str(data.get("provider", "bridge"))
     if provider not in PROVIDERS:
-        raise ProtocolError("Provider desconhecido.")
+        raise ProtocolError("Unknown service.")
     payload = data.get("payload", {})
     if not isinstance(payload, dict):
-        raise ProtocolError("payload deve ser um objeto.")
+        raise ProtocolError("Payload must be an object.")
     task_id = str(data.get("task_id", ""))[:128]
     reply_to = str(data.get("reply_to", ""))[:128]
     return Envelope(message_id, message_type, source, provider, payload, task_id, reply_to, version)
@@ -120,4 +120,4 @@ def extract_json_object(text: str) -> dict[str, Any]:
                 continue
             if isinstance(value, dict):
                 return value
-    raise ProtocolError("A IA não retornou o objeto JSON estruturado esperado.")
+    raise ProtocolError("The model did not return the expected structured JSON object.")

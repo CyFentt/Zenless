@@ -15,7 +15,7 @@ from zenless.webview2_browser import WebView2BrowserController
 
 
 class Handler(BaseHTTPRequestHandler):
-    def do_GET(self) -> None:  # noqa: N802
+    def do_GET(self) -> None:
         body = b"""<!doctype html><html><body>
         <textarea id="prompt"></textarea><input id="files" type="file">
         <button id="send">Send</button><main></main>

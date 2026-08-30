@@ -67,14 +67,14 @@ def main() -> int:
                 component="web-app",
                 message=str(exc),
                 exc=exc,
-                impact="Zenless não conseguiu abrir a interface WebView2.",
-                recovery_action="Consulte startup-error.log; o provisionamento automático pode ser repetido.",
+                impact="Zenless could not open the WebView2 interface.",
+                recovery_action="Review startup-error.log; automatic provisioning can be retried.",
             )
             (_data_root() / "startup-error.log").write_text(traceback.format_exc(), encoding="utf-8")
             try:
                 import ctypes
 
-                ctypes.windll.user32.MessageBoxW(0, f"Falha ao iniciar Zenless:\n{exc}", "Zenless", 0x10)
+                ctypes.windll.user32.MessageBoxW(0, f"Zenless failed to start:\n{exc}", "Zenless", 0x10)
             except Exception:
                 pass
             return 1

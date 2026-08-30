@@ -1,4 +1,4 @@
-import type { ZenlessAPI } from '../api/types';
+import type { ZenlessAPI } from "../api/types";
 import type {
   AgentInfo,
   Asset,
@@ -19,8 +19,8 @@ import type {
   TestLog,
   TestState,
   ViewTile,
-} from '@/types';
-import { DEFAULT_TASK_OPTIONS } from '@/types';
+} from "@/types";
+import { DEFAULT_TASK_OPTIONS } from "@/types";
 import {
   mockAgents,
   mockAssets,
@@ -37,7 +37,7 @@ import {
   mockStudioTree,
   mockTestLogs,
   mockViews,
-} from './mockData';
+} from "./mockData";
 
 const delay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 const uid = (prefix: string) => `${prefix}_${Math.random().toString(36).slice(2, 9)}`;
@@ -57,9 +57,9 @@ export class MockZenlessAPI implements ZenlessAPI {
   private settings: Settings = clone(mockSettings);
   private connections: ConnectionInfo = clone(mockConnections);
   private agents: AgentInfo[] = clone(mockAgents);
-  private testState: TestState = { status: 'IDLE', elapsedMs: 0, fixAttempt: 0, maxFixAttempts: 3 };
-  private studioState: StudioState = 'ONLINE';
-  private conceptPrompt = 'Industrial bomb device, dark metal, sci-fi';
+  private testState: TestState = { status: "IDLE", elapsedMs: 0, fixAttempt: 0, maxFixAttempts: 3 };
+  private studioState: StudioState = "ONLINE";
+  private conceptPrompt = "Industrial bomb device, dark metal, sci-fi";
 
   async bootstrap() {
     await delay(400);
@@ -79,8 +79,8 @@ export class MockZenlessAPI implements ZenlessAPI {
   }
   async loginProvider(provider: ProviderId) {
     await delay(50);
-    this.connections[provider] = 'READY';
-    this.setMockAgentStatus(provider, 'READY');
+    this.connections[provider] = "READY";
+    this.setMockAgentStatus(provider, "READY");
     return { ok: true };
   }
   async getJobs() {
@@ -90,16 +90,16 @@ export class MockZenlessAPI implements ZenlessAPI {
   async getJob(id: string) {
     await delay(60);
     const job = this.jobs.find((j) => j.id === id);
-    if (!job) throw new Error('Job not found');
+    if (!job) throw new Error("Job not found");
     return clone(job);
   }
   async createJob(title: string, options?: Partial<TaskOptions>) {
     await delay(150);
     const job: Job = {
-      id: uid('job'),
+      id: uid("job"),
       title,
-      status: 'RUNNING',
-      stage: 'COLLECTING_CONTEXT',
+      status: "RUNNING",
+      stage: "COLLECTING_CONTEXT",
       createdAt: Date.now(),
       updatedAt: Date.now(),
       options: { ...DEFAULT_TASK_OPTIONS, ...options },
@@ -109,11 +109,11 @@ export class MockZenlessAPI implements ZenlessAPI {
   }
   async pauseJob(id: string) {
     await delay(100);
-    return this.updateJob(id, { status: 'PAUSED', stage: 'PAUSED' });
+    return this.updateJob(id, { status: "PAUSED", stage: "PAUSED" });
   }
   async resumeJob(id: string) {
     await delay(100);
-    return this.updateJob(id, { status: 'RUNNING', stage: 'BUILDING' });
+    return this.updateJob(id, { status: "RUNNING", stage: "BUILDING" });
   }
   async cancelJob(id: string) {
     await delay(100);
@@ -124,18 +124,23 @@ export class MockZenlessAPI implements ZenlessAPI {
     await delay(60);
     return clone(this.messages.filter((message) => message.jobId === jobId));
   }
-  async sendMessage(content: string, jobId?: string, attachments: File[] = [], _options?: TaskOptions) {
+  async sendMessage(
+    content: string,
+    jobId?: string,
+    attachments: File[] = [],
+    _options?: TaskOptions,
+  ) {
     await delay(120);
     const msg: ChatMessage = {
-      id: uid('msg'),
-      role: 'user',
+      id: uid("msg"),
+      role: "user",
       content,
       timestamp: Date.now(),
       jobId,
       attachments: attachments.map((file, index) => ({
         id: `mock_att_${Date.now()}_${index}`,
         name: file.name,
-        type: file.type.startsWith('image/') ? 'image' : 'file',
+        type: file.type.startsWith("image/") ? "image" : "file",
         size: file.size,
         mime: file.type,
       })),
@@ -157,28 +162,36 @@ export class MockZenlessAPI implements ZenlessAPI {
   }
   async includeContext(itemId: string) {
     await delay(50);
-    this.context = this.context.map((c) => (c.id === itemId ? { ...c, state: 'included' as const } : c));
+    this.context = this.context.map((c) =>
+      c.id === itemId ? { ...c, state: "included" as const } : c,
+    );
     return { ok: true };
   }
   async excludeContext(itemId: string) {
     await delay(50);
-    this.context = this.context.map((c) => (c.id === itemId ? { ...c, state: 'excluded' as const } : c));
+    this.context = this.context.map((c) =>
+      c.id === itemId ? { ...c, state: "excluded" as const } : c,
+    );
     return { ok: true };
   }
   async lockContext(itemId: string) {
     await delay(50);
-    this.context = this.context.map((c) => (c.id === itemId ? { ...c, state: 'locked' as const } : c));
+    this.context = this.context.map((c) =>
+      c.id === itemId ? { ...c, state: "locked" as const } : c,
+    );
     return { ok: true };
   }
   async unlockContext(itemId: string) {
     await delay(50);
-    this.context = this.context.map((c) => (c.id === itemId ? { ...c, state: 'included' as const } : c));
+    this.context = this.context.map((c) =>
+      c.id === itemId ? { ...c, state: "included" as const } : c,
+    );
     return { ok: true };
   }
   async inspectContext(itemId: string) {
     await delay(50);
     const item = this.context.find((c) => c.id === itemId);
-    if (!item) throw new Error('Context item not found');
+    if (!item) throw new Error("Context item not found");
     return clone(item);
   }
   async getChanges(_jobId: string) {
@@ -188,13 +201,13 @@ export class MockZenlessAPI implements ZenlessAPI {
   async getReview(_jobId: string): Promise<Review> {
     await delay(80);
     return {
-      decision: 'APPROVE',
-      risk: 'LOW',
+      decision: "APPROVE",
+      risk: "LOW",
       criticalIssues: [],
-      warnings: ['Verify ragdoll recovery after repeated impacts.'],
-      suggestions: ['Keep attachment creation server-authoritative.'],
-      summary: 'Changes are consistent with the current context.',
-      reviewer: 'DeepSeek',
+      warnings: ["Verify ragdoll recovery after repeated impacts."],
+      suggestions: ["Keep attachment creation server-authoritative."],
+      summary: "Changes are consistent with the current context.",
+      reviewer: "Reviewer",
       timestamp: Date.now(),
       files: clone(this.changes),
       ready: true,
@@ -216,12 +229,12 @@ export class MockZenlessAPI implements ZenlessAPI {
     await delay(80);
     return {
       views: clone(this.views),
-      concept: { version: 3, status: 'READY', prompt: this.conceptPrompt },
+      concept: { version: 3, status: "READY", prompt: this.conceptPrompt },
     };
   }
   async approveVisual(_jobId: string) {
     await delay(80);
-    this.views = this.views.map((v) => ({ ...v, state: 'APPROVED' as const }));
+    this.views = this.views.map((v) => ({ ...v, state: "APPROVED" as const }));
     return { ok: true };
   }
   async editConcept(_jobId: string, prompt: string) {
@@ -231,12 +244,14 @@ export class MockZenlessAPI implements ZenlessAPI {
   }
   async regenerateVisual(_jobId: string) {
     await delay(200);
-    this.views = this.views.map((v) => ({ ...v, state: 'GENERATING' as const }));
+    this.views = this.views.map((v) => ({ ...v, state: "GENERATING" as const }));
     return { ok: true };
   }
   async regenerateView(_jobId: string, view: string) {
     await delay(150);
-    this.views = this.views.map((v) => (v.name === view ? { ...v, state: 'GENERATING' as const } : v));
+    this.views = this.views.map((v) =>
+      v.name === view ? { ...v, state: "GENERATING" as const } : v,
+    );
     return { ok: true };
   }
   async getModel(_jobId: string) {
@@ -245,17 +260,17 @@ export class MockZenlessAPI implements ZenlessAPI {
   }
   async approveModel(_jobId: string) {
     await delay(80);
-    this.model = { ...this.model, state: 'APPROVED' as const };
+    this.model = { ...this.model, state: "APPROVED" as const };
     return { ok: true };
   }
   async regenerateGeometry(_jobId: string) {
     await delay(150);
-    this.model = { ...this.model, geometryStatus: 'GENERATING' as const };
+    this.model = { ...this.model, geometryStatus: "GENERATING" as const };
     return { ok: true };
   }
   async regenerateTexture(_jobId: string) {
     await delay(150);
-    this.model = { ...this.model, textureStatus: 'GENERATING' as const };
+    this.model = { ...this.model, textureStatus: "GENERATING" as const };
     return { ok: true };
   }
   async getAssets() {
@@ -293,12 +308,18 @@ export class MockZenlessAPI implements ZenlessAPI {
   }
   async unlockStudioReference(nodeId: string) {
     await delay(50);
-    this.studioTree = mapStudioNode(this.studioTree, nodeId, (node) => ({ ...node, locked: false }));
+    this.studioTree = mapStudioNode(this.studioTree, nodeId, (node) => ({
+      ...node,
+      locked: false,
+    }));
     return { ok: true };
   }
   async useStudioAsContext(nodeId: string) {
     await delay(50);
-    this.studioTree = mapStudioNode(this.studioTree, nodeId, (node) => ({ ...node, usedAsContext: true }));
+    this.studioTree = mapStudioNode(this.studioTree, nodeId, (node) => ({
+      ...node,
+      usedAsContext: true,
+    }));
     return { ok: true };
   }
   async inspectStudio(nodeId: string) {
@@ -313,17 +334,17 @@ export class MockZenlessAPI implements ZenlessAPI {
       }
     };
     const node = find(this.studioTree);
-    if (!node) throw new Error('Node not found');
+    if (!node) throw new Error("Node not found");
     return clone(node);
   }
   async startTest(_jobId: string) {
     await delay(100);
-    this.testState = { status: 'RUNNING', elapsedMs: 0, fixAttempt: 0, maxFixAttempts: 3 };
+    this.testState = { status: "RUNNING", elapsedMs: 0, fixAttempt: 0, maxFixAttempts: 3 };
     return { ok: true };
   }
   async stopTest(_jobId: string) {
     await delay(80);
-    this.testState = { ...this.testState, status: 'STOPPED' };
+    this.testState = { ...this.testState, status: "STOPPED" };
     return { ok: true };
   }
   async getTestState(_jobId: string) {
@@ -336,16 +357,20 @@ export class MockZenlessAPI implements ZenlessAPI {
   }
   async updateSettings(partial: Partial<Settings>) {
     await delay(80);
-    this.settings = { ...this.settings, ...partial, models: { ...this.settings.models, ...(partial.models ?? {}) } };
+    this.settings = {
+      ...this.settings,
+      ...partial,
+      models: { ...this.settings.models, ...(partial.models ?? {}) },
+    };
     return clone(this.settings);
   }
   async getModels(): Promise<ModelCatalog> {
     await delay(50);
     return clone(mockModelCatalog);
   }
-  async setModel(agent: 'chatgpt' | 'deepseek' | 'hunyuan', model: string) {
+  async setModel(agent: "chatgpt" | "deepseek" | "hunyuan", model: string) {
     await delay(50);
-    if (agent === 'hunyuan') this.settings.models.hunyuan.version = model;
+    if (agent === "hunyuan") this.settings.models.hunyuan.version = model;
     else this.settings.models[agent].model = model;
     return { ok: true };
   }
@@ -359,29 +384,44 @@ export class MockZenlessAPI implements ZenlessAPI {
     return clone(this.diagnostics);
   }
 
-  // ── Mock-specific helpers (not part of API interface) ──────
-  getMockMessages() { return this.messages; }
-  getMockLogs() { return this.logs; }
-  getMockTestState() { return this.testState; }
-  setMockTestState(s: TestState) { this.testState = s; }
-  addMockLog(log: TestLog) { this.logs.push(log); }
-  setMockStudioState(s: StudioState) { this.studioState = s; }
+  getMockMessages() {
+    return this.messages;
+  }
+  getMockLogs() {
+    return this.logs;
+  }
+  getMockTestState() {
+    return this.testState;
+  }
+  setMockTestState(s: TestState) {
+    this.testState = s;
+  }
+  addMockLog(log: TestLog) {
+    this.logs.push(log);
+  }
+  setMockStudioState(s: StudioState) {
+    this.studioState = s;
+  }
   setMockConnection(key: keyof ConnectionInfo, status: ConnectionInfo[keyof ConnectionInfo]) {
     this.connections[key] = status;
   }
-  setMockAgentStatus(id: string, status: ConnectionInfo['bridge']) {
+  setMockAgentStatus(id: string, status: ConnectionInfo["bridge"]) {
     this.agents = this.agents.map((a) => (a.id === id ? { ...a, status } : a));
   }
 
   private updateJob(id: string, patch: Partial<Job>): Job {
     const idx = this.jobs.findIndex((j) => j.id === id);
-    if (idx < 0) throw new Error('Job not found');
+    if (idx < 0) throw new Error("Job not found");
     this.jobs[idx] = { ...this.jobs[idx], ...patch, updatedAt: Date.now() };
     return clone(this.jobs[idx]);
   }
 }
 
-function mapStudioNode(nodes: StudioNode[], id: string, update: (node: StudioNode) => StudioNode): StudioNode[] {
+function mapStudioNode(
+  nodes: StudioNode[],
+  id: string,
+  update: (node: StudioNode) => StudioNode,
+): StudioNode[] {
   return nodes.map((node) => ({
     ...(node.id === id ? update(node) : node),
     children: node.children ? mapStudioNode(node.children, id, update) : node.children,

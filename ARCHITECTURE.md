@@ -1,94 +1,83 @@
-# Arquitetura do Zenless
+# Architecture
 
-## Visão geral
-
-```text
-React/Vite no WebView2
-        │ REST + WebSocket autenticados
-        ▼
-LocalWebBridge (127.0.0.1, porta efêmera)
-        │
-        ▼
-ZenlessCore ── EventBus ── SQLiteStore / StorageManager / ErrorBus
-        │
-        ├── ZenlessOrchestrator
-        │      ├── AgentGateway ── WebView2 → Playwright interno
-        │      │                       ├── ChatGPT
-        │      │                       ├── DeepSeek
-        │      │                       └── Hunyuan3D
-        │      └── StudioMCPClient ── Roblox Studio
-        │
-        └── QABreaker ── StudioMCP + evidências + provedores
-```
-
-A interface é uma projeção de estado. Ela não decide que um provedor está pronto, não cria sucesso de QA e não escreve no Studio.
-
-## Inicialização e encerramento
-
-O executável resolve dois diretórios:
-
-- recursos imutáveis: raiz do checkout em desenvolvimento ou `_MEIPASS` no PyInstaller;
-- dados mutáveis: `%LOCALAPPDATA%\Zenless` ou `ZENLESS_DATA_ROOT` em testes controlados.
-
-Os estágios públicos de boot (`CORE`, `STATE`, `BRIDGE`, `UI`, `BROWSER`, `AI`, `STUDIO`) refletem eventos reais de inicialização. Não há porcentagem sintética. O Bridge inicia antes de servir a SPA; serviços externos podem continuar `CONNECTING`, `OFF` ou `DEGRADED` sem congelar a UI.
-
-No encerramento, o Core sinaliza cancelamento, interrompe QA, fecha as rotas de navegador, aguarda o Orchestrator por tempo limitado, fecha StudioMCP, faz manutenção do SQLite e encerra Bridge/Event Bus. Exceções não tratadas chegam ao ErrorBus e aos logs rotativos.
-
-## Fronteira HTTP/WebSocket
-
-`LocalWebBridge` aceita apenas `127.0.0.1`, valida host e origin exatos, usa porta escolhida pelo sistema e cria token aleatório por processo. REST autenticado usa `X-Zenless-Token`; WebSocket usa o mesmo token na abertura. Todo request recebe `X-Request-Id` validado ou gerado.
-
-JSON, multipart e arquivos têm limites explícitos. Anexos passam por nome sanitizado e armazenamento controlado. Ativos são enviados por ID; a resolução final precisa permanecer dentro da raiz de dados autorizada.
-
-O WebSocket transporta eventos do Core. Deltas de provedor são provisórios e servem apenas à exibição; a resposta completa é persistida depois do término.
-
-## Pipeline do Orchestrator
+## Runtime
 
 ```text
-COLLECTING_CONTEXT → CREATING → REVIEWING/REVISING
-        → visual/3D gates opcionais
-        → WAITING_CHANGE_APPROVAL
-        → APPLYING → TESTING/FIXING
-        → FINAL_REVIEW → COMPLETE | BLOCKED | FAILED
+Windows executable
+  -> authenticated loopback bridge
+     -> authoritative Core
+        -> Orchestrator
+           -> browser gateway
+           -> Studio protocol client
+           -> QA runner
+        -> local database and storage
+     -> persistent frontend runtime
+        -> WebSocket deltas
+        -> REST snapshot recovery
+        -> Splash or application shell
 ```
 
-ChatGPT coleta contexto adicional e produz ações estruturadas. A política separa leitura de mutação e bloqueia ferramentas desconhecidas ou críticas. DeepSeek revisa a proposta de forma independente; `REVISE` volta ao construtor com limite de rodadas e `BLOCK` interrompe o fluxo.
+The frontend is a state projection. It cannot declare a provider ready, fabricate QA success, or write to Studio. The persistent runtime owns the local session, WebSocket, event subscriptions, initial hydration, and reconnect hydration. The Splash only renders boot state.
 
-Depois de mutação e QA, o Orchestrator coleta estado/evidência atualizados e chama DeepSeek novamente. A revisão final é uma chamada real, persistida separadamente da revisão inicial. Uma revisão final pode aprovar, pedir reparo limitado com nova aplicação/QA ou bloquear.
+## Startup and shutdown
 
-## Segurança da mutação
+Immutable resources resolve from the checkout in development or the packaged resource root. Mutable data resolves to `%LOCALAPPDATA%\Zenless` unless a controlled test overrides it.
 
-Cada mutação aprovada carrega `job_id`, `request_id`, `operation_id` e `mutation_id` correlacionáveis. Para edição de script, a sequência é:
+Public boot stages represent observed startup state. The application shell opens only after both backend UI readiness and a complete frontend snapshot. Shutdown cancels active work, stops QA, closes browser routes and Studio connections, maintains the database, and stops the bridge.
 
-1. ler fonte atual e calcular SHA-256;
-2. criar snapshot durável;
-3. vincular o hash esperado à ação aprovada;
-4. reivindicar uma chave de idempotência no SQLite;
-5. reler imediatamente e comparar a precondição;
-6. aplicar via StudioMCP;
-7. reler e verificar conteúdo/hash esperado;
-8. concluir a operação com evidência ou marcá-la como falha.
+## Local transport
 
-Uma precondição divergente significa que o Studio mudou desde a aprovação; a escrita é bloqueada. Uma operação já concluída pode devolver a evidência registrada, mas uma operação `pending` deixada por queda não é repetida.
+The bridge accepts only loopback traffic on an operating-system-assigned port. It validates exact hosts and origins, creates a random token per process, authenticates REST and WebSocket requests, and assigns request IDs.
 
-## Persistência e recuperação
+JSON, multipart uploads, and files have explicit limits. Attachments use sanitized names and controlled storage. Assets are resolved by ID and must remain inside the authorized data root.
 
-SQLite usa foreign keys, busy timeout e WAL. Tarefas, mensagens, eventos, aprovações, operações, contexto, ativos, execuções e casos de teste são persistidos. Arquivos grandes ficam no StorageManager e o banco guarda metadados/caminhos internos.
+WebSocket events are deltas. A fresh REST snapshot is authoritative after startup and every reconnect. Provider stream fragments are transient; completed responses alone become durable state.
 
-Na abertura, tarefas interrompidas antes da zona de escrita podem ser pausadas. Estágios potencialmente mutantes (`APPLYING`, `TESTING`, `FIXING`, `FINAL_REVIEW`) viram `BLOCKED`; o usuário deve inspecionar o Studio e as evidências antes de uma nova tarefa. Recuperação nunca reexecuta escrita por inferência.
+## Pipeline
 
-## Provedores e streaming
+```text
+NEW
+  -> CONTEXT
+  -> PLAN
+  -> VISUAL APPROVAL when enabled
+  -> 3D APPROVAL when enabled
+  -> INDEPENDENT REVIEW when enabled
+  -> CHANGE APPROVAL
+  -> APPLY
+  -> TEST and bounded repair
+  -> FINAL REVIEW
+  -> COMPLETE, BLOCKED, or FAILED
+```
 
-O AgentGateway tenta WebView2 embutido primeiro. Se a capacidade necessária não estiver presente, pode usar o Playwright interno e persistente. Login normal pode abrir a página do provedor. Uma extensão externa não é requisito e não participa da release padrão.
+Required providers are checked before project investigation. The Builder is always required, the Reviewer only when independent review is enabled, and the 3D Generator only for a 3D workflow. Missing authentication returns a structured login requirement and never leaves Chat silent.
 
-Seletores, modelos e capacidades são descobertos da sessão viva. Durante uma resposta, cada crescimento confirmado do texto gera um delta; cancelamento, timeout e fechamento são propagados. A UI dos provedores é uma dependência mutável, portanto falhas de descoberta devem ser diagnósticos e não estados `READY` falsos.
+## Mutation safety
 
-## Visual First e 3D
+Each approved mutation has correlated job, request, operation, and mutation identifiers. Script edits follow this sequence:
 
-O master spec visual gera seis prompts presos à mesma identidade. Cada direção resulta em um PNG real e separado sob `assets/<job>/concept/vN/`, com hash, dimensões, versão e direção. QA determinístico valida arquivo/PNG/dimensões/duplicatas; QA semântico compara consistência. Regenerar tudo ou uma vista cria nova versão e preserva evidência anterior.
+1. Read current source and compute its hash.
+2. Create a durable snapshot.
+3. Bind the expected hash to the approved action.
+4. Claim an idempotency key in the local database.
+5. Read again and verify the precondition.
+6. Apply the action through the allowlisted Studio tool.
+7. Read back and verify the expected content and hash.
+8. Complete the operation with evidence or record failure.
 
-Somente vistas aprovadas alimentam Hunyuan. O adapter descobre upload, quantidade máxima de imagens, geração de geometria, geração de textura e download. A etapa de geometria produz/valida um GLB; a etapa de textura/PBR usa a geometria aprovada e produz a versão final. Se a conta/UI não expuser uma etapa, o job registra `CAPABILITY_UNAVAILABLE`.
+A changed precondition blocks the write. A completed operation may return stored evidence, while an uncertain pending operation is never replayed automatically.
 
-## Empacotamento
+## Persistence and recovery
 
-`Zenless.spec` gera um executável Windows `one-file`, sem console, contendo `frontend/dist`, assets, vendor e metadados de licença. O build de produção desativa Mock Mode e exclui toolkits GUI não usados, inclusive Tkinter. Node/npm/Python não são necessários para executar o artefato final.
+The local database uses foreign keys, a busy timeout, and WAL. Jobs, messages, events, approvals, operations, context, assets, test runs, and cases are durable. Large files remain in controlled storage with metadata in the database.
+
+Interrupted pre-mutation work may recover as paused. Potentially mutating stages recover as blocked and require inspection before new work.
+
+## Browser and visual workflows
+
+The gateway selects an authenticated embedded or managed browser route by observed capability. Browser selectors and capabilities are runtime dependencies, so discovery failures become diagnostics rather than false readiness.
+
+Visual First produces six separate versioned orthographic PNG files. Deterministic checks validate format, dimensions, hashes, direction, and duplicates before semantic review. Only approved views enter 3D generation. Geometry and texture are separate capability-gated stages that must produce validated local artifacts.
+
+## Packaging
+
+`Zenless.spec` creates one console-free Windows executable containing the production frontend and required resources. Mock Mode is disabled in release builds and unused GUI toolkits are excluded.

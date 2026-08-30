@@ -32,7 +32,7 @@ def main() -> int:
         client.start()
         studios = client.list_studios()
         if not studios:
-            raise MCPError("Nenhuma instância do Roblox Studio conectada ao StudioMCP.")
+            raise MCPError("No Roblox Studio instance is connected to StudioMCP.")
 
         target = studios[0]
         report["studio"] = target.label
@@ -125,9 +125,7 @@ def main() -> int:
                     timeout=30,
                 )
                 report["state_after"] = _summary(after.text)
-                report["returned_to_edit"] = (
-                    not after.is_error and "Current Studio Mode: Edit" in after.text
-                )
+                report["returned_to_edit"] = not after.is_error and "Current Studio Mode: Edit" in after.text
             except Exception as exc:
                 report["stop_error"] = f"{type(exc).__name__}: {exc}"
         client.close()

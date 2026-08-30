@@ -42,7 +42,7 @@ export function TopBar() {
       <div className="flex items-center gap-4">
         {chatgpt && (
           <span className="flex items-center gap-1.5">
-            <span className="text-ink-300">ChatGPT</span>
+            <span className="text-ink-300">Builder</span>
             <StatusDot status={chatgpt.status} />
           </span>
         )}

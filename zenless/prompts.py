@@ -195,8 +195,7 @@ def visual_view_prompt(master_spec: dict[str, Any], view: str) -> str:
         "Use no perspective, no isometric angle, no labels, no dimensions, no text, and no extra objects. "
         "Keep neutral background, centered framing, scale, materials, colors, proportions, and details "
         "consistent with the other five views. The image must be a clean square PNG suitable as a "
-        "multi-view 3D reference.\n\nMASTER SPECIFICATION:\n"
-        + compact_json(master_spec, 16_000)
+        "multi-view 3D reference.\n\nMASTER SPECIFICATION:\n" + compact_json(master_spec, 16_000)
     )
 
 

@@ -50,7 +50,7 @@ def ensure_webview2(resource_root: Path, data_root: Path) -> Path:
             partial.replace(temporary)
         except Exception as exc:
             partial.unlink(missing_ok=True)
-            raise ProvisioningError(f"Não foi possível baixar o runtime WebView2 oficial: {exc}") from exc
+            raise ProvisioningError(f"Could not download the official WebView2 runtime: {exc}") from exc
 
     _verify_microsoft_signature(installer)
     completed = subprocess.run(
@@ -67,11 +67,11 @@ def ensure_webview2(resource_root: Path, data_root: Path) -> Path:
     )
     if completed.returncode not in {0, 3010}:
         raise ProvisioningError(
-            f"Instalação automática do WebView2 falhou ({completed.returncode}): {completed.stdout[-2000:]}"
+            f"Automatic WebView2 installation failed ({completed.returncode}): {completed.stdout[-2000:]}"
         )
     installed = find_webview2_runtime()
     if installed is None:
-        raise ProvisioningError("O instalador terminou, mas o WebView2 Runtime não foi detectado.")
+        raise ProvisioningError("The installer completed, but the WebView2 runtime was not detected.")
     return installed
 
 
@@ -96,4 +96,4 @@ def _verify_microsoft_signature(path: Path) -> None:
         check=False,
     )
     if result.returncode != 0:
-        raise ProvisioningError("O instalador WebView2 não possui assinatura Microsoft válida.")
+        raise ProvisioningError("The WebView2 installer does not have a valid Microsoft signature.")

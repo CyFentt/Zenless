@@ -1,111 +1,65 @@
-# Arquitetura de QA
+# QA architecture
 
-## Regra de evidência
+## Evidence states
 
-Zenless separa quatro resultados:
+- `PASSED`: the case ran and the observed condition passed.
+- `FAILED`: the case ran and produced an error or mismatch.
+- `SKIPPED`: the required capability was unavailable or the case did not apply.
+- `NOT RUN`: no execution was attempted for this verification.
 
-- `PASSED`: o caso foi executado e a condição observada passou;
-- `FAILED`: foi executado e houve divergência/erro;
-- `SKIPPED`: a capacidade não estava disponível ou o caso não se aplicava;
-- `NOT RUN`: nenhuma execução foi tentada nesta verificação.
+Source inspection cannot turn a Play test, provider operation, visual asset, or clean-machine check into `PASSED`.
 
-Inspeção de código não transforma Play Test, provedor real, ativo visual ou máquina limpa em `PASSED`.
+## Release gate
 
-## Gate de release local
+`build.ps1` stops at the first failure and reaches packaging only after:
 
-`build.ps1` interrompe no primeiro erro e só chama PyInstaller depois de:
+1. Ruff lint and formatting checks.
+2. Pyright type checking.
+3. Backend pytest coverage.
+4. Clean frontend dependency installation.
+5. ESLint and TypeScript checks.
+6. Frontend Vitest coverage.
+7. A production Vite build with mocks disabled.
 
-1. `python -m ruff check .`;
-2. `python -m pyright`;
-3. `python -m pytest -o addopts= -q`;
-4. `npm ci` em `frontend/`;
-5. `npm run lint`;
-6. `npm run typecheck`;
-7. `npm run test`;
-8. `npm run build` com `VITE_ZENLESS_MOCK=false`.
+This gate verifies local code, contracts, persistence, transport, and packaging. It does not prove external services or gameplay.
 
-Esse gate cobre estilo/erros estáticos, tipos, lógica pura, Bridge local, persistência, protocolo, frontend e criação da SPA. Ele não prova serviços externos.
+## QA profiles
 
-## QA Breaker no Studio
+| Profile | Intended use | Scope |
+| --- | --- | --- |
+| `SMOKE` | Low-risk local or visual change | Short Play and focused checks |
+| `STANDARD` | Common change | Evidence, Edit state, Play output, and safe input smoke |
+| `DEEP` | Persistence, remotes, physics, multiplayer, or high risk | Standard coverage plus device and opt-in multiplayer harnesses |
 
-O QA Breaker seleciona perfil com base no risco, objetivo e ferramentas mutantes:
+Each run records an ID, deterministic seed, plan, cases, duration, pass/skip/fail counts, output, and reproducible failures. Cancellation and maximum duration are enforced. Cleanup always requests Stop when Play was started.
 
-| Perfil | Uso | Limite esperado |
-|---|---|---|
-| `SMOKE` | alteração visual/local de baixo risco | poucos cenários e Play curto |
-| `STANDARD` | mudança comum | evidência, Edit, Play/Output e smoke VirtualInput |
-| `DEEP` | DataStore, remotes, física, multiplayer ou alto risco | casos anteriores + dispositivo + harness multiplayer opt-in |
+## Capability rules
 
-Cada execução recebe `run_id` e seed derivada do job/run, persiste plano, casos, duração, contagens `passedCases`/`skippedCases`/`failedCases`, Output e falhas reproduzíveis. Cancelamento e tempo máximo são limites reais. O bloco `finally` solicita Stop quando Play foi iniciado.
+| Area | Execution | Missing capability |
+| --- | --- | --- |
+| Edit, Play, Stop, Output | Connected Studio tools | Explicit failure or skip by criticality |
+| Project test runner | Explicit project or Studio harness | `SKIPPED`, never inferred from filenames |
+| Multiplayer | Opt-in project harness with bounded players and time | `SKIPPED` without the exact contract |
+| Virtual input | Validated client input schema during Play | `SKIPPED`, never simulated through internal state |
+| Device emulation | Validated apply, capture, read-back, and restore | `SKIPPED` without capability; failure on incomplete restore |
+| Persistent data | Isolated test namespace and idempotent cleanup | Block when isolation is unsafe |
 
-Casos automáticos verificam:
+The multiplayer harness belongs to the game and must declare its protocol. Transport smoke does not replace gameplay assertions.
 
-- integridade da evidência de mutação e read-back;
-- estado Edit antes do teste;
-- Start Play, coleta de Output, busca de erro e Stop;
-- transição inócua `Unknown` down/up por VirtualInput em `STANDARD`/`DEEP`, sem alegar comportamento de gameplay;
-- aplicação, read-back, captura e restauração de viewport 390×844 Portrait no perfil `DEEP`;
-- execução `StudioTestService` no perfil `DEEP` somente quando o projeto contém o marcador exato `ZENLESS_QA_MULTIPLAYER_V1`;
-- revisão independente dos resultados quando DeepSeek está disponível.
+## Visual evidence
 
-Um cenário textual não é considerado executado apenas por aparecer no plano; cada item precisa de executor e resultado persistido próprios para contar como `PASSED`.
+Each visual version must contain six distinct PNG files. Verification records format, non-empty content, minimum dimensions, SHA-256 per view, duplicate detection, direction, version metadata, and authorized asset rendering.
 
-## Matriz de capacidade Roblox
+Semantic review compares identity, proportions, colors, details, and orientation against the master specification. Regeneration creates a new version and preserves prior evidence.
 
-| Área | Execução automática | Regra quando ausente |
-|---|---|---|
-| Edit/Play/Stop/Output | StudioMCP `get_studio_state`, `start_stop_play`, `get_console_output` | falha ou skip explícito conforme criticidade |
-| TestEZ/Jest Roblox | runner/harness detectado no projeto ou Studio | `SKIPPED`; nunca inferir pelos arquivos |
-| Multiplayer | `script_grep` + `execute_luau` Edit + marcador opt-in; 1–8 clientes no runner | `SKIPPED` sem o marcador/schema; nunca lançar por heurística |
-| VirtualInput | `start_stop_play` + `execute_luau` Client com schema validado | `SKIPPED` sem capacidade; não simular clique por estado interno |
-| Device emulator | `execute_luau` Edit + `screen_capture`; estado original validado/restaurado | `SKIPPED` sem capacidade; falha se captura/read-back/restore falhar |
-| DataStore | ambiente de teste isolado, sem dados de produção | bloquear caso inseguro |
+## 3D evidence
 
-O harness multiplayer é propriedade do jogo e precisa declarar o protocolo opt-in; Zenless limita jogadores/tempo, exige retorno assinado e solicita cleanup. O smoke atual valida o transporte do harness, não substitui asserções específicas do gameplay no script do projeto. Testes de DataStore precisam de namespace exclusivo, cleanup idempotente e nunca devem tocar chaves de produção.
+The adapter records observed capabilities and upload limits before sending assets. Evidence separately covers accepted references, structurally valid geometry, texture application, authorized download, local viewing, and independent regeneration targets.
 
-## QA de Visual First
+Missing controls, incompatible limits, empty downloads, and invalid local models fail the stage. A URL or provider message is not a validated model.
 
-Cada versão deve produzir seis arquivos PNG distintos. A verificação determinística registra:
+## External verification
 
-- assinatura PNG e arquivo não vazio;
-- dimensões mínimas;
-- SHA-256 por vista e detecção de duplicata;
-- direção/versionamento coerentes no metadata;
-- rota de asset autorizada e renderização pela UI.
+Final release verification should observe provider login persistence, streaming, independent reviews, the six-view workflow, geometry and texture generation, Studio approval and read-back, Play and Stop, recovery after safe interruption, and recovery after a potentially mutating interruption.
 
-A verificação semântica compara identidade, proporções, cores, detalhes e orientação contra o master spec. Reprovação regenera apenas vistas indicadas ou todas em nova versão; nunca sobrescreve evidência aprovada.
-
-## QA de Hunyuan/3D
-
-Antes de enviar imagens, o adapter registra as capacidades observadas e o limite de uploads. A evidência separa:
-
-1. vistas aprovadas realmente enviadas;
-2. geometria concluída e GLB estruturalmente carregável;
-3. textura/PBR aplicada à geometria aprovada;
-4. download autorizado e visualização local;
-5. regeneração de geometria ou textura como operações independentes.
-
-Ausência de controle, limite incompatível, download sem arquivo ou GLB inválido falha a etapa. URL ou texto do provedor não é um modelo validado.
-
-## E2E externo e máquina limpa
-
-O checklist final exige observação manual/real de:
-
-- abertura do EXE sem Python/Node/npm no PATH;
-- WebView2 presente e caminho de provisionamento quando ausente;
-- login normal e persistência de sessão de cada provedor;
-- streaming ChatGPT e duas revisões DeepSeek;
-- Six View, QA/regeneração e Hunyuan geometria/textura;
-- Studio conectado, aprovação, precondição, aplicação, read-back, Play/Stop e Output;
-- encerramento durante fase segura e durante fase mutante, verificando recuperação sem replay.
-
-## Estado desta auditoria (2026-08-28)
-
-| Verificação externa | Estado | Evidência |
-|---|---|---|
-| Roblox Studio conectado / Play Solo | `NOT RUN` | nenhuma instância StudioMCP estava conectada |
-| Multiplayer / VirtualInput / device emulator | `NOT RUN` | dependem de Studio/harness real |
-| Provedores reais e visual/3D E2E | `NOT RUN` | nenhuma sessão real foi usada nesta auditoria |
-| Windows limpo | `NOT RUN` | não houve segunda máquina/VM limpa |
-
-Os totais atuais dos gates locais e o hash do EXE devem ser registrados no relatório de entrega depois do build final, não antecipados neste documento.
+When no real Studio connection, authenticated provider session, or clean Windows machine is available, those checks remain `NOT RUN` and are reported as such.

@@ -27,8 +27,6 @@ class _Pending:
 
 
 class WebView2BrowserController:
-    """Out-of-process WebView2 browser with persistent local sessions."""
-
     def __init__(
         self,
         *,

@@ -23,15 +23,6 @@ class MCPTool:
     description: str
     input_schema: dict[str, Any]
 
-    def as_openai_tool(self) -> dict[str, Any]:
-        return {
-            "type": "function",
-            "name": self.name,
-            "description": self.description[:1024],
-            "parameters": self.input_schema,
-            "strict": False,
-        }
-
 
 @dataclass(frozen=True, slots=True)
 class MCPToolResult:
@@ -44,7 +35,7 @@ class MCPToolResult:
         text = self.text.strip()
         if len(text) <= limit:
             return text
-        return text[:limit] + "\n...[resultado truncado pelo Zenless]"
+        return text[:limit] + "\n...[result truncated]"
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,11 +50,11 @@ def find_studio_mcp(explicit_path: str = "") -> Path:
         candidate = Path(explicit_path).expanduser().resolve()
         if candidate.is_file():
             return candidate
-        raise MCPError(f"StudioMCP não encontrado no caminho configurado: {candidate}")
+        raise MCPError(f"StudioMCP was not found at the configured path: {candidate}")
 
     local_app_data = os.environ.get("LOCALAPPDATA")
     if not local_app_data:
-        raise MCPError("A variável LOCALAPPDATA não está disponível.")
+        raise MCPError("The LOCALAPPDATA environment variable is unavailable.")
 
     versions = Path(local_app_data) / "Roblox" / "Versions"
     paired: list[Path] = []
@@ -75,9 +66,7 @@ def find_studio_mcp(explicit_path: str = "") -> Path:
             paired.append(candidate)
     candidates = paired or fallback
     if not candidates:
-        raise MCPError(
-            "StudioMCP.exe não foi encontrado. Atualize o Roblox Studio e ative Assistant > MCP Servers."
-        )
+        raise MCPError("StudioMCP.exe was not found. Update Studio and enable Assistant > MCP Servers.")
     return max(candidates, key=lambda path: path.stat().st_mtime)
 
 
@@ -157,16 +146,16 @@ class StudioMCPClient:
             )
             discovered[tool.name] = tool
         if not discovered:
-            raise MCPError("O StudioMCP iniciou, mas não anunciou nenhuma ferramenta.")
+            raise MCPError("StudioMCP started but did not advertise any tools.")
         self.tools = discovered
         return list(discovered.values())
 
     def list_studios(self) -> list[StudioTarget]:
         if "list_roblox_studios" not in self.tools:
-            raise MCPError("A versão atual do StudioMCP não oferece list_roblox_studios.")
+            raise MCPError("The current StudioMCP version does not provide list_roblox_studios.")
         result = self.call_tool("list_roblox_studios", {}, timeout=30)
         if result.is_error:
-            raise MCPError(result.text or "Falha ao listar instâncias do Roblox Studio.")
+            raise MCPError(result.text or "Failed to list Studio instances.")
         try:
             payload = json.loads(result.text)
         except json.JSONDecodeError:
@@ -206,18 +195,18 @@ class StudioMCPClient:
     ) -> MCPToolResult:
         tool = self.tools.get(name)
         if tool is None:
-            raise MCPError(f"Ferramenta MCP desconhecida: {name}")
+            raise MCPError(f"Unknown MCP tool: {name}")
 
         safe_arguments = dict(arguments)
         properties = tool.input_schema.get("properties", {})
         if name != "list_roblox_studios" and "studio_id" in properties:
             if not studio_id:
-                raise MCPError(f"{name} requer um Studio selecionado.")
+                raise MCPError(f"{name} requires a selected Studio instance.")
             safe_arguments["studio_id"] = studio_id
 
         schema_errors = validate_json_schema(safe_arguments, tool.input_schema)
         if schema_errors:
-            raise MCPError("Argumentos MCP inválidos: " + "; ".join(schema_errors[:6]))
+            raise MCPError("Invalid MCP arguments: " + "; ".join(schema_errors[:6]))
 
         raw_result = self.request(
             "tools/call",
@@ -235,9 +224,9 @@ class StudioMCPClient:
             if item_type == "text":
                 text_parts.append(str(item.get("text", "")))
             elif item_type == "image":
-                text_parts.append(f"[imagem MCP: {item.get('mimeType', 'tipo desconhecido')}]")
+                text_parts.append(f"[MCP image: {item.get('mimeType', 'unknown type')}]")
             elif item_type == "resource":
-                text_parts.append("[recurso MCP retornado]")
+                text_parts.append("[MCP resource returned]")
         return MCPToolResult(
             tool_name=name,
             text="\n".join(text_parts),
@@ -247,7 +236,7 @@ class StudioMCPClient:
 
     def request(self, method: str, params: dict[str, Any], *, timeout: float) -> dict[str, Any]:
         if not self.running or self.process is None or self.process.stdin is None:
-            raise MCPError("StudioMCP não está em execução.")
+            raise MCPError("StudioMCP is not running.")
         with self._pending_lock:
             request_id = self._next_id
             self._next_id += 1
@@ -261,7 +250,7 @@ class StudioMCPClient:
             try:
                 response = response_queue.get(timeout=timeout)
             except queue.Empty as exc:
-                raise MCPError(f"StudioMCP excedeu {timeout:.0f}s em {method}.") from exc
+                raise MCPError(f"StudioMCP exceeded {timeout:.0f}s while running {method}.") from exc
         finally:
             with self._pending_lock:
                 self._pending.pop(request_id, None)
@@ -272,7 +261,7 @@ class StudioMCPClient:
                 message = error.get("message", error)
             else:
                 message = error
-            raise MCPError(f"StudioMCP rejeitou {method}: {message}")
+            raise MCPError(f"StudioMCP rejected {method}: {message}")
         result = response.get("result", {})
         return result if isinstance(result, dict) else {"value": result}
 
@@ -303,7 +292,9 @@ class StudioMCPClient:
                     try:
                         process.wait(timeout=2)
                     except subprocess.TimeoutExpired:
-                        self.stderr_tail.append("StudioMCP filho não encerrou no prazo; nenhum kill forçado foi usado.")
+                        self.stderr_tail.append(
+                            "The child StudioMCP process did not stop in time; no forced kill was used."
+                        )
             for stream in (process.stdout, process.stderr):
                 if stream is not None:
                     try:
@@ -336,7 +327,7 @@ class StudioMCPClient:
                         pass
             elif self.notification_callback is not None:
                 self.notification_callback(message)
-        failure = {"error": {"message": "StudioMCP encerrou a conexão."}}
+        failure = {"error": {"message": "StudioMCP closed the connection."}}
         with self._pending_lock:
             pending = list(self._pending.values())
         for target in pending:
@@ -361,7 +352,7 @@ def validate_json_schema(value: Any, schema: dict[str, Any], path: str = "$") ->
     alternatives = schema.get("anyOf") or schema.get("oneOf")
     if isinstance(alternatives, list):
         if not any(not validate_json_schema(value, option, path) for option in alternatives):
-            errors.append(f"{path} não corresponde a nenhuma alternativa aceita")
+            errors.append(f"{path} does not match any accepted alternative")
         return errors
 
     expected = schema.get("type")
@@ -381,38 +372,38 @@ def validate_json_schema(value: Any, schema: dict[str, Any], path: str = "$") ->
     elif expected == "null":
         valid_type = value is None
     if not valid_type:
-        return [f"{path} deveria ser {expected}"]
+        return [f"{path} must be {expected}"]
 
     if "enum" in schema and value not in schema["enum"]:
-        errors.append(f"{path} deve ser um de {schema['enum']}")
+        errors.append(f"{path} must be one of {schema['enum']}")
 
     if isinstance(value, dict):
         required = schema.get("required", [])
         for key in required:
             if key not in value:
-                errors.append(f"{path}.{key} é obrigatório")
+                errors.append(f"{path}.{key} is required")
         properties = schema.get("properties", {})
         if isinstance(properties, dict):
             for key, child in value.items():
                 if key in properties:
                     errors.extend(validate_json_schema(child, properties[key], f"{path}.{key}"))
                 elif schema.get("additionalProperties") is False:
-                    errors.append(f"{path}.{key} não é permitido")
+                    errors.append(f"{path}.{key} is not allowed")
     elif isinstance(value, list) and isinstance(schema.get("items"), dict):
         for index, item in enumerate(value):
             errors.extend(validate_json_schema(item, schema["items"], f"{path}[{index}]"))
         if "minItems" in schema and len(value) < int(schema["minItems"]):
-            errors.append(f"{path} precisa de ao menos {schema['minItems']} itens")
+            errors.append(f"{path} requires at least {schema['minItems']} items")
         if "maxItems" in schema and len(value) > int(schema["maxItems"]):
-            errors.append(f"{path} aceita no máximo {schema['maxItems']} itens")
+            errors.append(f"{path} accepts at most {schema['maxItems']} items")
     elif isinstance(value, str):
         if "minLength" in schema and len(value) < int(schema["minLength"]):
-            errors.append(f"{path} é curto demais")
+            errors.append(f"{path} is too short")
         if "maxLength" in schema and len(value) > int(schema["maxLength"]):
-            errors.append(f"{path} é longo demais")
+            errors.append(f"{path} is too long")
     elif isinstance(value, (int, float)) and not isinstance(value, bool):
         if "minimum" in schema and value < schema["minimum"]:
-            errors.append(f"{path} deve ser >= {schema['minimum']}")
+            errors.append(f"{path} must be >= {schema['minimum']}")
         if "maximum" in schema and value > schema["maximum"]:
-            errors.append(f"{path} deve ser <= {schema['maximum']}")
+            errors.append(f"{path} must be <= {schema['maximum']}")
     return errors

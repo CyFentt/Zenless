@@ -9,21 +9,21 @@ if sys.platform == "win32":
     import winreg
 
 
-HOST_NAME = "com.fentalware.zenless"
-EXTENSION_ID = "zenless@fentalware.local"
+HOST_NAME = "app.zenless.bridge"
+EXTENSION_ID = "zenless@local.app"
 
 
 def manifest_path() -> Path:
     appdata = os.environ.get("APPDATA")
     if not appdata:
-        raise RuntimeError("APPDATA não está disponível.")
+        raise RuntimeError("APPDATA is unavailable.")
     return Path(appdata) / "Mozilla" / "NativeMessagingHosts" / f"{HOST_NAME}.json"
 
 
 def install_native_host(executable: Path | None = None) -> Path:
     target_executable = (executable or Path(sys.executable)).resolve()
     if not target_executable.is_file():
-        raise RuntimeError(f"Executável do Native Host não encontrado: {target_executable}")
+        raise RuntimeError(f"Native host executable not found: {target_executable}")
     target = manifest_path()
     target.parent.mkdir(parents=True, exist_ok=True)
     payload = {

@@ -1,50 +1,49 @@
-# Zenless — By Fentalware
+# Zenless
 
-Zenless é um aplicativo Windows local para coordenar Roblox Studio, ChatGPT, DeepSeek e Hunyuan3D sem chaves de API. Ele usa sessões normais dos provedores em navegador gerenciado; login, MFA, CAPTCHA e consentimentos continuam manuais.
+Zenless is a local Windows application that coordinates Studio development through authenticated browser sessions without API keys. Login, MFA, CAPTCHA, and consent remain manual.
 
 ```text
-pedido
-  → leitura do Studio
-  → proposta do ChatGPT
-  → revisão independente do DeepSeek
-  → aprovação do usuário
-  → mutação verificada no Studio
-  → QA e reparo limitado
-  → revisão final real do DeepSeek
-  → concluído ou bloqueado
+request
+  -> read Studio state
+  -> create a proposal
+  -> run an independent review
+  -> request user approval
+  -> apply verified Studio changes
+  -> run bounded QA and repair
+  -> perform a final review
+  -> complete or block
 ```
 
-## Como usar
+## Usage
 
-1. Abra o Roblox Studio atualizado, deixe o projeto em **Edit** e conecte o servidor StudioMCP compatível.
-2. Execute `Zenless.exe`.
-3. Faça login em ChatGPT, DeepSeek e, quando necessário, Hunyuan. As sessões ficam no perfil local do Zenless; credenciais e cookies não passam pela interface React.
-4. Envie um objetivo completo no Chat. O aplicativo mostra estados reais e solicita aprovação antes de cada bloco de escrita relevante.
+1. Open the current Studio project in Edit mode and connect a compatible MCP server.
+2. Run `Zenless.exe`.
+3. Use Settings > Links to authenticate the Builder, Reviewer, and 3D Generator when required.
+4. Submit a complete objective in Chat and approve each relevant write gate.
 
-Os dados persistentes ficam em `%LOCALAPPDATA%\Zenless`: SQLite, logs rotativos, perfis de navegador, anexos validados, snapshots, evidências e ativos gerados.
+Persistent data is stored under `%LOCALAPPDATA%\Zenless`, including the local database, rotating logs, private browser profiles, validated attachments, snapshots, evidence, and generated assets.
 
-## Garantias principais
+## Guarantees
 
-- Bridge HTTP/WebSocket somente em `127.0.0.1`, porta efêmera, token aleatório por processo, validação exata de host/origin e IDs de requisição.
-- Core autoritativo: a UI solicita ações, mas não aplica alterações nem decide sucesso.
-- Mutações com leitura atual, snapshot, precondição SHA-256, operação idempotente, aplicação, releitura e verificação. Divergência de precondição bloqueia a escrita.
-- Recuperação conservadora: uma queda durante escrita/QA/revisão final não repete a operação automaticamente.
-- ChatGPT como construtor e DeepSeek como revisor independente, inclusive depois de mutação e QA.
-- Deltas reais dos navegadores são encaminhados pelo WebSocket; a resposta parcial não vira estado durável.
-- Visual First versionado com seis PNGs canônicos (`FRONT`, `BACK`, `LEFT`, `RIGHT`, `TOP`, `BOTTOM`), QA visual e regeneração controlada.
-- Hunyuan usa descoberta de capacidade e separa geometria de textura. Recursos não expostos pela UI do provedor são marcados como indisponíveis; não há progresso ou ativo fabricado.
-- QA Breaker registra perfil, seed, casos, evidências, Output e resultado. Capacidades Roblox ausentes são `SKIPPED`/bloqueadas, nunca simuladas como sucesso.
-- Encerramento cooperativo de Bridge, navegadores, StudioMCP, filas e banco.
+- The HTTP and WebSocket bridge binds only to loopback with an ephemeral port, a per-process token, strict host and origin validation, and request IDs.
+- The Core is authoritative. The UI requests actions but cannot apply changes or declare success.
+- Mutations require a current read, snapshot, SHA-256 precondition, idempotent operation, application, read-back, and verification.
+- Recovery never repeats an uncertain write automatically.
+- Browser deltas are forwarded through WebSocket while completed responses alone become durable state.
+- Visual First uses six versioned orthographic views with explicit approval and controlled regeneration.
+- 3D generation discovers available capabilities and keeps geometry and texture stages separate.
+- QA records its profile, seed, cases, evidence, output, and result. Missing capabilities are skipped or blocked, never reported as successful.
+- Shutdown is cooperative across the bridge, browser controllers, Studio connection, queues, and database.
 
-## Limites reais
+## Limits
 
-- A automação dos provedores depende da interface web atual de cada serviço e pode exigir atualização de seletores.
-- O fallback Playwright é interno e provisionado sob demanda. Uma extensão de navegador não faz parte da rota normal.
-- Importação de GLB local continua sujeita às capacidades expostas pelo StudioMCP/Roblox Studio.
-- Multiplayer, VirtualInput e emulação de dispositivo só podem ser executados quando a conexão StudioMCP expõe a capacidade correspondente.
-- O executável é um pacote `one-file`; este repositório não gera instalador MSI/Setup separado.
+- Browser automation depends on current provider interfaces and may require selector updates.
+- The managed browser fallback is provisioned only when needed.
+- Local 3D import depends on capabilities exposed by the connected Studio server.
+- Multiplayer, virtual input, and device emulation run only when the connected Studio server exposes them.
+- The release is a single-file executable and does not include a separate installer.
 
-## Desenvolvimento
+## Development
 
 ```powershell
 python -m pip install -r requirements-dev.txt
@@ -58,28 +57,28 @@ npm --prefix frontend run test
 npm --prefix frontend run build
 ```
 
-`tests/live_studio_smoke.py` só inicia Play Test quando o Studio confirma **Edit** e sempre solicita **Stop** em `finally`. Ele requer uma instância real conectada; não é substituído por mock.
+`tests/live_studio_smoke.py` starts Play only after Studio confirms Edit mode and always requests Stop in `finally`. It requires a real connected instance.
 
-Para gerar a release:
+Build the release with:
 
 ```powershell
 .\build.ps1
 ```
 
-O script executa, nesta ordem, Ruff, Pyright, pytest, `npm ci`, ESLint, TypeScript, Vitest, Vite com Mock Mode desativado e, somente se tudo passar, PyInstaller. A saída única é `dist\Zenless.exe`.
+The build runs Ruff, Pyright, pytest, dependency installation, ESLint, TypeScript, Vitest, a production Vite build with mocks disabled, and PyInstaller. The only release artifact is `dist\Zenless.exe`.
 
-## Árvore canônica
+## Source layout
 
-- `frontend/`: única fonte React/TypeScript/Vite e contrato de transporte.
-- `zenless/core.py`: estado autoritativo e adaptadores expostos à UI.
-- `zenless/web_bridge.py`: REST, WebSocket e arquivos autorizados locais.
-- `zenless/orchestrator.py`: pipeline, gates, mutação e revisão final.
-- `zenless/agent_gateway.py`: seleção WebView2 → Playwright por capacidade.
-- `zenless/studio_mcp.py`: cliente StudioMCP.
-- `zenless/store.py`: SQLite, operações idempotentes e recuperação.
-- `zenless/qa_breaker.py`: planejamento, execução e evidência de QA.
-- `Zenless.spec`: pacote Windows `one-file` sem console.
+- `frontend/`: canonical React and TypeScript source plus the transport contract.
+- `zenless/core.py`: authoritative application state and UI adapters.
+- `zenless/web_bridge.py`: authenticated local REST and WebSocket transport.
+- `zenless/orchestrator.py`: pipeline, approval gates, mutation, and final review.
+- `zenless/agent_gateway.py`: browser route selection by capability.
+- `zenless/studio_mcp.py`: Studio protocol client.
+- `zenless/store.py`: local database, idempotent operations, and recovery.
+- `zenless/qa_breaker.py`: QA planning, execution, and evidence.
+- `Zenless.spec`: console-free single-file Windows package.
 
-Detalhes: [ARCHITECTURE.md](ARCHITECTURE.md), [QA_ARCHITECTURE.md](QA_ARCHITECTURE.md), [frontend/BACKEND_CONTRACT.md](frontend/BACKEND_CONTRACT.md) e [RELEASE_NOTES.md](RELEASE_NOTES.md).
+See [ARCHITECTURE.md](ARCHITECTURE.md), [QA_ARCHITECTURE.md](QA_ARCHITECTURE.md), [frontend/BACKEND_CONTRACT.md](frontend/BACKEND_CONTRACT.md), and [RELEASE_NOTES.md](RELEASE_NOTES.md).
 
-Licença GPL-3.0. Consulte `NOTICE.md`.
+Licensed under GPL-3.0. See `NOTICE.md` for required legal notices.

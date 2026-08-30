@@ -20,8 +20,6 @@ EventSubscriber = Callable[[CoreEvent], None]
 
 
 class EventBus:
-    """Thread-safe, bounded event fan-out used by the local WebSocket bridge."""
-
     def __init__(self, *, history_limit: int = 500) -> None:
         self._history: deque[CoreEvent] = deque(maxlen=max(20, history_limit))
         self._subscribers: dict[int, EventSubscriber] = {}
@@ -37,7 +35,6 @@ class EventBus:
             try:
                 callback(event)
             except Exception:
-                # A broken UI client must not stop the authoritative core.
                 continue
         return event
 

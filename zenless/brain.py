@@ -9,22 +9,15 @@ from typing import Any, Iterable
 
 _WORD = re.compile(r"[a-z0-9_]{2,}")
 _STOPWORDS = {
-    "para",
-    "com",
-    "uma",
-    "que",
-    "isso",
-    "este",
-    "essa",
     "the",
     "and",
     "this",
     "from",
     "roblox",
     "studio",
-    "faca",
-    "crie",
-    "quero",
+    "make",
+    "create",
+    "want",
 }
 
 
@@ -42,23 +35,21 @@ class BrainAnalysis:
 
 
 class ZenlessBrain:
-    """Deterministic router/index helper; deliberately not a local language model."""
-
     _INTENTS = {
-        "debug": ("erro", "bug", "falha", "corrigir", "fix", "crash", "output"),
-        "test": ("teste", "test", "playtest", "validar", "verificar"),
-        "visual": ("ui", "hud", "visual", "interface", "imagem", "design"),
-        "3d": ("3d", "mesh", "modelo", "asset", "objeto"),
-        "audit": ("auditar", "revisar", "review", "seguranca", "performance", "otimizar"),
-        "explain": ("explique", "como funciona", "documente", "resuma"),
-        "code": ("script", "luau", "codigo", "programar", "implementar", "sistema"),
+        "debug": ("error", "bug", "failure", "correct", "fix", "crash", "output"),
+        "test": ("test", "playtest", "validate", "verify"),
+        "visual": ("ui", "hud", "visual", "interface", "image", "design"),
+        "3d": ("3d", "mesh", "model", "asset", "object"),
+        "audit": ("audit", "review", "security", "performance", "optimize"),
+        "explain": ("explain", "how it works", "document", "summarize"),
+        "code": ("script", "luau", "code", "program", "implement", "system"),
     }
     _SCOPES = {
-        "ServerScriptService": ("servidor", "server", "authority", "datastore", "remote"),
+        "ServerScriptService": ("server", "authority", "datastore", "remote"),
         "ReplicatedStorage": ("shared", "replicated", "remote", "types", "module"),
-        "StarterPlayer": ("client", "camera", "input", "movimento", "controller"),
+        "StarterPlayer": ("client", "camera", "input", "movement", "controller"),
         "StarterGui": ("ui", "hud", "interface", "menu"),
-        "Workspace": ("mapa", "world", "workspace", "part", "model", "physics"),
+        "Workspace": ("map", "world", "workspace", "part", "model", "physics"),
     }
 
     def analyze(self, objective: str, *, independent_review: bool = True, create_3d: bool = False) -> BrainAnalysis:
@@ -68,25 +59,20 @@ class ZenlessBrain:
         for token in tokens:
             frequencies[token] = frequencies.get(token, 0) + 1
         keywords = tuple(
-            token
-            for token, _ in sorted(frequencies.items(), key=lambda item: (-item[1], -len(item[0]), item[0]))[:16]
+            token for token, _ in sorted(frequencies.items(), key=lambda item: (-item[1], -len(item[0]), item[0]))[:16]
         )
         intents = tuple(
-            name
-            for name, markers in self._INTENTS.items()
-            if any(marker in normalized for marker in markers)
+            name for name, markers in self._INTENTS.items() if any(marker in normalized for marker in markers)
         ) or ("code",)
         scopes = tuple(
-            name
-            for name, markers in self._SCOPES.items()
-            if any(marker in normalized for marker in markers)
+            name for name, markers in self._SCOPES.items() if any(marker in normalized for marker in markers)
         )
         providers = ["chatgpt"]
         if independent_review:
             providers.append("deepseek")
         if create_3d or "3d" in intents:
             providers.append("hunyuan")
-        read_only_markers = ("somente leia", "apenas leia", "explique", "audite", "analise sem alterar")
+        read_only_markers = ("read only", "only read", "explain", "audit", "analyze without changes")
         requires_mutation = not any(marker in normalized for marker in read_only_markers)
         canonical = json.dumps(
             {"objective": " ".join(tokens), "intents": intents, "scopes": scopes},
@@ -145,4 +131,3 @@ class ZenlessBrain:
         if "basescript" in lowered or "script" in lowered:
             return 2
         return 3
-

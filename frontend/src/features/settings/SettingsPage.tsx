@@ -134,7 +134,7 @@ function ModelsTab({ settings, catalog, onChange }: { settings: Settings | null;
 
   return (
     <div className="p-4 max-w-md space-y-4 animate-fade-in">
-      <Section title="ChatGPT">
+      <Section title="BUILDER">
         <Row label="Model">
           <Select value={models.chatgpt.model} options={available(catalog.chatgpt.models)} onChange={(value) => void selectModel('chatgpt', value)} />
         </Row>
@@ -142,7 +142,7 @@ function ModelsTab({ settings, catalog, onChange }: { settings: Settings | null;
           <Toggle checked={models.chatgpt.reasoning} onChange={(value) => void persistModels({ ...models, chatgpt: { ...models.chatgpt, reasoning: value } })} />
         </Row>
       </Section>
-      <Section title="DeepSeek">
+      <Section title="REVIEWER">
         <Row label="Model">
           <Select value={models.deepseek.model} options={available(catalog.deepseek.models)} onChange={(value) => void selectModel('deepseek', value)} />
         </Row>
@@ -150,7 +150,7 @@ function ModelsTab({ settings, catalog, onChange }: { settings: Settings | null;
           <Toggle checked={models.deepseek.reasoning} onChange={(value) => void persistModels({ ...models, deepseek: { ...models.deepseek, reasoning: value } })} />
         </Row>
       </Section>
-      <Section title="Hunyuan">
+      <Section title="3D GENERATOR">
         <Row label="Version">
           <Select value={models.hunyuan.version} options={available(catalog.hunyuan.versions)} onChange={(value) => void selectModel('hunyuan', value)} />
         </Row>
@@ -175,9 +175,9 @@ function LinksTab({ connections }: { connections: ConnectionInfo }) {
   const labels: { key: keyof ConnectionInfo; name: string; provider?: ProviderId }[] = [
     { key: 'bridge', name: 'Bridge' },
     { key: 'browser', name: 'Browser' },
-    { key: 'chatgpt', name: 'ChatGPT', provider: 'chatgpt' },
-    { key: 'deepseek', name: 'DeepSeek', provider: 'deepseek' },
-    { key: 'hunyuan', name: 'Hunyuan', provider: 'hunyuan' },
+    { key: 'chatgpt', name: 'Builder', provider: 'chatgpt' },
+    { key: 'deepseek', name: 'Reviewer', provider: 'deepseek' },
+    { key: 'hunyuan', name: '3D Generator', provider: 'hunyuan' },
     { key: 'studio', name: 'Studio' },
   ];
 
@@ -207,7 +207,7 @@ function LinksTab({ connections }: { connections: ConnectionInfo }) {
               <span className="text-xs text-ink-100">{name}</span>
               <div className="flex items-center gap-2">
                 <StatusBadge status={status} />
-                {status === 'LOGIN' && provider && (
+                {(status === 'LOGIN' || status === 'OFF' || status === 'ERR') && provider && (
                   <button onClick={() => setLoginModal(provider)} className="px-2 h-6 text-2xs uppercase tracking-wider text-ink-50 border border-ink-500 hover:bg-ink-800 transition-colors">LOGIN</button>
                 )}
                 {status === 'OFF' && isMockMode() && (

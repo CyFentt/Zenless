@@ -53,10 +53,7 @@ class FakeTransport:
         return {"status": "ok", "text": action}
 
     def provider_status(self) -> dict[str, dict[str, str]]:
-        return {
-            provider: {"state": "Ready", "detail": "test", "transport": "fake"}
-            for provider in self.ready
-        }
+        return {provider: {"state": "Ready", "detail": "test", "transport": "fake"} for provider in self.ready}
 
 
 class FakeManaged(FakeTransport):
@@ -81,7 +78,7 @@ class HardeningTests(unittest.TestCase):
     def test_brain_routes_without_local_model_and_deduplicates(self) -> None:
         brain = ZenlessBrain()
         analysis = brain.analyze(
-            "Corrija o erro do servidor e teste a UI 3D",
+            "Fix the server error and test the 3D UI",
             independent_review=True,
             create_3d=True,
         )
@@ -165,7 +162,7 @@ class HardeningTests(unittest.TestCase):
         managed = FakeManaged({"chatgpt"})
         embedded = FakeEmbedded({"chatgpt"})
         extension = FakeTransport({"chatgpt", "deepseek"})
-        gateway = AgentGateway(  # type: ignore[arg-type]
+        gateway = AgentGateway(
             managed=managed,
             embedded=embedded,
             extension=extension,
@@ -181,7 +178,7 @@ class HardeningTests(unittest.TestCase):
         self.assertEqual(extension.sent, [("deepseek", "review")])
 
     def test_gateway_does_not_require_extension_by_default(self) -> None:
-        gateway = AgentGateway(  # type: ignore[arg-type]
+        gateway = AgentGateway(
             managed=FakeManaged(set()),
             embedded=FakeEmbedded(set()),
             extension=FakeTransport({"chatgpt"}),

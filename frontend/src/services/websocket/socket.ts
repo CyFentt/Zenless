@@ -17,7 +17,6 @@ export class RealZenlessSocket implements ZenlessSocket {
   private eventHandlers = new Set<ZenlessEventHandler>();
   private statusHandlers = new Set<StatusHandler>();
   private reconnectAttempts = 0;
-  private readonly maxReconnect = 5;
   private shouldReconnect = false;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -108,7 +107,7 @@ export class RealZenlessSocket implements ZenlessSocket {
   }
 
   private scheduleReconnect() {
-    if (!this.shouldReconnect || this.reconnectTimer || this.reconnectAttempts >= this.maxReconnect) return;
+    if (!this.shouldReconnect || this.reconnectTimer) return;
     this.reconnectAttempts += 1;
     this.setStatus('RECONNECTING');
     const base = Math.min(500 * 2 ** this.reconnectAttempts, 8000);

@@ -22,19 +22,19 @@ def read_native_message(stream: BinaryIO) -> bytes | None:
     if not header:
         return None
     if len(header) != 4:
-        raise NativeHostError("Cabeçalho Native Messaging incompleto.")
+        raise NativeHostError("Incomplete Native Messaging header.")
     length = struct.unpack("<I", header)[0]
     if length <= 0 or length > MAX_ENVELOPE_BYTES:
-        raise NativeHostError("Mensagem Native Messaging fora do limite.")
+        raise NativeHostError("Native Messaging payload is outside the allowed limit.")
     payload = stream.read(length)
     if len(payload) != length:
-        raise NativeHostError("Mensagem Native Messaging truncada.")
+        raise NativeHostError("Truncated Native Messaging payload.")
     return payload
 
 
 def write_native_message(stream: BinaryIO, payload: bytes, lock: threading.Lock) -> None:
     if len(payload) > MAX_ENVELOPE_BYTES:
-        raise NativeHostError("Resposta Native Messaging fora do limite.")
+        raise NativeHostError("Native Messaging response is outside the allowed limit.")
     with lock:
         stream.write(struct.pack("<I", len(payload)))
         stream.write(payload)
@@ -58,14 +58,18 @@ def run_native_host(runtime_file: Path) -> int:
         host = str(runtime["host"])
         port = int(runtime["port"])
         token = str(runtime["token"])
-    except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
-        error = make_envelope(
-            "agent.error",
-            source="native-host",
-            provider=hello.provider,
-            reply_to=hello.id,
-            payload={"error": "Zenless.exe não está aberto ou a runtime local não está disponível."},
-        ).to_json().encode("utf-8")
+    except OSError, KeyError, TypeError, ValueError, json.JSONDecodeError:
+        error = (
+            make_envelope(
+                "agent.error",
+                source="native-host",
+                provider=hello.provider,
+                reply_to=hello.id,
+                payload={"error": "Zenless.exe is not open or the local runtime is unavailable."},
+            )
+            .to_json()
+            .encode("utf-8")
+        )
         write_native_message(target, error, write_lock)
         return 3
 
@@ -81,7 +85,7 @@ def run_native_host(runtime_file: Path) -> int:
                         message = websocket.recv()
                         encoded = message if isinstance(message, bytes) else message.encode("utf-8")
                         write_native_message(target, encoded, write_lock)
-                except (ConnectionClosed, OSError, NativeHostError):
+                except ConnectionClosed, OSError, NativeHostError:
                     pass
                 finally:
                     stopped.set()
@@ -95,10 +99,10 @@ def run_native_host(runtime_file: Path) -> int:
                 parse_envelope(message)
                 websocket.send(message.decode("utf-8"))
             stopped.set()
-            websocket.close(1000, "Native host encerrado")
+            websocket.close(1000, "Native host closed")
             reader.join(timeout=2)
         return 0
-    except (OSError, ConnectionClosed, TimeoutError, ProtocolError, NativeHostError):
+    except OSError, ConnectionClosed, TimeoutError, ProtocolError, NativeHostError:
         return 4
 
 
@@ -107,4 +111,3 @@ def main(runtime_file: Path | None = None) -> int:
         base = Path.home() / "AppData" / "Local" / "Zenless"
         runtime_file = base / "runtime.json"
     return run_native_host(runtime_file)
-

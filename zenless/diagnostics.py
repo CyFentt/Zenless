@@ -67,8 +67,6 @@ Subscriber = Callable[[DiagnosticEvent], None]
 
 
 class ErrorBus:
-    """Small structured error bus with bounded memory and rotating files."""
-
     def __init__(self, log_root: Path, *, max_recent: int = 200) -> None:
         self.log_root = log_root
         self.log_root.mkdir(parents=True, exist_ok=True)

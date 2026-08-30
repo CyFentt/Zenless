@@ -30,8 +30,6 @@ class StorageUsage:
 
 
 class StorageManager:
-    """Bounded local storage accounting and conservative cleanup."""
-
     _TEMP_SUFFIXES = {".tmp", ".part", ".download", ".crdownload"}
     _CACHE_NAMES = {"Cache", "Code Cache", "GPUCache", "DawnCache", "GrShaderCache"}
 
@@ -41,12 +39,6 @@ class StorageManager:
         self.temp_root.mkdir(parents=True, exist_ok=True)
 
     def cleanup_temporary(self, *, older_than_seconds: float = 24 * 60 * 60) -> tuple[int, int]:
-        """Remove only known temporary files below Zenless/tmp.
-
-        Returns (file_count, bytes_removed). Authentication/profile data is never
-        traversed by this operation.
-        """
-
         cutoff = time.time() - max(60.0, older_than_seconds)
         removed = 0
         bytes_removed = 0
@@ -66,8 +58,6 @@ class StorageManager:
         return removed, bytes_removed
 
     def cleanup_browser_cache(self, profile_root: Path) -> tuple[int, int]:
-        """Explicit cache-only cleanup; call only while the browser is stopped."""
-
         profile = profile_root.resolve()
         if not self._is_within(profile, self.data_root):
             raise ValueError("Browser profile must remain inside the Zenless data directory.")

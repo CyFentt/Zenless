@@ -40,7 +40,7 @@ def run_web_app(
         import webview
 
         window = webview.create_window(
-            "Zenless — By Fentalware",
+            "Zenless",
             url=url,
             width=1420,
             height=880,
@@ -50,7 +50,7 @@ def run_web_app(
             text_select=True,
         )
         if window is None:
-            raise RuntimeError("WebView2 não criou a janela principal.")
+            raise RuntimeError("The embedded browser did not create the main window.")
 
         def after_start() -> None:
             if ui_ready is not None:

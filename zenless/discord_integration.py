@@ -16,8 +16,6 @@ class DiscordStatus:
 
 
 class DiscordIntegration:
-    """Optional webhook notifications. Zenless never bundles a token or self-bots."""
-
     def __init__(
         self,
         webhook_url: str = "",
@@ -64,4 +62,3 @@ class DiscordIntegration:
         except (OSError, URLError) as exc:
             if self._error_callback is not None:
                 self._error_callback(exc)
-

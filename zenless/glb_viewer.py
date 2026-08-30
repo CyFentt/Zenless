@@ -5,7 +5,7 @@ import math
 import struct
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, cast
 
 Vec3 = tuple[float, float, float]
 Face = tuple[int, int, int]
@@ -30,7 +30,7 @@ class MeshData:
 
     @property
     def center(self) -> Vec3:
-        return tuple((low + high) * 0.5 for low, high in zip(self.minimum, self.maximum))  # type: ignore[return-value]
+        return cast(Vec3, tuple((low + high) * 0.5 for low, high in zip(self.minimum, self.maximum)))
 
     @property
     def radius(self) -> float:
@@ -52,24 +52,36 @@ _COMPONENTS: dict[int, tuple[str, int]] = {
 }
 _ARITY = {"SCALAR": 1, "VEC2": 2, "VEC3": 3, "VEC4": 4, "MAT2": 4, "MAT3": 9, "MAT4": 16}
 _IDENTITY: Matrix4 = (
-    1.0, 0.0, 0.0, 0.0,
-    0.0, 1.0, 0.0, 0.0,
-    0.0, 0.0, 1.0, 0.0,
-    0.0, 0.0, 0.0, 1.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
 )
 
 
 def load_glb(path: Path | str, *, max_vertices: int = 250_000, max_faces: int = 250_000) -> MeshData:
     source = Path(path).expanduser().resolve()
     if not source.is_file():
-        raise GLBError(f"Arquivo GLB não encontrado: {source}")
+        raise GLBError(f"GLB file not found: {source}")
     size = source.stat().st_size
     if size < 20 or size > MAX_GLB_BYTES:
-        raise GLBError("O GLB está vazio, truncado ou excede 512 MiB.")
+        raise GLBError("The GLB is empty, truncated, or larger than 512 MiB.")
     raw = source.read_bytes()
     magic, version, declared_length = struct.unpack_from("<4sII", raw, 0)
     if magic != b"glTF" or version != 2 or declared_length != len(raw):
-        raise GLBError("Cabeçalho GLB 2.0 inválido.")
+        raise GLBError("Invalid GLB 2.0 header.")
 
     document: dict[str, Any] | None = None
     binary = b""
@@ -79,32 +91,32 @@ def load_glb(path: Path | str, *, max_vertices: int = 250_000, max_faces: int = 
         offset += 8
         end = offset + chunk_length
         if chunk_length < 0 or end > len(raw):
-            raise GLBError("Chunk GLB truncado.")
+            raise GLBError("Truncated GLB chunk.")
         payload = raw[offset:end]
         offset = end
         if chunk_type == JSON_CHUNK and document is None:
             try:
                 value = json.loads(payload.rstrip(b" \t\r\n\0").decode("utf-8"))
             except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-                raise GLBError("Chunk JSON do GLB é inválido.") from exc
+                raise GLBError("Invalid GLB JSON chunk.") from exc
             if not isinstance(value, dict):
-                raise GLBError("Documento glTF precisa ser um objeto JSON.")
+                raise GLBError("The glTF document must be a JSON object.")
             document = value
         elif chunk_type == BIN_CHUNK and not binary:
             binary = payload
     if document is None or not binary:
-        raise GLBError("GLB sem os chunks JSON/BIN obrigatórios.")
+        raise GLBError("GLB is missing required JSON or BIN chunks.")
 
     vertices: list[Vec3] = []
     faces: list[Face] = []
     meshes = document.get("meshes") or []
     nodes = document.get("nodes") or []
     if not isinstance(meshes, list) or not meshes:
-        raise GLBError("GLB não contém meshes.")
+        raise GLBError("GLB contains no meshes.")
 
     def emit_mesh(mesh_index: int, transform: Matrix4) -> None:
         if not 0 <= mesh_index < len(meshes) or not isinstance(meshes[mesh_index], dict):
-            raise GLBError("Nó referencia um mesh inexistente.")
+            raise GLBError("A node references a missing mesh.")
         primitives = meshes[mesh_index].get("primitives") or []
         for primitive in primitives:
             if not isinstance(primitive, dict):
@@ -115,11 +127,11 @@ def load_glb(path: Path | str, *, max_vertices: int = 250_000, max_faces: int = 
                 continue
             positions = _read_accessor(document, binary, position_index)
             if len(vertices) + len(positions) > max_vertices:
-                raise GLBError(f"GLB excede o limite de {max_vertices:,} vértices.")
+                raise GLBError(f"GLB exceeds the {max_vertices:,} vertex limit.")
             base = len(vertices)
             for value in positions:
                 if not isinstance(value, tuple) or len(value) < 3:
-                    raise GLBError("Accessor POSITION não é VEC3.")
+                    raise GLBError("POSITION accessor is not VEC3.")
                 vertices.append(_transform_point(transform, (float(value[0]), float(value[1]), float(value[2]))))
 
             index_accessor = primitive.get("indices")
@@ -131,9 +143,9 @@ def load_glb(path: Path | str, *, max_vertices: int = 250_000, max_faces: int = 
             mode = int(primitive.get("mode", 4))
             for a, b, c in _triangles(indices, mode):
                 if min(a, b, c) < 0 or max(a, b, c) >= len(positions):
-                    raise GLBError("Índice de triângulo fora do accessor POSITION.")
+                    raise GLBError("Triangle index is outside the POSITION accessor.")
                 if len(faces) >= max_faces:
-                    raise GLBError(f"GLB excede o limite de {max_faces:,} faces.")
+                    raise GLBError(f"GLB exceeds the {max_faces:,} face limit.")
                 if a != b and b != c and a != c:
                     faces.append((base + a, base + b, base + c))
 
@@ -155,9 +167,9 @@ def load_glb(path: Path | str, *, max_vertices: int = 250_000, max_faces: int = 
 
         def visit(node_index: int, parent: Matrix4, chain: frozenset[int]) -> None:
             if node_index in chain:
-                raise GLBError("Ciclo detectado na hierarquia de nodes.")
+                raise GLBError("Cycle detected in the node hierarchy.")
             if not 0 <= node_index < len(nodes) or not isinstance(nodes[node_index], dict):
-                raise GLBError("Scene referencia node inexistente.")
+                raise GLBError("The scene references a missing node.")
             node = nodes[node_index]
             transform = _matrix_multiply(parent, _node_matrix(node))
             mesh_index = node.get("mesh")
@@ -175,10 +187,10 @@ def load_glb(path: Path | str, *, max_vertices: int = 250_000, max_faces: int = 
             emit_mesh(index, _IDENTITY)
 
     if not vertices or not faces:
-        raise GLBError("Nenhuma geometria triangular renderizável foi encontrada.")
-    minimum = tuple(min(vertex[axis] for vertex in vertices) for axis in range(3))
-    maximum = tuple(max(vertex[axis] for vertex in vertices) for axis in range(3))
-    return MeshData(source.name, tuple(vertices), tuple(faces), minimum, maximum)  # type: ignore[arg-type]
+        raise GLBError("No renderable triangle geometry was found.")
+    minimum = cast(Vec3, tuple(min(vertex[axis] for vertex in vertices) for axis in range(3)))
+    maximum = cast(Vec3, tuple(max(vertex[axis] for vertex in vertices) for axis in range(3)))
+    return MeshData(source.name, tuple(vertices), tuple(faces), minimum, maximum)
 
 
 def project_triangles(
@@ -236,34 +248,34 @@ def _read_accessor(document: dict[str, Any], binary: bytes, index: int) -> list[
     accessors = document.get("accessors") or []
     views = document.get("bufferViews") or []
     if not isinstance(accessors, list) or not 0 <= index < len(accessors) or not isinstance(accessors[index], dict):
-        raise GLBError("Accessor inexistente.")
+        raise GLBError("Accessor does not exist.")
     accessor = accessors[index]
     if accessor.get("sparse"):
-        raise GLBError("Accessors sparse ainda não são suportados no preview local.")
+        raise GLBError("Sparse accessors are not supported by the local preview.")
     view_index = accessor.get("bufferView")
     if not isinstance(view_index, int) or not isinstance(views, list) or not 0 <= view_index < len(views):
-        raise GLBError("Accessor sem bufferView válido.")
+        raise GLBError("Accessor has no valid bufferView.")
     view = views[view_index]
     if not isinstance(view, dict) or int(view.get("buffer", 0)) != 0:
-        raise GLBError("O preview GLB suporta apenas o buffer binário embutido.")
+        raise GLBError("GLB preview supports only the embedded binary buffer.")
     component = int(accessor.get("componentType", 0))
     kind = str(accessor.get("type", ""))
     if component not in _COMPONENTS or kind not in _ARITY:
-        raise GLBError("Formato de accessor não suportado.")
+        raise GLBError("Unsupported accessor format.")
     fmt, component_size = _COMPONENTS[component]
     arity = _ARITY[kind]
     count = int(accessor.get("count", 0))
     if count < 0:
-        raise GLBError("Accessor com count inválido.")
+        raise GLBError("Accessor count is invalid.")
     unpacker = struct.Struct("<" + fmt * arity)
     stride = int(view.get("byteStride", unpacker.size))
     if stride < unpacker.size:
-        raise GLBError("byteStride menor que o item do accessor.")
+        raise GLBError("byteStride is smaller than the accessor item.")
     start = int(view.get("byteOffset", 0)) + int(accessor.get("byteOffset", 0))
     view_end = int(view.get("byteOffset", 0)) + int(view.get("byteLength", len(binary)))
     last_end = start if count == 0 else start + (count - 1) * stride + unpacker.size
     if start < 0 or last_end > len(binary) or last_end > view_end:
-        raise GLBError("Accessor excede o buffer binário.")
+        raise GLBError("Accessor exceeds the binary buffer.")
     values: list[Any] = []
     for item in range(count):
         decoded = unpacker.unpack_from(binary, start + item * stride)
@@ -292,7 +304,9 @@ def _node_matrix(node: dict[str, Any]) -> Matrix4:
     raw_translation = node.get("translation")
     raw_scale = node.get("scale")
     raw_rotation = node.get("rotation")
-    translation = raw_translation if isinstance(raw_translation, list) and len(raw_translation) >= 3 else [0.0, 0.0, 0.0]
+    translation = (
+        raw_translation if isinstance(raw_translation, list) and len(raw_translation) >= 3 else [0.0, 0.0, 0.0]
+    )
     scale = raw_scale if isinstance(raw_scale, list) and len(raw_scale) >= 3 else [1.0, 1.0, 1.0]
     rotation = raw_rotation if isinstance(raw_rotation, list) and len(raw_rotation) >= 4 else [0.0, 0.0, 0.0, 1.0]
     x, y, z, w = (float(rotation[index]) for index in range(4))
@@ -301,10 +315,22 @@ def _node_matrix(node: dict[str, Any]) -> Matrix4:
     sx, sy, sz = (float(scale[index]) for index in range(3))
     tx, ty, tz = (float(translation[index]) for index in range(3))
     return (
-        (1 - 2 * y * y - 2 * z * z) * sx, (2 * x * y - 2 * z * w) * sy, (2 * x * z + 2 * y * w) * sz, tx,
-        (2 * x * y + 2 * z * w) * sx, (1 - 2 * x * x - 2 * z * z) * sy, (2 * y * z - 2 * x * w) * sz, ty,
-        (2 * x * z - 2 * y * w) * sx, (2 * y * z + 2 * x * w) * sy, (1 - 2 * x * x - 2 * y * y) * sz, tz,
-        0.0, 0.0, 0.0, 1.0,
+        (1 - 2 * y * y - 2 * z * z) * sx,
+        (2 * x * y - 2 * z * w) * sy,
+        (2 * x * z + 2 * y * w) * sz,
+        tx,
+        (2 * x * y + 2 * z * w) * sx,
+        (1 - 2 * x * x - 2 * z * z) * sy,
+        (2 * y * z - 2 * x * w) * sz,
+        ty,
+        (2 * x * z - 2 * y * w) * sx,
+        (2 * y * z + 2 * x * w) * sy,
+        (1 - 2 * x * x - 2 * y * y) * sz,
+        tz,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
     )
 
 

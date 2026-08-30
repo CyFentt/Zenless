@@ -3,6 +3,7 @@ import { useStore } from '@/store';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { AppShell } from '@/components/AppShell';
 import { SplashScreen } from '@/features/boot/SplashScreen';
+import { AppRuntime } from '@/runtime/AppRuntime';
 
 const HomePage = lazy(() => import('@/features/home/HomePage').then((m) => ({ default: m.HomePage })));
 const ChatPage = lazy(() => import('@/features/chat/ChatPage').then((m) => ({ default: m.ChatPage })));
@@ -30,19 +31,14 @@ function PageRouter() {
 function App() {
   const booted = useStore((s) => s.booted);
 
-  if (!booted) {
-    return (
-      <ErrorBoundary>
-        <SplashScreen />
-      </ErrorBoundary>
-    );
-  }
-
   return (
     <ErrorBoundary>
-      <AppShell>
-        <PageRouter />
-      </AppShell>
+      <AppRuntime />
+      {booted ? (
+        <AppShell>
+          <PageRouter />
+        </AppShell>
+      ) : <SplashScreen />}
     </ErrorBoundary>
   );
 }

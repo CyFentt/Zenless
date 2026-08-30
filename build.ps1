@@ -7,27 +7,27 @@ $previousMockMode = [Environment]::GetEnvironmentVariable("VITE_ZENLESS_MOCK", "
 Push-Location -LiteralPath $projectRoot
 try {
     python -m ruff check .
-    if ($LASTEXITCODE -ne 0) { throw "Ruff falhou com código $LASTEXITCODE." }
+    if ($LASTEXITCODE -ne 0) { throw "Ruff failed with exit code $LASTEXITCODE." }
 
     python -m pyright
-    if ($LASTEXITCODE -ne 0) { throw "Pyright falhou com código $LASTEXITCODE." }
+    if ($LASTEXITCODE -ne 0) { throw "Pyright failed with exit code $LASTEXITCODE." }
 
     python -m pytest -o addopts= -q
-    if ($LASTEXITCODE -ne 0) { throw "Pytest falhou com código $LASTEXITCODE." }
+    if ($LASTEXITCODE -ne 0) { throw "Pytest failed with exit code $LASTEXITCODE." }
 
     Push-Location -LiteralPath (Join-Path $projectRoot "frontend")
     try {
         npm ci
-        if ($LASTEXITCODE -ne 0) { throw "npm ci falhou com código $LASTEXITCODE." }
+        if ($LASTEXITCODE -ne 0) { throw "npm ci failed with exit code $LASTEXITCODE." }
         $env:VITE_ZENLESS_MOCK = "false"
         npm run lint
-        if ($LASTEXITCODE -ne 0) { throw "ESLint falhou com código $LASTEXITCODE." }
+        if ($LASTEXITCODE -ne 0) { throw "ESLint failed with exit code $LASTEXITCODE." }
         npm run typecheck
-        if ($LASTEXITCODE -ne 0) { throw "TypeScript falhou com código $LASTEXITCODE." }
+        if ($LASTEXITCODE -ne 0) { throw "TypeScript failed with exit code $LASTEXITCODE." }
         npm run test
-        if ($LASTEXITCODE -ne 0) { throw "Vitest falhou com código $LASTEXITCODE." }
+        if ($LASTEXITCODE -ne 0) { throw "Vitest failed with exit code $LASTEXITCODE." }
         npm run build
-        if ($LASTEXITCODE -ne 0) { throw "Vite falhou com código $LASTEXITCODE." }
+        if ($LASTEXITCODE -ne 0) { throw "Vite failed with exit code $LASTEXITCODE." }
     }
     finally {
         if ($null -eq $previousMockMode) {
@@ -41,10 +41,10 @@ try {
 
     python -m PyInstaller --clean --noconfirm Zenless.spec
     if ($LASTEXITCODE -ne 0) {
-        throw "PyInstaller falhou com código $LASTEXITCODE."
+        throw "PyInstaller failed with exit code $LASTEXITCODE."
     }
 
-    Write-Host "Build concluído:"
+    Write-Host "Build complete:"
     Write-Host (Join-Path $distRoot "Zenless.exe")
 }
 finally {
