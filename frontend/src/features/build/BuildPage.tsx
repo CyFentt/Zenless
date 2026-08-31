@@ -7,7 +7,7 @@ import { Modal } from '@/components/Modal';
 import { Tooltip } from '@/components/Tooltip';
 import { DiffViewer } from './DiffViewer';
 import { Check, X, RefreshCw, Lock, Unlock, Eye, FileCode, CheckCircle, AlertTriangle, ShieldAlert } from 'lucide-react';
-import type { ContextItem, ChangedFile, Review, Job } from '@/types';
+import type { ContextItem, Review, Job } from '@/types';
 
 type BuildTab = 'context' | 'changes' | 'history';
 

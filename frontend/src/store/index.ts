@@ -62,6 +62,8 @@ interface AppState {
   bootSteps: BootStep[];
   activePage: string;
   setActivePage: (page: string) => void;
+  navigationTarget: { page: string; tab?: string; artifactId?: string; fileId?: string } | null;
+  setNavigationTarget: (target: { page: string; tab?: string; artifactId?: string; fileId?: string } | null) => void;
   socketStatus: SocketStatus;
   connections: ConnectionInfo;
   agents: AgentInfo[];
@@ -160,8 +162,10 @@ export const useStore = create<AppState>((set) => ({
   bootError: '',
   bootSteps: [],
 
-  activePage: 'home',
+  activePage: 'chat',
   setActivePage: (page) => set({ activePage: page }),
+  navigationTarget: null,
+  setNavigationTarget: (target) => set({ navigationTarget: target }),
 
   socketStatus: 'DISCONNECTED',
 

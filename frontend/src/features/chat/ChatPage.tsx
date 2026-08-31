@@ -225,20 +225,26 @@ export function ChatPage() {
     await getApi().regenerateTexture(jobId);
   };
 
-  // Deep Link Handlers
-  const openBuildPage = (jobId: string) => {
+  const setNavigationTarget = useStore((s) => s.setNavigationTarget);
+
+  // Deep Link Handlers with Navigation Targets
+  const openBuildPage = (jobId: string, tab: string = 'changes') => {
     setCurrentJobId(jobId);
+    setNavigationTarget({ page: 'build', tab });
     setActivePage('build');
   };
-  const openVisualPage = (jobId: string) => {
+  const openVisualPage = (jobId: string, tab: string = 'views') => {
     setCurrentJobId(jobId);
+    setNavigationTarget({ page: 'visual', tab });
     setActivePage('visual');
   };
   const openTestPage = (jobId: string) => {
     setCurrentJobId(jobId);
+    setNavigationTarget({ page: 'test' });
     setActivePage('test');
   };
-  const openSettingsPage = () => {
+  const openSettingsPage = (tab: string = 'logs') => {
+    setNavigationTarget({ page: 'settings', tab });
     setActivePage('settings');
   };
 
@@ -270,7 +276,7 @@ export function ChatPage() {
                   <ChatActivityGroup
                     key={item.id}
                     activities={jobActivities}
-                    onOpenContext={() => currentJobId && openBuildPage(currentJobId)}
+                onOpenContext={() => currentJobId && openBuildPage(currentJobId, 'context')}
                   />
                 );
               }
@@ -282,7 +288,7 @@ export function ChatPage() {
                     onApprove={handleApproveChanges}
                     onReject={handleRejectChanges}
                     onRequestRevision={handleRequestRevision}
-                    onOpenDiff={openBuildPage}
+                    onOpenDiff={(j) => openBuildPage(j, 'changes')}
                   />
                 );
               }
@@ -295,7 +301,7 @@ export function ChatPage() {
                     jobId={currentJobId ?? undefined}
                     onApproveVisual={handleApproveVisual}
                     onRegenerateVisual={handleRegenerateVisual}
-                    onOpenVisualPage={openVisualPage}
+                    onOpenVisualPage={(j) => openVisualPage(j, 'views')}
                   />
                 );
               }
@@ -325,7 +331,7 @@ export function ChatPage() {
                     onApproveModel={handleApproveModel}
                     onRegenerateGeometry={handleRegenerateGeometry}
                     onRegenerateTexture={handleRegenerateTexture}
-                    onOpenModelViewer={openVisualPage}
+                    onOpenModelViewer={(j) => openVisualPage(j, '3d')}
                   />
                 );
               }
@@ -347,7 +353,7 @@ export function ChatPage() {
                     source={item.diag.source}
                     message={item.diag.message}
                     detail={item.diag.probableCause}
-                    onOpenSettings={openSettingsPage}
+                    onOpenSettings={() => openSettingsPage('logs')}
                   />
                 );
               }

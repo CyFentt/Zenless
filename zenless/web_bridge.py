@@ -182,6 +182,7 @@ class LocalWebBridge:
 
         app.router.add_get("/api/jobs", self._sync_handler(self.core.jobs))
         app.router.add_get("/api/jobs/{job_id}", self._get_job)
+        app.router.add_get("/api/jobs/{job_id}/timeline", self._timeline)
         app.router.add_post("/api/jobs", self._create_job)
         app.router.add_post("/api/jobs/{job_id}/pause", self._pause_job)
         app.router.add_post("/api/jobs/{job_id}/resume", self._resume_job)
@@ -244,6 +245,9 @@ class LocalWebBridge:
 
     async def _get_job(self, request: web.Request) -> web.Response:
         return self._json(self.core.job(request.match_info["job_id"]))
+
+    async def _timeline(self, request: web.Request) -> web.Response:
+        return self._json(self.core.timeline(request.match_info["job_id"]))
 
     async def _create_job(self, request: web.Request) -> web.Response:
         body = await self._json_body(request)
