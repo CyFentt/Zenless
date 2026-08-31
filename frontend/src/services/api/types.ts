@@ -3,6 +3,8 @@ import type {
   Asset,
   BootStep,
   ChatMessage,
+  ChatActivity,
+  ChatArtifact,
   ChangedFile,
   ConnectionInfo,
   ContextItem,
@@ -16,9 +18,25 @@ import type {
   StudioNode,
   StudioState,
   TaskOptions,
+  TestCaseResult,
+  TestFailure,
+  TestLog,
   TestState,
   ViewTile,
 } from '@/types';
+
+export interface JobTimelineSnapshot {
+  jobId: string;
+  messages: ChatMessage[];
+  activities: ChatActivity[];
+  artifacts: ChatArtifact[];
+  test: {
+    testState: TestState;
+    cases: TestCaseResult[];
+    failures: TestFailure[];
+    logs?: TestLog[];
+  };
+}
 
 export interface ZenlessAPI {
   bootstrap(): Promise<{ steps: BootStep[] }>;
@@ -35,6 +53,7 @@ export interface ZenlessAPI {
   resumeJob(id: string): Promise<Job>;
   cancelJob(id: string): Promise<{ ok: boolean }>;
   getMessages(jobId: string): Promise<ChatMessage[]>;
+  getTimeline(jobId: string): Promise<JobTimelineSnapshot>;
 
   sendMessage(content: string, jobId?: string, attachments?: File[], options?: TaskOptions): Promise<{ messageId: string; jobId?: string }>;
   cancelGeneration(jobId: string): Promise<{ ok: boolean }>;

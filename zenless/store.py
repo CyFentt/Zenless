@@ -42,11 +42,11 @@ class SQLiteStore:
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
         connection.execute("PRAGMA busy_timeout = 10000")
-        connection.execute("PRAGMA journal_mode = WAL")
         return connection
 
     def _migrate(self) -> None:
         with self._migration_lock, closing(self._connect()) as connection:
+            connection.execute("PRAGMA journal_mode = WAL")
             connection.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS settings (
@@ -169,8 +169,39 @@ class SQLiteStore:
                 CREATE INDEX IF NOT EXISTS idx_tasks_updated ON tasks(updated_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_assets_job ON assets(job_id, created_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_context_job ON context_items(job_id, relevance DESC);
+                CREATE TABLE IF NOT EXISTS chat_activities (
+                    id TEXT PRIMARY KEY,
+                    job_id TEXT NOT NULL,
+                    phase TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    detail TEXT NOT NULL DEFAULT '',
+                    provider TEXT NOT NULL DEFAULT '',
+                    role TEXT NOT NULL DEFAULT '',
+                    timestamp INTEGER NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY(job_id) REFERENCES tasks(id) ON DELETE CASCADE
+                );
+
+                CREATE TABLE IF NOT EXISTS chat_artifacts (
+                    id TEXT PRIMARY KEY,
+                    job_id TEXT NOT NULL,
+                    type TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    state TEXT NOT NULL,
+                    preview_url TEXT NOT NULL DEFAULT '',
+                    content_url TEXT NOT NULL DEFAULT '',
+                    model_url TEXT NOT NULL DEFAULT '',
+                    metadata_json TEXT NOT NULL DEFAULT '{}',
+                    created_at INTEGER NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY(job_id) REFERENCES tasks(id) ON DELETE CASCADE
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_test_runs_job ON test_runs(job_id, started_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_test_cases_run ON test_cases(run_id, created_at);
+                CREATE INDEX IF NOT EXISTS idx_activities_job ON chat_activities(job_id, timestamp);
+                CREATE INDEX IF NOT EXISTS idx_artifacts_job ON chat_artifacts(job_id, created_at);
                 """
             )
             columns = {str(row["name"]) for row in connection.execute("PRAGMA table_info(tasks)")}
@@ -267,7 +298,7 @@ class SQLiteStore:
                 raise KeyError(f"Task not found: {task_id}")
             try:
                 context = json.loads(row["context_json"])
-            except TypeError, json.JSONDecodeError:
+            except (TypeError, json.JSONDecodeError):
                 context = {}
             if not isinstance(context, dict):
                 context = {}
@@ -584,6 +615,149 @@ class SQLiteStore:
                 ),
             )
 
+    def upsert_activity(
+        self,
+        activity_id: str,
+        job_id: str,
+        phase: str,
+        status: str,
+        title: str,
+        detail: str = "",
+        provider: str = "",
+        role: str = "",
+        timestamp: int | None = None,
+    ) -> dict[str, Any]:
+        ts = timestamp if timestamp is not None else int(datetime.now(UTC).timestamp() * 1000)
+        updated = now_iso()
+        with closing(self._connect()) as connection:
+            connection.execute(
+                """
+                INSERT INTO chat_activities(
+                    id, job_id, phase, status, title, detail, provider, role, timestamp, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    phase = excluded.phase,
+                    status = excluded.status,
+                    title = excluded.title,
+                    detail = excluded.detail,
+                    provider = excluded.provider,
+                    role = excluded.role,
+                    timestamp = excluded.timestamp,
+                    updated_at = excluded.updated_at
+                """,
+                (activity_id, job_id, phase, status, title, detail, provider, role, ts, updated),
+            )
+        return {
+            "id": activity_id,
+            "jobId": job_id,
+            "phase": phase,
+            "status": status,
+            "title": title,
+            "detail": detail,
+            "provider": provider,
+            "role": role,
+            "timestamp": ts,
+        }
+
+    def list_activities(self, job_id: str) -> list[dict[str, Any]]:
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                "SELECT * FROM chat_activities WHERE job_id = ? ORDER BY timestamp ASC", (job_id,)
+            ).fetchall()
+        return [
+            {
+                "id": str(row["id"]),
+                "jobId": str(row["job_id"]),
+                "phase": str(row["phase"]),
+                "status": str(row["status"]),
+                "title": str(row["title"]),
+                "detail": str(row["detail"]),
+                "provider": str(row["provider"]),
+                "role": str(row["role"]),
+                "timestamp": int(row["timestamp"]),
+            }
+            for row in rows
+        ]
+
+    def upsert_artifact(
+        self,
+        artifact_id: str,
+        job_id: str,
+        artifact_type: str,
+        name: str,
+        state: str,
+        preview_url: str = "",
+        content_url: str = "",
+        model_url: str = "",
+        metadata: dict[str, Any] | None = None,
+        created_at: int | None = None,
+    ) -> dict[str, Any]:
+        ts = created_at if created_at is not None else int(datetime.now(UTC).timestamp() * 1000)
+        updated = now_iso()
+        meta_json = json.dumps(metadata or {}, ensure_ascii=False)
+        with closing(self._connect()) as connection:
+            connection.execute(
+                """
+                INSERT INTO chat_artifacts(
+                    id, job_id, type, name, state, preview_url, content_url, model_url, metadata_json, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    type = excluded.type,
+                    name = excluded.name,
+                    state = excluded.state,
+                    preview_url = excluded.preview_url,
+                    content_url = excluded.content_url,
+                    model_url = excluded.model_url,
+                    metadata_json = excluded.metadata_json,
+                    updated_at = excluded.updated_at
+                """,
+                (artifact_id, job_id, artifact_type, name, state, preview_url, content_url, model_url, meta_json, ts, updated),
+            )
+        return {
+            "id": artifact_id,
+            "jobId": job_id,
+            "type": artifact_type,
+            "name": name,
+            "state": state,
+            "previewUrl": preview_url,
+            "contentUrl": content_url,
+            "modelUrl": model_url,
+            "metadata": metadata or {},
+            "createdAt": ts,
+        }
+
+    def list_artifacts(self, job_id: str) -> list[dict[str, Any]]:
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                "SELECT * FROM chat_artifacts WHERE job_id = ? ORDER BY created_at ASC", (job_id,)
+            ).fetchall()
+        result = []
+        for row in rows:
+            raw = dict(row)
+            item = self._decode_json_column(raw, "metadata_json", "metadata")
+            result.append(
+                {
+                    "id": str(item["id"]),
+                    "jobId": str(item["job_id"]),
+                    "type": str(item["type"]),
+                    "name": str(item["name"]),
+                    "state": str(item["state"]),
+                    "previewUrl": str(item["preview_url"]),
+                    "contentUrl": str(item["content_url"]),
+                    "modelUrl": str(item["model_url"]),
+                    "metadata": item["metadata"],
+                    "createdAt": int(item["created_at"]),
+                }
+            )
+        return result
+
+    def test_cases(self, run_id: str) -> list[dict[str, Any]]:
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                "SELECT * FROM test_cases WHERE run_id = ? ORDER BY created_at", (run_id,)
+            ).fetchall()
+        return [self._decode_json_column(dict(row), "details_json", "details") for row in rows]
+
     def latest_test_run(self, job_id: str) -> dict[str, Any] | None:
         with closing(self._connect()) as connection:
             row = connection.execute(
@@ -629,6 +803,6 @@ class SQLiteStore:
         raw = data.pop(source, "{}")
         try:
             data[target] = json.loads(raw)
-        except TypeError, json.JSONDecodeError:
+        except (TypeError, json.JSONDecodeError):
             data[target] = {}
         return data

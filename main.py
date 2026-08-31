@@ -74,7 +74,9 @@ def main() -> int:
             try:
                 import ctypes
 
-                ctypes.windll.user32.MessageBoxW(0, f"Zenless failed to start:\n{exc}", "Zenless", 0x10)
+                windll = getattr(ctypes, "windll", None)
+                if windll is not None:
+                    windll.user32.MessageBoxW(0, f"Zenless failed to start:\n{exc}", "Zenless", 0x10)
             except Exception:
                 pass
             return 1

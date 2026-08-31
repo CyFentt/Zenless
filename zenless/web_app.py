@@ -58,14 +58,17 @@ def run_web_app(
             if smoke_test:
                 threading.Timer(6.0, window.destroy).start()
 
-        webview.start(
-            after_start,
-            gui="edgechromium",
-            debug=False,
-            private_mode=False,
-            storage_path=str(data_root / "ui-profile"),
-            icon=str(resource_root / "assets" / "zenless.ico"),
-        )
+        icon_path = resource_root / "assets" / "zenless.ico"
+        kwargs = {
+            "gui": "edgechromium",
+            "debug": False,
+            "private_mode": False,
+            "storage_path": str(data_root / "ui-profile"),
+        }
+        if icon_path.is_file():
+            kwargs["icon"] = str(icon_path)
+
+        webview.start(after_start, **kwargs)
         return 0
     finally:
         bridge.stop()

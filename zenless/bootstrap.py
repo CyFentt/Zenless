@@ -103,20 +103,22 @@ class NativeSplash:
         with self._lock:
             self._stage = text[:180]
             hwnd = self._hwnd
-        if hwnd:
-            ctypes.windll.user32.PostMessageW(hwnd, self._WM_REDRAW, 0, 0)
+        if hwnd and hasattr(ctypes, "windll"):
+            ctypes.windll.user32.PostMessageW(hwnd, self._WM_REDRAW, 0, 0) # type: ignore[attr-defined]
 
     def close(self) -> None:
         with self._lock:
             hwnd = self._hwnd
-        if hwnd:
-            ctypes.windll.user32.PostMessageW(hwnd, self._WM_CLOSE_SPLASH, 0, 0)
+        if hwnd and hasattr(ctypes, "windll"):
+            ctypes.windll.user32.PostMessageW(hwnd, self._WM_CLOSE_SPLASH, 0, 0) # type: ignore[attr-defined]
         self._closed.wait(2.0)
 
     def _run(self) -> None:
-        user32 = ctypes.windll.user32
-        gdi32 = ctypes.windll.gdi32
-        kernel32 = ctypes.windll.kernel32
+        if not hasattr(ctypes, "windll"):
+            return
+        user32 = ctypes.windll.user32 # type: ignore[attr-defined]
+        gdi32 = ctypes.windll.gdi32 # type: ignore[attr-defined]
+        kernel32 = ctypes.windll.kernel32 # type: ignore[attr-defined]
         lresult = ctypes.c_ssize_t
         user32.CreateWindowExW.argtypes = [
             wintypes.DWORD,
@@ -164,7 +166,7 @@ class NativeSplash:
         gdi32.SetBkMode.restype = ctypes.c_int
         gdi32.SetTextColor.argtypes = [wintypes.HDC, wintypes.DWORD]
         gdi32.SetTextColor.restype = wintypes.DWORD
-        wndproc_type = ctypes.WINFUNCTYPE(
+        wndproc_type = getattr(ctypes, "WINFUNCTYPE", ctypes.CFUNCTYPE)(
             lresult,
             wintypes.HWND,
             wintypes.UINT,

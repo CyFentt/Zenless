@@ -7,10 +7,19 @@ export function TopBar() {
   const connections = useStore((s) => s.connections);
   const agents = useStore((s) => s.agents);
   const socketStatus = useStore((s) => s.socketStatus);
+  const studioState = useStore((s) => s.studioState);
+  const studioTree = useStore((s) => s.studioTree);
 
   const currentJob = jobs.find((j) => j.id === currentJobId);
   const chatgpt = agents.find((a) => a.id === 'chatgpt');
-  const studioStatus = connections.studio;
+
+  // Resolve project name from root studio tree node if present
+  const rootNode = studioTree.length > 0 ? studioTree[0] : null;
+  const projectName = rootNode ? rootNode.name : null;
+  const displayProject =
+    studioState === 'ONLINE'
+      ? (projectName ? projectName.toUpperCase() : 'DETECTING PROJECT')
+      : 'NO PROJECT';
 
   const stageLabels: Record<string, string> = {
     COLLECTING_CONTEXT: 'CONTEXT',
@@ -29,7 +38,7 @@ export function TopBar() {
       <div className="flex items-center gap-3">
         <span className="text-ink-300">PROJECT</span>
         <span className="text-ink-50">/</span>
-        <span className="text-ink-0 font-medium">ARENA</span>
+        <span className="text-ink-0 font-medium">{displayProject}</span>
         {currentJob && (
           <>
             <span className="text-ink-600">·</span>
@@ -42,13 +51,13 @@ export function TopBar() {
       <div className="flex items-center gap-4">
         {chatgpt && (
           <span className="flex items-center gap-1.5">
-            <span className="text-ink-300">Builder</span>
+            <span className="text-ink-300">ChatGPT · Builder</span>
             <StatusDot status={chatgpt.status} />
           </span>
         )}
         <span className="flex items-center gap-1.5">
           <span className="text-ink-300">Studio</span>
-          <StatusDot status={studioStatus} />
+          <StatusDot status={connections.studio} />
         </span>
         <span className="flex items-center gap-1.5">
           <span className="text-ink-300">WS</span>

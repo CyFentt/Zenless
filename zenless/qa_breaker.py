@@ -505,7 +505,7 @@ class QABreaker:
         try:
             raw = self.bridge.send_prompt("chatgpt", prompt, task_id=job_id, timeout=120)
             payload = extract_json_object(raw)
-        except MCPError, OrchestratorError, ProtocolError, RuntimeError, ValueError:
+        except (MCPError, OrchestratorError, ProtocolError, RuntimeError, ValueError):
             return []
         scenarios = payload.get("scenarios", [])
         return [str(item).strip()[:300] for item in scenarios if str(item).strip()][:4]

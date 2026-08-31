@@ -64,7 +64,7 @@ class _UnavailableStudio:
 def _milliseconds(value: str) -> int:
     try:
         return int(datetime.fromisoformat(value).timestamp() * 1000)
-    except TypeError, ValueError:
+    except (TypeError, ValueError):
         return int(time.time() * 1000)
 
 
@@ -379,6 +379,24 @@ class ZenlessCore:
                 details={"provider": provider},
             )
 
+    def timeline(self, job_id: str) -> dict[str, Any]:
+        self._require_task(job_id)
+        messages = self.messages(job_id)
+        activities = self.store.list_activities(job_id)
+        artifacts = self.store.list_artifacts(job_id)
+        latest_run = self.store.latest_test_run(job_id)
+        test_data = {"testState": self.test_state(job_id), "cases": [], "failures": []}
+        if latest_run:
+            run_id = str(latest_run["id"])
+            test_data["cases"] = self.store.test_cases(run_id) if hasattr(self.store, "test_cases") else []
+        return {
+            "jobId": job_id,
+            "messages": messages,
+            "activities": activities,
+            "artifacts": artifacts,
+            "test": test_data,
+        }
+
     def messages(self, job_id: str) -> list[dict[str, Any]]:
         result = []
         for row in self.store.task_messages(job_id):
@@ -542,7 +560,10 @@ class ZenlessCore:
     def approve_visual(self, job_id: str) -> bool:
         if not self.orchestrator.approve_active(job_id, ("visual",), "approve"):
             raise CoreError("NO_VISUAL_GATE", "No visual concept is waiting for approval.", status=409)
-        self.events.publish("VISUAL_APPROVED", {"view": "FRONT"})
+        self.events.publish("VISUAL_APPROVED", {
+            "jobId": job_id,
+            "views": ["FRONT", "BACK", "LEFT", "RIGHT", "TOP", "BOTTOM"]
+        })
         return True
 
     def edit_visual(self, job_id: str, prompt: str) -> bool:
@@ -904,17 +925,17 @@ class ZenlessCore:
         if event.kind == "stream_start":
             self.events.publish(
                 "CHAT_STREAM_STARTED",
-                {"messageId": event.message, "jobId": event.task_id, "provider": event.detail},
+                {"jobId": event.task_id, "messageId": event.message, "provider": event.detail},
             )
             return
         if event.kind == "stream_delta":
             self.events.publish(
                 "CHAT_STREAM_DELTA",
-                {"messageId": event.message, "delta": event.detail},
+                {"jobId": event.task_id, "messageId": event.message, "delta": event.detail},
             )
             return
         if event.kind == "stream_finish":
-            self.events.publish("CHAT_STREAM_FINISHED", {"messageId": event.message})
+            self.events.publish("CHAT_STREAM_FINISHED", {"jobId": event.task_id, "messageId": event.message})
             return
         try:
             job = self.job(event.task_id)
@@ -928,15 +949,75 @@ class ZenlessCore:
             "PIPELINE_STATE_CHANGED",
             {"jobId": event.task_id, "stage": event.stage.value},
         )
+
+        # Emit ChatActivity
+        phase_map: dict[Stage, str] = {
+            Stage.COLLECTING_CONTEXT: "CONTEXT",
+            Stage.PLANNING: "PLAN",
+            Stage.GENERATING_CONCEPT: "CONCEPT",
+            Stage.WAITING_IMAGE_APPROVAL: "CONCEPT",
+            Stage.GENERATING_3D: "THREED",
+            Stage.WAITING_3D_APPROVAL: "THREED",
+            Stage.BUILDING: "BUILD",
+            Stage.REVIEWING: "REVIEW",
+            Stage.REVISING: "REVIEW",
+            Stage.WAITING_CHANGE_APPROVAL: "REVIEW",
+            Stage.APPLYING: "APPLY",
+            Stage.TESTING: "TEST",
+            Stage.FIXING: "BUILD",
+            Stage.FINAL_REVIEW: "FINAL",
+            Stage.COMPLETE: "FINAL",
+            Stage.FAILED: "FINAL",
+            Stage.BLOCKED: "FINAL",
+        }
+        phase = phase_map.get(event.stage, "PLAN")
+        act_status = "DONE" if event.stage in {Stage.COMPLETE, Stage.WAITING_CHANGE_APPROVAL, Stage.WAITING_IMAGE_APPROVAL, Stage.WAITING_3D_APPROVAL} else ("FAILED" if event.stage in {Stage.FAILED, Stage.BLOCKED} else "RUNNING")
+        activity_id = f"act_{event.task_id[:10]}_{phase.lower()}"
+        activity = self.store.upsert_activity(
+            activity_id=activity_id,
+            job_id=event.task_id,
+            phase=phase,
+            status=act_status,
+            title=event.message or f"Executing {phase}",
+            detail=event.detail,
+        )
+        self.events.publish("CHAT_ACTIVITY", {"activity": activity})
+
         if event.stage == Stage.WAITING_CHANGE_APPROVAL:
             self.events.publish("CHANGES_UPDATED", {"files": self.changes(event.task_id)})
-            self.events.publish("REVIEW_READY", {"review": self.review(event.task_id)})
+            rev = self.review(event.task_id)
+            self.events.publish("REVIEW_READY", {"review": rev})
+            diff_art = self.store.upsert_artifact(
+                artifact_id=f"art_diff_{event.task_id[:10]}",
+                job_id=event.task_id,
+                artifact_type="DIFF",
+                name="CODE CHANGES READY",
+                state="READY",
+                metadata={"risk": rev.get("risk"), "reviewer": rev.get("reviewer"), "decision": rev.get("decision"), "fileCount": len(rev.get("files", []))},
+            )
+            self.events.publish("CHAT_ARTIFACT", {"artifact": diff_art})
         elif event.stage == Stage.WAITING_IMAGE_APPROVAL:
-            self.events.publish("VISUAL_GENERATION_CHANGED", {"state": "READY"})
+            self.events.publish("VISUAL_GENERATION_CHANGED", {"jobId": event.task_id, "state": "READY"})
+            img_art = self.store.upsert_artifact(
+                artifact_id=f"art_img_{event.task_id[:10]}",
+                job_id=event.task_id,
+                artifact_type="IMAGE",
+                name="CONCEPT VISUAL READY",
+                state="READY",
+            )
+            self.events.publish("CHAT_ARTIFACT", {"artifact": img_art})
         elif event.stage == Stage.GENERATING_3D:
-            self.events.publish("MODEL_GENERATION_CHANGED", {"target": "geometry", "state": "GENERATING"})
+            self.events.publish("MODEL_GENERATION_CHANGED", {"jobId": event.task_id, "target": "geometry", "state": "GENERATING"})
         elif event.stage == Stage.WAITING_3D_APPROVAL:
             self._register_model_from_event(event)
+            model_art = self.store.upsert_artifact(
+                artifact_id=f"art_model_{event.task_id[:10]}",
+                job_id=event.task_id,
+                artifact_type="MODEL_3D",
+                name="3D MODEL READY",
+                state="READY",
+            )
+            self.events.publish("CHAT_ARTIFACT", {"artifact": model_art})
         elif event.stage == Stage.COMPLETE:
             self.events.publish("JOB_COMPLETE", {"jobId": event.task_id})
             task = self.store.load_task(event.task_id) or {}
@@ -973,7 +1054,7 @@ class ZenlessCore:
     def _register_model_from_event(self, event: PipelineEvent) -> None:
         try:
             payload = json.loads(event.detail)
-        except TypeError, json.JSONDecodeError:
+        except (TypeError, json.JSONDecodeError):
             payload = {}
         path_text = str(payload.get("path") or "") if isinstance(payload, dict) else ""
         if not path_text:
@@ -991,7 +1072,7 @@ class ZenlessCore:
         self.events.publish("ASSETS_UPDATED", {"assets": self.assets()})
         self.events.publish(
             "MODEL_READY",
-            {"modelUrl": f"/api/assets/{asset}/content", "filename": path.name},
+            {"jobId": event.task_id, "modelUrl": f"/api/assets/{asset}/content", "filename": path.name},
         )
 
     def _on_diagnostic(self, event: DiagnosticEvent) -> None:
@@ -1063,6 +1144,9 @@ class ZenlessCore:
                 "risk": str(options.get("risk_level", "medium")),
                 "revisions": int(options.get("max_revisions", 3)),
                 "fixAttempts": int(options.get("max_test_fixes", 3)),
+                "research": str(options.get("research", "AUTO")).upper(),
+                "effort": str(options.get("effort", "AUTO")).upper(),
+                "chatMode": str(options.get("chat_mode", options.get("chatMode", "PROJECT"))).upper(),
             },
             "fixAttempts": 0,
             "maxFixAttempts": int(options.get("max_test_fixes", 3)),

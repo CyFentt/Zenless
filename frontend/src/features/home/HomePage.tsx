@@ -80,7 +80,7 @@ export function HomePage() {
                 key={job.id}
                 onClick={() => {
                   setCurrentJobId(job.id);
-                  setActivePage("build");
+                  setActivePage("chat");
                 }}
                 className="flex items-center justify-between w-full px-3 h-8 border-b border-ink-700 hover:bg-ink-850 transition-colors group"
               >

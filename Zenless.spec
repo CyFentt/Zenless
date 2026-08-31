@@ -1,15 +1,21 @@
+import os
+
+datas = [
+    ("frontend/dist", "frontend/dist"),
+    ("README.md", "."),
+    ("NOTICE.md", "."),
+    ("LICENSE", "."),
+]
+if os.path.exists("assets"):
+    datas.append(("assets", "assets"))
+if os.path.exists("vendor"):
+    datas.append(("vendor", "vendor"))
+
 a = Analysis(
     ["main.py"],
     pathex=[],
     binaries=[],
-    datas=[
-        ("assets", "assets"),
-        ("vendor", "vendor"),
-        ("frontend/dist", "frontend/dist"),
-        ("README.md", "."),
-        ("NOTICE.md", "."),
-        ("LICENSE", "."),
-    ],
+    datas=datas,
     hiddenimports=[
         "clr",
         "webview.platforms.winforms",
@@ -58,5 +64,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=["assets/zenless.ico"],
+    **({"icon": ["assets/zenless.ico"]} if os.path.exists("assets/zenless.ico") else {})
 )

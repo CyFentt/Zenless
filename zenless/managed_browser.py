@@ -485,7 +485,7 @@ class ManagedBrowserController:
         capabilities = self._capabilities(page, self.provider_specs[command.provider])
         try:
             max_files = max(1, min(6, int(capabilities.get("max_image_inputs") or 1)))
-        except TypeError, ValueError:
+        except (TypeError, ValueError):
             max_files = 1
         if not files or len(files) > max_files:
             raise BridgeError(f"The provider accepts between 1 and {max_files} files in this session.")

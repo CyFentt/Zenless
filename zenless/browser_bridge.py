@@ -298,7 +298,7 @@ class BrowserBridge:
                 envelope = parse_envelope(raw)
                 session.last_seen = time.monotonic()
                 self._route_envelope(envelope)
-        except ConnectionClosed, TimeoutError:
+        except (ConnectionClosed, TimeoutError):
             pass
         except ProtocolError as exc:
             try:
@@ -379,5 +379,5 @@ class BrowserBridge:
             data = json.loads(self.runtime_file.read_text(encoding="utf-8"))
             if int(data.get("pid", -1)) == os.getpid():
                 self.runtime_file.unlink(missing_ok=True)
-        except OSError, ValueError, json.JSONDecodeError:
+        except (OSError, ValueError, json.JSONDecodeError):
             pass

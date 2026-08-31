@@ -11,7 +11,19 @@ import type { ConnectionInfo, Diagnostic, ModelCatalog, ModelSettings, ProviderI
 type SettingsTab = 'general' | 'models' | 'links' | 'logs';
 
 export function SettingsPage() {
+  const navigationTarget = useStore((s) => s.navigationTarget);
+  const setNavigationTarget = useStore((s) => s.setNavigationTarget);
   const [tab, setTab] = useState<SettingsTab>('general');
+
+  useEffect(() => {
+    if (navigationTarget?.page === 'settings' && navigationTarget.tab) {
+      if (navigationTarget.tab === 'general' || navigationTarget.tab === 'models' || navigationTarget.tab === 'links' || navigationTarget.tab === 'logs') {
+        setTab(navigationTarget.tab as SettingsTab);
+      }
+      setNavigationTarget(null);
+    }
+  }, [navigationTarget, setNavigationTarget]);
+
   const settings = useStore((s) => s.settings);
   const setSettings = useStore((s) => s.setSettings);
   const connections = useStore((s) => s.connections);

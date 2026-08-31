@@ -371,6 +371,7 @@ class ZenlessOrchestrator:
             objective,
             context,
             target.studio_id,
+            options,
             cancel_event,
         )
         proposal, review = self._review_and_revise(
@@ -541,18 +542,25 @@ class ZenlessOrchestrator:
         objective: str,
         context: dict[str, Any],
         studio_id: str,
+        options: TaskOptions,
         cancel_event: threading.Event,
     ) -> tuple[AgentProposal, list[dict[str, Any]]]:
         tools = self._tool_catalog()
         evidence: list[dict[str, Any]] = []
         seen_reads: set[str] = set()
         proposal: AgentProposal | None = None
-        for research_round in range(1, 3):
+
+        # Respect TaskOptions effort and research settings
+        max_rounds = 3 if options.effort == "max" else (1 if options.effort == "min" else 2)
+        if options.research == "on":
+            self._emit(task_id, Stage.COLLECTING_CONTEXT, "Research mode active: inspecting documentation and web resources.")
+
+        for research_round in range(1, max_rounds + 1):
             self._check_control(task_id, cancel_event)
             self._emit(
                 task_id,
                 Stage.CREATING,
-                f"Builder is creating the strategic plan (round {research_round}/2).",
+                f"Builder is creating the strategic plan (round {research_round}/{max_rounds}).",
             )
             prompt = principal_prompt(objective, context, tools, evidence, research_round)
             raw = self._send_agent_prompt("chatgpt", prompt, task_id=task_id)
@@ -565,7 +573,8 @@ class ZenlessOrchestrator:
             if not reads:
                 break
             unique_reads: list[ProposalAction] = []
-            for action in reads[:8]:
+            max_read_actions = 12 if options.effort == "max" else (4 if options.effort == "min" else 8)
+            for action in reads[:max_read_actions]:
                 key = json.dumps([action.tool, action.arguments], ensure_ascii=False, sort_keys=True, default=str)
                 if key in seen_reads:
                     continue
@@ -573,7 +582,7 @@ class ZenlessOrchestrator:
                 unique_reads.append(action)
             self._emit(task_id, Stage.COLLECTING_CONTEXT, "Running the reads requested by the builder.")
             evidence.extend(self._execute_read_actions(task_id, studio_id, unique_reads))
-            if research_round == 2:
+            if research_round == max_rounds:
                 proposal.actions = [action for action in proposal.actions if not is_read_only(action.tool)]
         if proposal is None:
             raise OrchestratorError("The builder did not produce a proposal.")
@@ -948,7 +957,7 @@ class ZenlessOrchestrator:
             )
         try:
             max_images = max(1, min(6, int(caps.get("max_image_inputs") or 1)))
-        except TypeError, ValueError:
+        except (TypeError, ValueError):
             max_images = 1
         references = references[:max_images]
         self._emit(

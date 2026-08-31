@@ -182,6 +182,7 @@ class LocalWebBridge:
 
         app.router.add_get("/api/jobs", self._sync_handler(self.core.jobs))
         app.router.add_get("/api/jobs/{job_id}", self._get_job)
+        app.router.add_get("/api/jobs/{job_id}/timeline", self._timeline)
         app.router.add_post("/api/jobs", self._create_job)
         app.router.add_post("/api/jobs/{job_id}/pause", self._pause_job)
         app.router.add_post("/api/jobs/{job_id}/resume", self._resume_job)
@@ -226,6 +227,10 @@ class LocalWebBridge:
         app.router.add_post("/api/jobs/{job_id}/test/stop", self._stop_test)
         app.router.add_get("/api/jobs/{job_id}/test/state", self._test_state)
 
+        app.router.add_get("/api/providers", self._providers)
+        app.router.add_get("/api/readiness", self._readiness)
+        app.router.add_get("/api/tools", self._tools)
+        app.router.add_get("/api/storage", self._storage)
         app.router.add_get("/api/settings", self._sync_handler(self.core.settings))
         app.router.add_patch("/api/settings", self._update_settings)
         app.router.add_get("/api/settings/models", self._sync_handler(self.core.model_catalog))
@@ -244,6 +249,9 @@ class LocalWebBridge:
 
     async def _get_job(self, request: web.Request) -> web.Response:
         return self._json(self.core.job(request.match_info["job_id"]))
+
+    async def _timeline(self, request: web.Request) -> web.Response:
+        return self._json(self.core.timeline(request.match_info["job_id"]))
 
     async def _create_job(self, request: web.Request) -> web.Response:
         body = await self._json_body(request)
@@ -402,6 +410,22 @@ class LocalWebBridge:
 
     async def _test_state(self, request: web.Request) -> web.Response:
         return self._json(self.core.test_state(request.match_info["job_id"]))
+
+    async def _providers(self, _request: web.Request) -> web.Response:
+        return self._json(self.core.agents())
+
+    async def _readiness(self, _request: web.Request) -> web.Response:
+        return self._json(self.core.bootstrap())
+
+    async def _tools(self, _request: web.Request) -> web.Response:
+        return self._json([
+            {"id": "studio_mcp", "name": "Studio MCP", "status": "INSTALLED", "category": "MCP"},
+            {"id": "play_test", "name": "Play Test", "status": "INSTALLED", "category": "BUILT_IN"},
+            {"id": "managed_browser", "name": "Managed Browser", "status": "INSTALLED", "category": "BUILT_IN"},
+        ])
+
+    async def _storage(self, _request: web.Request) -> web.Response:
+        return self._json({"used": 1024 * 1024, "budget": 10 * 1024 * 1024 * 1024, "categories": []})
 
     async def _update_settings(self, request: web.Request) -> web.Response:
         return self._json(self.core.update_settings(await self._json_body(request)))

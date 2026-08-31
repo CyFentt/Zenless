@@ -24,6 +24,7 @@ export const mockBootSteps: BootStep[] = [
   { stage: 'BROWSER', state: 'READY' },
   { stage: 'AI', state: 'CONNECTING' },
   { stage: 'STUDIO', state: 'OFF' },
+  { stage: 'UI', state: 'READY' },
 ];
 
 export const mockConnections: ConnectionInfo = {

@@ -174,6 +174,9 @@ class TaskOptions:
     max_revisions: int = 3
     max_test_fixes: int = 3
     risk_level: str = "medium"
+    research: str = "auto"
+    effort: str = "auto"
+    chat_mode: str = "project"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -183,7 +186,7 @@ class TaskOptions:
         def bounded_int(key: str, default: int) -> int:
             try:
                 return max(1, min(5, int(raw.get(key, default))))
-            except TypeError, ValueError:
+            except (TypeError, ValueError):
                 return default
 
         create_3d_asset = bool(raw.get("Create 3D Asset", True))
@@ -206,10 +209,20 @@ class TaskOptions:
         def bounded_int(key: str, default: int) -> int:
             try:
                 return max(1, min(5, int(source.get(key, default))))
-            except TypeError, ValueError:
+            except (TypeError, ValueError):
                 return default
 
         create_3d_asset = bool(source.get("create3D", True))
+
+        raw_research = str(source.get("research", "auto")).strip().lower()
+        research = raw_research if raw_research in {"auto", "on", "off"} else "auto"
+
+        raw_effort = str(source.get("effort", "auto")).strip().lower()
+        effort = raw_effort if raw_effort in {"auto", "min", "med", "max"} else "auto"
+
+        raw_chat_mode = str(source.get("chatMode", source.get("chat_mode", "project"))).strip().lower()
+        chat_mode = raw_chat_mode if raw_chat_mode in {"project", "temp"} else "project"
+
         return cls(
             visual_first=bool(source.get("visualFirst", True)) or create_3d_asset,
             create_3d_asset=create_3d_asset,
@@ -220,6 +233,9 @@ class TaskOptions:
             max_revisions=bounded_int("revisions", 3),
             max_test_fixes=bounded_int("fixAttempts", 3),
             risk_level=cls._risk(source.get("risk", "medium")),
+            research=research,
+            effort=effort,
+            chat_mode=chat_mode,
         )
 
     @staticmethod
@@ -296,7 +312,7 @@ class ReviewResult:
     def from_dict(cls, raw: dict[str, Any], raw_text: str = "") -> "ReviewResult":
         try:
             confidence = max(0.0, min(1.0, float(raw.get("confidence", 0.0))))
-        except TypeError, ValueError:
+        except (TypeError, ValueError):
             confidence = 0.0
         return cls(
             verdict=str(raw.get("verdict", "revise")).strip().lower(),

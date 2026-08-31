@@ -124,6 +124,16 @@ export class MockZenlessAPI implements ZenlessAPI {
     await delay(60);
     return clone(this.messages.filter((message) => message.jobId === jobId));
   }
+  async getTimeline(jobId: string) {
+    await delay(60);
+    return {
+      jobId,
+      messages: clone(this.messages.filter((m) => m.jobId === jobId)),
+      activities: [],
+      artifacts: [],
+      test: { testState: clone(this.testState), cases: [], failures: [], logs: clone(this.logs) },
+    };
+  }
   async sendMessage(
     content: string,
     jobId?: string,
