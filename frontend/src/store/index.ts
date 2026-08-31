@@ -76,8 +76,10 @@ interface AppState {
   messages: ChatMessage[];
   activities: ChatActivity[];
   artifacts: ChatArtifact[];
+  setActivities: (a: ChatActivity[]) => void;
   addActivity: (a: ChatActivity) => void;
   updateActivity: (id: string, patch: Partial<ChatActivity>) => void;
+  setArtifacts: (a: ChatArtifact[]) => void;
   addArtifact: (a: ChatArtifact) => void;
   updateArtifact: (id: string, patch: Partial<ChatArtifact>) => void;
   streamingMessageId: string | null;
@@ -147,7 +149,9 @@ interface AppState {
   setTestState: (t: TestState) => void;
   addTestLog: (log: TestLog) => void;
   setTestLogs: (logs: TestLog[]) => void;
+  setTestCases: (cases: TestCaseResult[]) => void;
   upsertTestCase: (testCase: TestCaseResult) => void;
+  setTestFailures: (failures: TestFailure[]) => void;
   addTestFailure: (failure: TestFailure) => void;
   resetTestDetails: () => void;
   setSettings: (s: Settings) => void;
@@ -193,6 +197,7 @@ export const useStore = create<AppState>((set) => ({
   messages: [],
   activities: [],
   artifacts: [],
+  setActivities: (activities) => set({ activities }),
   addActivity: (a) => set((state) => ({
     activities: state.activities.some((x) => x.id === a.id)
       ? state.activities.map((x) => (x.id === a.id ? { ...x, ...a } : x))
@@ -201,6 +206,7 @@ export const useStore = create<AppState>((set) => ({
   updateActivity: (id, patch) => set((state) => ({
     activities: state.activities.map((a) => (a.id === id ? { ...a, ...patch } : a)),
   })),
+  setArtifacts: (artifacts) => set({ artifacts }),
   addArtifact: (a) => set((state) => ({
     artifacts: state.artifacts.some((x) => x.id === a.id)
       ? state.artifacts.map((x) => (x.id === a.id ? { ...x, ...a } : x))
@@ -319,6 +325,7 @@ export const useStore = create<AppState>((set) => ({
   setTestState: (t) => set({ testState: t }),
   addTestLog: (log) => set((state) => ({ testLogs: [...state.testLogs, log] })),
   setTestLogs: (logs) => set({ testLogs: logs }),
+  setTestCases: (cases) => set({ testCases: cases }),
   upsertTestCase: (testCase) =>
     set((state) => {
       const exists = state.testCases.some((item) => item.id === testCase.id);
@@ -328,6 +335,7 @@ export const useStore = create<AppState>((set) => ({
           : [...state.testCases, testCase],
       };
     }),
+  setTestFailures: (failures) => set({ testFailures: failures }),
   addTestFailure: (failure) => set((state) => ({ testFailures: [...state.testFailures, failure] })),
   resetTestDetails: () => set({ testCases: [], testFailures: [] }),
   setSettings: (s) => set({ settings: s }),

@@ -15,7 +15,18 @@ const ModelViewer = lazy(() =>
 type VisualTab = "views" | "3d" | "assets";
 
 export function VisualPage() {
+  const navigationTarget = useStore((s) => s.navigationTarget);
+  const setNavigationTarget = useStore((s) => s.setNavigationTarget);
   const [tab, setTab] = useState<VisualTab>("views");
+
+  useEffect(() => {
+    if (navigationTarget?.page === "visual" && navigationTarget.tab) {
+      if (navigationTarget.tab === "views" || navigationTarget.tab === "3d" || navigationTarget.tab === "assets") {
+        setTab(navigationTarget.tab as VisualTab);
+      }
+      setNavigationTarget(null);
+    }
+  }, [navigationTarget, setNavigationTarget]);
 
   return (
     <div className="flex flex-col h-full">

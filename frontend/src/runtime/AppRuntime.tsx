@@ -120,28 +120,35 @@ export class ApplicationRuntime {
   }
 
   private async loadJobSnapshot(job: Job): Promise<void> {
-    const [messages, context, changes, visual, model, testState] = await Promise.all([
-      this.api.getMessages(job.id),
+    const [timeline, context, changes, visual, model] = await Promise.all([
+      this.api.getTimeline(job.id),
       this.api.getContext(job.id),
       this.api.getChanges(job.id),
       this.api.getVisual(job.id),
       this.api.getModel(job.id),
-      this.api.getTestState(job.id),
     ]);
     if (!this.active || useStore.getState().currentJobId !== job.id) return;
     const store = useStore.getState();
-    store.setMessages(messages);
+    store.setMessages(timeline.messages);
+    store.setActivities(timeline.activities);
+    store.setArtifacts(timeline.artifacts);
+    if (timeline.test) {
+      store.setTestState(timeline.test.testState);
+      store.setTestCases(timeline.test.cases);
+      store.setTestFailures(timeline.test.failures);
+      if (timeline.test.logs) store.setTestLogs(timeline.test.logs);
+    }
     store.setContextItems(context);
     store.setChangedFiles(changes);
     store.setViews(visual.views);
     store.setConcept(visual.concept.version, visual.concept.status, visual.concept.prompt);
     store.setModelInfo(model);
-    store.setTestState(testState);
   }
 
   private selectCurrentJob(jobs: Job[], currentJobId: string | null): Job | null {
-    return jobs.find((job) => job.status === 'NEW' || job.status === 'RUNNING' || job.status === 'PAUSED')
-      ?? jobs.find((job) => job.id === currentJobId)
+    return jobs.find((job) => job.id === currentJobId)
+      ?? jobs.find((job) => job.status === 'NEW' || job.status === 'RUNNING' || job.status === 'PAUSED')
+      ?? jobs[0]
       ?? null;
   }
 }

@@ -174,6 +174,7 @@ export class RealZenlessAPI implements ZenlessAPI {
   resumeJob(id: string): Promise<Job> { return request(`/api/jobs/${encodeURIComponent(id)}/resume`, { method: 'POST' }); }
   cancelJob(id: string): Promise<{ ok: boolean }> { return request(`/api/jobs/${encodeURIComponent(id)}`, { method: 'DELETE' }); }
   getMessages(jobId: string): Promise<ChatMessage[]> { return request(`/api/jobs/${encodeURIComponent(jobId)}/messages`); }
+  getTimeline(jobId: string): Promise<import('./types').JobTimelineSnapshot> { return request(`/api/jobs/${encodeURIComponent(jobId)}/timeline`); }
 
   sendMessage(content: string, jobId?: string, attachments: File[] = [], options?: TaskOptions): Promise<{ messageId: string; jobId?: string }> {
     const idempotencyKey = operationKey('send-chat');

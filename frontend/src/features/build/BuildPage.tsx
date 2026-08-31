@@ -12,7 +12,18 @@ import type { ContextItem, Review, Job } from '@/types';
 type BuildTab = 'context' | 'changes' | 'history';
 
 export function BuildPage() {
+  const navigationTarget = useStore((s) => s.navigationTarget);
+  const setNavigationTarget = useStore((s) => s.setNavigationTarget);
   const [activeTab, setActiveTab] = useState<BuildTab>('changes');
+
+  useEffect(() => {
+    if (navigationTarget?.page === 'build' && navigationTarget.tab) {
+      if (navigationTarget.tab === 'context' || navigationTarget.tab === 'changes' || navigationTarget.tab === 'history') {
+        setActiveTab(navigationTarget.tab);
+      }
+      setNavigationTarget(null);
+    }
+  }, [navigationTarget, setNavigationTarget]);
 
   return (
     <div className="flex flex-col h-full bg-ink-950">
