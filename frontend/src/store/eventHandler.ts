@@ -3,6 +3,8 @@ import { useStore } from '@/store';
 
 export function handleEvent(event: ZenlessEvent) {
   const store = useStore.getState();
+  const currentJobId = store.currentJobId;
+  const isForCurrentJob = (jobId?: string) => !jobId || !currentJobId || jobId === currentJobId;
 
   switch (event.type) {
     case 'BOOT_STAGE_CHANGED':
@@ -74,13 +76,13 @@ export function handleEvent(event: ZenlessEvent) {
       store.setReadiness(event.data.readiness);
       break;
     case 'CONTEXT_UPDATED':
-      store.setContextItems(event.data.items);
+      if (isForCurrentJob(event.data.jobId)) store.setContextItems(event.data.items);
       break;
     case 'CHANGES_UPDATED':
-      store.setChangedFiles(event.data.files);
+      if (isForCurrentJob(event.data.jobId)) store.setChangedFiles(event.data.files);
       break;
     case 'REVIEW_READY':
-      store.setChangedFiles(event.data.review.files);
+      if (isForCurrentJob(event.data.jobId)) store.setChangedFiles(event.data.review.files);
       break;
     case 'VISUAL_GENERATION_CHANGED':
       if (event.data.view) {
@@ -99,11 +101,14 @@ export function handleEvent(event: ZenlessEvent) {
       );
       break;
     case 'VISUAL_APPROVED':
-      store.setViews(
-        useStore.getState().views.map((v) =>
-          v.name === event.data.view ? { ...v, state: 'APPROVED' } : v,
-        ),
-      );
+      if (isForCurrentJob(event.data.jobId)) {
+        const viewsToApprove = new Set(event.data.views || []);
+        store.setViews(
+          useStore.getState().views.map((v) =>
+            viewsToApprove.has(v.name) ? { ...v, state: 'APPROVED' } : v,
+          ),
+        );
+      }
       break;
     case 'MODEL_GENERATION_CHANGED':
       {

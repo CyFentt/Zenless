@@ -192,7 +192,27 @@ export const useStore = create<AppState>((set) => ({
 
   jobs: [],
   currentJobId: null,
-  setCurrentJobId: (id) => set({ currentJobId: id }),
+  setCurrentJobId: (id) => set((state) => {
+    if (state.currentJobId === id) return {};
+    return {
+      currentJobId: id,
+      messages: [],
+      activities: [],
+      artifacts: [],
+      testCases: [],
+      testFailures: [],
+      testLogs: [],
+      contextItems: [],
+      changedFiles: [],
+      selectedFileId: null,
+      views: [],
+      conceptVersion: 0,
+      conceptStatus: 'EMPTY',
+      conceptPrompt: '',
+      modelInfo: { state: 'EMPTY', geometryStatus: 'IDLE', textureStatus: 'IDLE' },
+      testState: { status: 'IDLE', elapsedMs: 0, fixAttempt: 0, maxFixAttempts: 3 },
+    };
+  }),
 
   messages: [],
   activities: [],

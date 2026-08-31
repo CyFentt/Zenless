@@ -119,30 +119,50 @@ export class ApplicationRuntime {
     useStore.getState().setBootError('');
   }
 
-  private async loadJobSnapshot(job: Job): Promise<void> {
-    const [timeline, context, changes, visual, model] = await Promise.all([
-      this.api.getTimeline(job.id),
-      this.api.getContext(job.id),
-      this.api.getChanges(job.id),
-      this.api.getVisual(job.id),
-      this.api.getModel(job.id),
-    ]);
-    if (!this.active || useStore.getState().currentJobId !== job.id) return;
+  private currentJobHydrationToken = 0;
+
+  async selectAndHydrateJob(jobId: string | null): Promise<void> {
     const store = useStore.getState();
-    store.setMessages(timeline.messages);
-    store.setActivities(timeline.activities);
-    store.setArtifacts(timeline.artifacts);
-    if (timeline.test) {
-      store.setTestState(timeline.test.testState);
-      store.setTestCases(timeline.test.cases);
-      store.setTestFailures(timeline.test.failures);
-      if (timeline.test.logs) store.setTestLogs(timeline.test.logs);
+    if (store.currentJobId === jobId && store.runtimeHydrated) return;
+    store.setCurrentJobId(jobId);
+    if (!jobId) return;
+    const job = store.jobs.find((j) => j.id === jobId) || ({ id: jobId, title: 'Job', status: 'NEW', stage: 'NEW', createdAt: Date.now(), updatedAt: Date.now(), options: undefined, fixAttempts: 0, maxFixAttempts: 3 } as Job);
+    await this.loadJobSnapshot(job as Job);
+  }
+
+  private async loadJobSnapshot(job: Job): Promise<void> {
+    const token = ++this.currentJobHydrationToken;
+    try {
+      const [timeline, context, changes, visual, model] = await Promise.all([
+        this.api.getTimeline(job.id),
+        this.api.getContext(job.id),
+        this.api.getChanges(job.id),
+        this.api.getVisual(job.id),
+        this.api.getModel(job.id),
+      ]);
+      if (!this.active || token !== this.currentJobHydrationToken || useStore.getState().currentJobId !== job.id) {
+        return;
+      }
+      const store = useStore.getState();
+      store.setMessages(timeline.messages);
+      store.setActivities(timeline.activities);
+      store.setArtifacts(timeline.artifacts);
+      if (timeline.test) {
+        store.setTestState(timeline.test.testState);
+        store.setTestCases(timeline.test.cases);
+        store.setTestFailures(timeline.test.failures);
+        if (timeline.test.logs) store.setTestLogs(timeline.test.logs);
+      }
+      store.setContextItems(context);
+      store.setChangedFiles(changes);
+      store.setViews(visual.views);
+      store.setConcept(visual.concept.version, visual.concept.status, visual.concept.prompt);
+      store.setModelInfo(model);
+    } catch (err) {
+      if (token === this.currentJobHydrationToken) {
+        frontendDiagnostics.capture(err, 'runtime', 'Failed to hydrate active job snapshot', { jobId: job.id });
+      }
     }
-    store.setContextItems(context);
-    store.setChangedFiles(changes);
-    store.setViews(visual.views);
-    store.setConcept(visual.concept.version, visual.concept.status, visual.concept.prompt);
-    store.setModelInfo(model);
   }
 
   private selectCurrentJob(jobs: Job[], currentJobId: string | null): Job | null {

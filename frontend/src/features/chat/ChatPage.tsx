@@ -123,13 +123,13 @@ export function ChatPage() {
   };
 
   // Filter activities, artifacts, and diagnostics strictly relevant to active job
-  const jobActivities = activities.filter((a) => !currentJobId || !a.jobId || a.jobId === currentJobId);
-  const imageArtifacts = artifacts.filter((a) => a.type === 'IMAGE' && (!currentJobId || !a.jobId || a.jobId === currentJobId));
-  const modelArtifacts = artifacts.filter((a) => a.type === 'MODEL_3D' && (!currentJobId || !a.jobId || a.jobId === currentJobId));
-  const diffArtifacts = artifacts.filter((a) => a.type === 'DIFF' && (!currentJobId || !a.jobId || a.jobId === currentJobId));
-  const criticalErrors = diagnostics.filter(
-    (d) => (d.severity === 'critical' || d.severity === 'error') && (!currentJobId || !d.jobId || d.jobId === currentJobId)
-  );
+  const jobActivities = currentJobId ? activities.filter((a) => a.jobId === currentJobId) : [];
+  const imageArtifacts = currentJobId ? artifacts.filter((a) => a.type === 'IMAGE' && a.jobId === currentJobId) : [];
+  const modelArtifacts = currentJobId ? artifacts.filter((a) => a.type === 'MODEL_3D' && a.jobId === currentJobId) : [];
+  const diffArtifacts = currentJobId ? artifacts.filter((a) => a.type === 'DIFF' && a.jobId === currentJobId) : [];
+  const criticalErrors = currentJobId
+    ? diagnostics.filter((d) => (d.severity === 'critical' || d.severity === 'error') && d.jobId === currentJobId)
+    : [];
 
   // Chronological timeline item composition
   type TimelineItem =

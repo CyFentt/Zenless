@@ -537,12 +537,12 @@ export interface ZenlessEventMap {
   CHAT_ARTIFACT: { artifact: ChatArtifact };
   PROVIDER_LOGIN_STATE: { provider: ProviderId; state: "IDLE" | "OPENING" | "WAITING" | "VERIFYING" | "READY" };
   READINESS_CHANGED: { readiness: ReadinessStateInfo };
-  CONTEXT_UPDATED: { items: ContextItem[] };
-  CHANGES_UPDATED: { files: ChangedFile[] };
-  REVIEW_READY: { review: Review };
+  CONTEXT_UPDATED: { jobId?: string; items: ContextItem[] };
+  CHANGES_UPDATED: { jobId?: string; files: ChangedFile[] };
+  REVIEW_READY: { jobId?: string; review: Review };
   VISUAL_GENERATION_CHANGED: { view?: ViewName; state: ViewState };
   VISUAL_READY: { view: ViewName; imageUrl: string };
-  VISUAL_APPROVED: { view: ViewName };
+  VISUAL_APPROVED: { jobId?: string; views: ViewName[]; conceptVersion?: number };
   MODEL_GENERATION_CHANGED: { target: "geometry" | "texture"; state: ModelGenState };
   MODEL_READY: { modelUrl: string; filename?: string };
   MODEL_APPROVED: Record<string, never>;
