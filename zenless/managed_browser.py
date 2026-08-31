@@ -11,8 +11,9 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlparse
 
-from .browser_bridge import BridgeError, StatusCallback
+from .browser_bridge import BridgeError, LoginWindowOpenedCallback, StatusCallback
 from .diagnostics import ErrorBus
+from .provider_registry import normalize_capabilities
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,13 +24,20 @@ class ProviderSpec:
     sends: tuple[str, ...]
     stops: tuple[str, ...]
     responses: tuple[str, ...]
+    composers: tuple[str, ...] = ()
+    accounts: tuple[str, ...] = ()
+    unauthenticated: tuple[str, ...] = ()
+    challenges: tuple[str, ...] = ()
+    login_paths: tuple[str, ...] = ()
+    authenticated_paths: tuple[str, ...] = ()
+    mode_options: tuple[tuple[str, tuple[str, ...]], ...] = ()
 
 
 PROVIDERS: dict[str, ProviderSpec] = {
     "chatgpt": ProviderSpec(
         "chatgpt",
         "https://chatgpt.com/",
-        ("#prompt-textarea", "div[contenteditable='true'][data-lexical-editor='true']", "textarea"),
+        ("#prompt-textarea", "div[contenteditable='true'][data-lexical-editor='true']"),
         (
             "#composer-submit-button",
             "button[data-testid='send-button']",
@@ -38,6 +46,12 @@ PROVIDERS: dict[str, ProviderSpec] = {
         ),
         ("button[data-testid='stop-button']", "button[aria-label*='Stop']", "button[aria-label*='Parar']"),
         ("[data-message-author-role='assistant']", "article[data-testid*='conversation-turn'] .markdown"),
+        composers=("#prompt-textarea", "div[contenteditable='true'][data-lexical-editor='true']"),
+        accounts=("[data-testid='profile-button']", "button[aria-label*='profile']", "button[aria-label*='account']"),
+        unauthenticated=("a[href*='/auth/login']", "button[data-testid*='login']", "input[name='email']"),
+        challenges=("iframe[src*='captcha']", "[id*='challenge']", "[data-testid*='challenge']"),
+        login_paths=("/auth/login", "/auth/", "/login"),
+        authenticated_paths=("chatgpt.com/", "chatgpt.com/c/"),
     ),
     "deepseek": ProviderSpec(
         "deepseek",
@@ -51,14 +65,27 @@ PROVIDERS: dict[str, ProviderSpec] = {
         ),
         (".ds-loading", "button[aria-label*='Stop']", "button[aria-label*='停止']", "button[class*='stop']"),
         (".ds-markdown", "[class*='markdown']", "[class*='message'][class*='assistant']"),
+        composers=("textarea", "div[contenteditable='true']"),
+        accounts=("[class*='avatar']", "[class*='user-info']", "button[aria-label*='account']"),
+        unauthenticated=("input[type='password']", "input[name='email']", "[class*='login'] input"),
+        challenges=("iframe[src*='captcha']", "[class*='captcha']", "[class*='verify']"),
+        login_paths=("/sign_in", "/login"),
+        authenticated_paths=("chat.deepseek.com/a/chat", "chat.deepseek.com/chat"),
+        mode_options=(("instant", ("instant",)), ("expert", ("expert",))),
     ),
     "hunyuan": ProviderSpec(
         "hunyuan",
         "https://3d.hunyuan.tencent.com/",
-        ("textarea", "div[contenteditable='true']", "input[type='text']"),
+        ("textarea", "div[contenteditable='true']"),
         ("button[type='submit']", "button[class*='generate']", "button[class*='create']"),
         ("button[class*='cancel']", "button[class*='stop']"),
         ("[class*='result']", "[class*='asset-card']", "[class*='generation']"),
+        composers=("textarea", "div[contenteditable='true']"),
+        accounts=("[class*='avatar']", "[class*='user-center']", "[class*='account']"),
+        unauthenticated=("input[type='password']", "input[type='email']", "[class*='login'] input"),
+        challenges=("iframe[src*='captcha']", "[class*='captcha']", "[class*='verify']"),
+        login_paths=("/login", "/signin", "/sign-in"),
+        authenticated_paths=("3d.hunyuan.tencent.com/",),
     ),
 }
 
@@ -209,13 +236,34 @@ class ManagedBrowserController:
             return False
         return bool(result.get("ready"))
 
-    def login(self, provider: str, *, install_if_missing: bool = True, timeout: float = 180.0) -> dict[str, Any]:
-        return self._call(
+    def login(
+        self,
+        provider: str,
+        *,
+        install_if_missing: bool = True,
+        timeout: float = 180.0,
+        on_window_opened: LoginWindowOpenedCallback | None = None,
+    ) -> dict[str, Any]:
+        opened = self._call(
             "login",
             provider,
             {"install_if_missing": install_if_missing},
             timeout=timeout,
         )
+        if on_window_opened is not None:
+            try:
+                on_window_opened(provider, "playwright")
+            except Exception as exc:
+                self._report(exc, "login-window-opened-callback", provider=provider, severity="WARNING")
+        deadline = time.monotonic() + max(30.0, min(900.0, timeout))
+        while time.monotonic() < deadline and not self._stop.wait(0.25):
+            with self._state_lock:
+                state = str(self._states.get(provider, {}).get("state", ""))
+            if state == "Ready":
+                return {**opened, "state": "ready"}
+            if state in {"Unavailable", "Error"}:
+                raise BridgeError(f"Managed login failed for {provider}.")
+        raise BridgeError(f"Login timeout for {provider}.")
 
     def send_prompt(
         self,
@@ -349,11 +397,12 @@ class ManagedBrowserController:
                 return {"ready": False, "runtime": "missing"}
             self._ensure_context(headed=False)
             page = self._ensure_page(command.provider)
-            ready = self._composer(page, self.provider_specs[command.provider]) is not None
+            auth_state = self._auth_state(page, self.provider_specs[command.provider])
+            ready = auth_state == "AUTHENTICATED"
             self._set_state(
                 command.provider,
                 "Ready" if ready else "Login Required",
-                "Authenticated managed session" if ready else "Use Login for the normal provider page",
+                "Authenticated managed session" if ready else f"Provider state: {auth_state}",
             )
             return {
                 "ready": ready,
@@ -382,6 +431,8 @@ class ManagedBrowserController:
                 return self._upload_files(command)
             if provider_action == "select_model":
                 return self._select_model(command)
+            if provider_action == "select_mode":
+                return self._select_mode(command)
             if provider_action == "get_models":
                 return self._discover_models(command)
             if provider_action == "cancel":
@@ -528,6 +579,50 @@ class ManagedBrowserController:
         )
         return {"status": "ok", "models": [str(item) for item in values], "transport": "playwright"}
 
+    def _select_mode(self, command: _Command) -> dict[str, Any]:
+        mode = str(command.payload.get("mode") or "").strip().casefold()
+        options = dict(self.provider_specs[command.provider].mode_options)
+        labels = options.get(mode)
+        if labels is None:
+            raise BridgeError("The provider mode is not supported by this adapter.")
+        page = self._ensure_page(command.provider)
+        spec = self.provider_specs[command.provider]
+        result = page.evaluate(
+            r"""
+            ({labels}) => {
+              const visible = node => !!node && getComputedStyle(node).display !== 'none' &&
+                getComputedStyle(node).visibility !== 'hidden';
+              const selected = node => node.getAttribute('aria-pressed') === 'true' ||
+                node.getAttribute('aria-selected') === 'true' ||
+                ['active', 'on', 'checked'].includes((node.getAttribute('data-state') || '').toLocaleLowerCase()) ||
+                /(^|\s)(active|selected|checked)(\s|$)/i.test(node.className || '');
+              const nodes = [...document.querySelectorAll('button,[role="tab"],[role="option"]')];
+              const target = nodes.find(node => {
+                const text = (node.innerText || node.textContent || '').trim().toLocaleLowerCase();
+                return visible(node) && labels.some(label => text === label ||
+                  (text.startsWith(label) && text.length <= label.length + 20));
+              });
+              if (!target) return {ok: false};
+              const before = selected(target);
+              if (!before) target.click();
+              return {ok: true, changed: !before};
+            }
+            """,
+            {"labels": [item.casefold() for item in labels]},
+        )
+        if not isinstance(result, dict) or not result.get("ok"):
+            raise BridgeError("CAPABILITY_UNAVAILABLE: the provider did not expose a verified mode control.")
+        page.wait_for_timeout(350)
+        capabilities = self._capabilities(page, spec)
+        if str(capabilities.get("mode") or "").casefold() != mode:
+            raise BridgeError("CAPABILITY_UNAVAILABLE: the provider mode change could not be verified.")
+        return {
+            "status": "ok",
+            "selected": mode,
+            "capabilities": capabilities,
+            "transport": "playwright",
+        }
+
     def _cancel_generation(self, command: _Command) -> dict[str, Any]:
         page = self._ensure_page(command.provider)
         button = self._first_visible(page, self.provider_specs[command.provider].stops)
@@ -579,24 +674,44 @@ class ManagedBrowserController:
     def _capabilities(self, page: Any, spec: ProviderSpec) -> dict[str, Any]:
         raw = page.evaluate(
             r"""
-            ({inputs, sends, stops, responses}) => {
+            ({inputs, sends, stops, responses, modeOptions}) => {
               const visible = node => !!node && getComputedStyle(node).display !== 'none' &&
                 getComputedStyle(node).visibility !== 'hidden';
               const any = selectors => selectors.some(selector => [...document.querySelectorAll(selector)].some(visible));
-              const file = document.querySelector('input[type="file"]');
+              const file = [...document.querySelectorAll('input[type="file"]')].find(visible);
               const accept = (file?.getAttribute('accept') || '').split(',').map(value => value.trim()).filter(Boolean);
               const body = (document.body?.innerText || '').slice(0, 200000);
               const countMatch = body.match(/(?:up to|max(?:imum)?|最多|至多)\s*(\d+)\s*(?:images?|views?|photos?|图片|图)/i);
               const explicitCount = countMatch ? Math.max(1, Math.min(6, Number(countMatch[1]))) : 0;
-              const labels = [...document.querySelectorAll('button,[role="tab"],[role="option"]')]
-                .map(node => (node.innerText || node.textContent || '').trim()).filter(Boolean).slice(0, 400).join('\n');
+              const selected = node => node.getAttribute('aria-pressed') === 'true' ||
+                node.getAttribute('aria-selected') === 'true' ||
+                ['active', 'on', 'checked'].includes((node.getAttribute('data-state') || '').toLocaleLowerCase()) ||
+                /(^|\s)(active|selected|checked)(\s|$)/i.test(node.className || '');
+              const controls = [...document.querySelectorAll('button,[role="tab"],[role="option"]')]
+                .filter(visible).slice(0, 400);
+              const labels = controls
+                .map(node => (node.innerText || node.textContent || '').trim()).filter(Boolean).join('\n');
+              const matches = (node, options) => {
+                const text = (node.innerText || node.textContent || '').trim().toLocaleLowerCase();
+                return options.some(label => text === label ||
+                  (text.startsWith(label) && text.length <= label.length + 20));
+              };
+              const modeControl = controls.find(node => Object.values(modeOptions).some(options => matches(node, options)));
+              const activeMode = Object.entries(modeOptions)
+                .find(([, options]) => controls.some(node => selected(node) && matches(node, options)))?.[0] || '';
               return {
                 send_text: any(inputs) && any(sends),
                 upload_files: !!file,
                 file_types: accept,
                 max_image_inputs: file ? (file.multiple ? (explicitCount || 1) : 1) : 0,
                 cancel: any(stops),
+                select_model: !!document.querySelector('[role="option"], [role="menuitem"], [data-model]'),
+                select_mode: !!modeControl,
                 responses: any(responses),
+                search: /(web search|search the web|pesquisar na web|联网搜索|搜索)/i.test(labels),
+                reasoning: /(reasoning|thinking|expert|reasoner|raciocinio|deepthink|deep think|深度思考|思考)/i.test(labels),
+                mode: activeMode,
+                image_generation: /(create image|generate image|image generation|criar imagem|gerar imagem|生成图像|生成图片)/i.test(labels),
                 geometry: /(geometry|shape|mesh|几何|形状)/i.test(labels),
                 texture: /(texture|pbr|material|纹理|贴图|材质)/i.test(labels),
                 download_artifact: [...document.querySelectorAll('a[href]')]
@@ -609,9 +724,10 @@ class ManagedBrowserController:
                 "sends": list(spec.sends),
                 "stops": list(spec.stops),
                 "responses": list(spec.responses),
+                "modeOptions": {mode: [label.casefold() for label in labels] for mode, labels in spec.mode_options},
             },
         )
-        return dict(raw) if isinstance(raw, dict) else {}
+        return normalize_capabilities(dict(raw) if isinstance(raw, dict) else {}, source="LIVE")
 
     @staticmethod
     def _select_generation_mode(page: Any, action: str) -> None:
@@ -682,18 +798,29 @@ class ManagedBrowserController:
             self._login_provider = ""
             self._set_state(provider, "Login Required", "Managed login window was closed")
             return
-        if self._composer(page, self.provider_specs[provider]) is None:
+        auth_state = self._auth_state(page, self.provider_specs[provider])
+        if auth_state != "AUTHENTICATED":
             self._login_ready_at = 0.0
+            self._set_state(provider, auth_state.replace("_", " ").title(), "Complete provider authentication")
             return
         if not self._login_ready_at:
             self._login_ready_at = time.monotonic()
-            self._set_state(provider, "Connected", "Login detected; saving managed session")
+            self._set_state(provider, "Authenticated", "Login detected; preparing persistence verification")
             return
         if time.monotonic() - self._login_ready_at < 2.0:
             return
-        self._login_provider = ""
+        self._set_state(provider, "Verifying Persistence", "Reopening the persistent session headlessly")
         self._ensure_context(headed=False)
-        self._set_state(provider, "Ready", "Authenticated managed session restored headlessly")
+        restored = self._ensure_page(provider)
+        if self._auth_state(restored, self.provider_specs[provider]) == "AUTHENTICATED":
+            self._login_provider = ""
+            self._set_state(provider, "Ready", "Authenticated managed session restored headlessly")
+            return
+        self._ensure_context(headed=True)
+        retry = self._ensure_page(provider, navigate=True)
+        retry.bring_to_front()
+        self._login_ready_at = 0.0
+        self._set_state(provider, "Login Required", "Authentication was not persistent; complete login again")
 
     def _close_context(self) -> None:
         context = self._context
@@ -729,7 +856,55 @@ class ManagedBrowserController:
         return None
 
     def _composer(self, page: Any, spec: ProviderSpec) -> Any | None:
-        return self._first_visible(page, spec.inputs)
+        return self._first_visible(page, spec.composers or spec.inputs)
+
+    def _auth_state(self, page: Any, spec: ProviderSpec) -> str:
+        signals = page.evaluate(
+            r"""
+            ({composers, accounts, sends, unauthenticated, challenges, loginPaths, authenticatedPaths}) => {
+              const visible = node => {
+                if (!node) return false;
+                const style = getComputedStyle(node);
+                const box = node.getBoundingClientRect();
+                return style.display !== 'none' && style.visibility !== 'hidden' && box.width > 0 && box.height > 0;
+              };
+              const any = selectors => selectors.some(selector => [...document.querySelectorAll(selector)].some(visible));
+              const url = location.href.toLocaleLowerCase();
+              return {
+                composer: any(composers),
+                account: any(accounts),
+                send: any(sends),
+                unauthenticated: any(unauthenticated) || loginPaths.some(path => url.includes(path.toLocaleLowerCase())),
+                challenge: any(challenges),
+                authenticatedUrl: authenticatedPaths.some(path => url.includes(path.toLocaleLowerCase())),
+                legacy: accounts.length === 0 && unauthenticated.length === 0 &&
+                  challenges.length === 0 && loginPaths.length === 0 && authenticatedPaths.length === 0
+              };
+            }
+            """,
+            {
+                "composers": list(spec.composers or spec.inputs),
+                "accounts": list(spec.accounts),
+                "sends": list(spec.sends),
+                "unauthenticated": list(spec.unauthenticated),
+                "challenges": list(spec.challenges),
+                "loginPaths": list(spec.login_paths),
+                "authenticatedPaths": list(spec.authenticated_paths),
+            },
+        )
+        if not isinstance(signals, dict):
+            return "UNKNOWN"
+        if signals.get("challenge"):
+            return "CHALLENGE"
+        if signals.get("unauthenticated"):
+            return "LOGIN_REQUIRED"
+        if signals.get("account") and signals.get("composer"):
+            return "AUTHENTICATED"
+        if signals.get("authenticatedUrl") and signals.get("composer") and signals.get("send"):
+            return "AUTHENTICATED"
+        if signals.get("legacy") and signals.get("composer") and signals.get("send"):
+            return "AUTHENTICATED"
+        return "UNKNOWN"
 
     def _response_locator(self, page: Any, spec: ProviderSpec) -> Any | None:
         for selector in spec.responses:

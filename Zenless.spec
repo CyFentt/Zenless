@@ -2,14 +2,33 @@ import os
 
 datas = [
     ("frontend/dist", "frontend/dist"),
-    ("README.md", "."),
-    ("NOTICE.md", "."),
-    ("LICENSE", "."),
 ]
+documents = (
+    "README.md",
+    "ARCHITECTURE.md",
+    "BOLT_BACKEND_REQUIREMENTS.md",
+    "INSTALLATION_ARCHITECTURE.md",
+    "PROVIDER_ARCHITECTURE.md",
+    "QA_ARCHITECTURE.md",
+    "RELEASE_NOTES.md",
+    "TOOLS_ARCHITECTURE.md",
+    "NOTICE.md",
+    "LICENSE",
+)
+datas.extend((document, ".") for document in documents if os.path.exists(document))
 if os.path.exists("assets"):
     datas.append(("assets", "assets"))
 if os.path.exists("vendor"):
     datas.append(("vendor", "vendor"))
+
+exe_options = {
+    "uac_admin": False,
+    "uac_uiaccess": False,
+}
+if os.path.exists("assets/zenless.ico"):
+    exe_options["icon"] = ["assets/zenless.ico"]
+if os.path.exists("assets/version_info.txt"):
+    exe_options["version"] = "assets/version_info.txt"
 
 a = Analysis(
     ["main.py"],
@@ -64,5 +83,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    **({"icon": ["assets/zenless.ico"]} if os.path.exists("assets/zenless.ico") else {})
+    **exe_options,
 )

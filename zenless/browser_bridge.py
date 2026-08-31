@@ -21,6 +21,7 @@ class BridgeError(RuntimeError):
 
 
 StatusCallback = Callable[[str, str, str], None]
+LoginWindowOpenedCallback = Callable[[str, str], None]
 
 
 @dataclass(slots=True)

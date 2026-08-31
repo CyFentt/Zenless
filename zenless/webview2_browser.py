@@ -12,7 +12,7 @@ from typing import Any, BinaryIO, cast
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
-from .browser_bridge import BridgeError, StatusCallback
+from .browser_bridge import BridgeError, LoginWindowOpenedCallback, StatusCallback
 from .diagnostics import ErrorBus
 from .managed_browser import PROVIDERS, ProviderSpec
 from .native_host import read_native_message, write_native_message
@@ -20,10 +20,13 @@ from .native_host import read_native_message, write_native_message
 
 @dataclass(slots=True)
 class _Pending:
+    provider: str = ""
     event: threading.Event = field(default_factory=threading.Event)
     result: dict[str, Any] | None = None
     error: str = ""
     stream_callback: Callable[[str], None] | None = None
+    window_opened_callback: LoginWindowOpenedCallback | None = None
+    window_opened_notified: bool = False
 
 
 class WebView2BrowserController:
@@ -145,11 +148,23 @@ class WebView2BrowserController:
         )
         return ready
 
-    def login(self, provider: str, *, timeout: float = 600.0) -> dict[str, Any]:
+    def login(
+        self,
+        provider: str,
+        *,
+        timeout: float = 600.0,
+        on_window_opened: LoginWindowOpenedCallback | None = None,
+    ) -> dict[str, Any]:
         if not self.running:
             self.start()
         self._set_state(provider, "Login Required", "Complete login in the Zenless WebView2 window")
-        result = self._request("login", provider, {"timeout": timeout}, timeout=timeout + 5)
+        result = self._request(
+            "login",
+            provider,
+            {"timeout": timeout},
+            timeout=timeout + 5,
+            window_opened_callback=on_window_opened,
+        )
         self._set_state(provider, "Ready", "Authenticated WebView2 session")
         return result
 
@@ -245,13 +260,18 @@ class WebView2BrowserController:
         *,
         timeout: float,
         stream_callback: Callable[[str], None] | None = None,
+        window_opened_callback: LoginWindowOpenedCallback | None = None,
     ) -> dict[str, Any]:
         process = self._process
         if process is None or process.poll() is not None or process.stdin is None:
             detail = self._stderr_tail[-1500:]
             raise BridgeError("WebView2 helper is not running." + (" " + detail if detail else ""))
         request_id = uuid.uuid4().hex
-        pending = _Pending(stream_callback=stream_callback)
+        pending = _Pending(
+            provider=provider,
+            stream_callback=stream_callback,
+            window_opened_callback=window_opened_callback,
+        )
         with self._pending_lock:
             self._pending[request_id] = pending
         message = json.dumps(
@@ -286,7 +306,16 @@ class WebView2BrowserController:
                     pending = self._pending.get(request_id)
                 if pending is None:
                     continue
-                if message.get("event") == "stream":
+                event = message.get("event")
+                if event == "login_window_opened":
+                    if pending.window_opened_callback is not None and not pending.window_opened_notified:
+                        pending.window_opened_notified = True
+                        try:
+                            pending.window_opened_callback(pending.provider, "webview2")
+                        except Exception as exc:
+                            self._report(exc, "login-window-opened-callback")
+                    continue
+                if event == "stream":
                     delta = message.get("delta")
                     if isinstance(delta, str) and delta and pending.stream_callback is not None:
                         try:

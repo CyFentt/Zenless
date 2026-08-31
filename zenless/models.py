@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+import re
+import unicodedata
+from dataclasses import asdict, dataclass, field, replace
 from enum import StrEnum
 from typing import Any
 
@@ -36,6 +38,24 @@ TERMINAL_STAGES = {Stage.COMPLETE, Stage.BLOCKED, Stage.FAILED}
 
 class InvalidStageTransition(ValueError):
     pass
+
+
+class FeatureMode(StrEnum):
+    AUTO = "AUTO"
+    ON = "ON"
+    OFF = "OFF"
+
+
+class EffortProfile(StrEnum):
+    AUTO = "AUTO"
+    MINIMUM = "MINIMUM"
+    MEDIUM = "MEDIUM"
+    MAXIMUM = "MAXIMUM"
+
+
+class ChatMode(StrEnum):
+    PROJECT = "PROJECT"
+    TEMP = "TEMP"
 
 
 _COMMON_FAILURES = {Stage.BLOCKED, Stage.FAILED}
@@ -166,7 +186,7 @@ def validate_stage_transition(previous: Stage | str, next_stage: Stage | str) ->
 @dataclass(slots=True)
 class TaskOptions:
     visual_first: bool = False
-    create_3d_asset: bool = True
+    create_3d_asset: bool = False
     independent_review: bool = True
     automatic_play_test: bool = True
     auto_fix_errors: bool = True
@@ -175,8 +195,11 @@ class TaskOptions:
     max_test_fixes: int = 3
     risk_level: str = "medium"
     research: str = "auto"
-    effort: str = "auto"
-    chat_mode: str = "project"
+    visual_mode: str = FeatureMode.AUTO.value
+    create_3d_mode: str = FeatureMode.AUTO.value
+    effort: str = EffortProfile.AUTO.value
+    chat_mode: str = ChatMode.PROJECT.value
+    deadline_minutes: int = 60
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -186,12 +209,16 @@ class TaskOptions:
         def bounded_int(key: str, default: int) -> int:
             try:
                 return max(1, min(5, int(raw.get(key, default))))
-            except (TypeError, ValueError):
+            except TypeError, ValueError:
                 return default
 
-        create_3d_asset = bool(raw.get("Create 3D Asset", True))
+        visual_mode = cls._feature_mode(raw.get("Visual First", FeatureMode.AUTO.value))
+        create_3d_mode = cls._feature_mode(raw.get("Create 3D Asset", FeatureMode.AUTO.value))
+        create_3d_asset = create_3d_mode == FeatureMode.ON
+        raw_research = str(raw.get("Research", "auto")).strip().lower()
+        research = raw_research if raw_research in {"auto", "on", "off"} else "auto"
         return cls(
-            visual_first=bool(raw.get("Visual First", True)) or create_3d_asset,
+            visual_first=visual_mode == FeatureMode.ON or create_3d_asset,
             create_3d_asset=create_3d_asset,
             independent_review=bool(raw.get("Independent Review", True)),
             automatic_play_test=bool(raw.get("Automatic Play Test", True)),
@@ -200,6 +227,12 @@ class TaskOptions:
             max_revisions=bounded_int("Max Revisions", 3),
             max_test_fixes=bounded_int("Max Test Fixes", 3),
             risk_level=cls._risk(raw.get("Risk", raw.get("Risk Level", "medium"))),
+            research=research,
+            visual_mode=visual_mode.value,
+            create_3d_mode=create_3d_mode.value,
+            effort=cls._effort(raw.get("Effort", EffortProfile.AUTO.value)).value,
+            chat_mode=cls._chat_mode(raw.get("Chat Mode", ChatMode.PROJECT.value)).value,
+            deadline_minutes=cls._deadline(raw.get("Deadline Minutes", 60)),
         )
 
     @classmethod
@@ -209,22 +242,16 @@ class TaskOptions:
         def bounded_int(key: str, default: int) -> int:
             try:
                 return max(1, min(5, int(source.get(key, default))))
-            except (TypeError, ValueError):
+            except TypeError, ValueError:
                 return default
-
-        create_3d_asset = bool(source.get("create3D", True))
 
         raw_research = str(source.get("research", "auto")).strip().lower()
         research = raw_research if raw_research in {"auto", "on", "off"} else "auto"
-
-        raw_effort = str(source.get("effort", "auto")).strip().lower()
-        effort = raw_effort if raw_effort in {"auto", "min", "med", "max"} else "auto"
-
-        raw_chat_mode = str(source.get("chatMode", source.get("chat_mode", "project"))).strip().lower()
-        chat_mode = raw_chat_mode if raw_chat_mode in {"project", "temp"} else "project"
-
+        visual_mode = cls._feature_mode(source.get("visualMode", source.get("visualFirst", FeatureMode.AUTO.value)))
+        create_3d_mode = cls._feature_mode(source.get("create3DMode", source.get("create3D", FeatureMode.AUTO.value)))
+        create_3d_asset = create_3d_mode == FeatureMode.ON
         return cls(
-            visual_first=bool(source.get("visualFirst", True)) or create_3d_asset,
+            visual_first=visual_mode == FeatureMode.ON or create_3d_asset,
             create_3d_asset=create_3d_asset,
             independent_review=bool(source.get("review", True)),
             automatic_play_test=bool(source.get("autoTest", True)),
@@ -234,14 +261,126 @@ class TaskOptions:
             max_test_fixes=bounded_int("fixAttempts", 3),
             risk_level=cls._risk(source.get("risk", "medium")),
             research=research,
-            effort=effort,
-            chat_mode=chat_mode,
+            visual_mode=visual_mode.value,
+            create_3d_mode=create_3d_mode.value,
+            effort=cls._effort(source.get("effort", EffortProfile.AUTO.value)).value,
+            chat_mode=cls._chat_mode(source.get("chatMode", source.get("chat_mode", ChatMode.PROJECT.value))).value,
+            deadline_minutes=cls._deadline(source.get("deadlineMinutes", source.get("deadline_minutes", 60))),
         )
+
+    def resolve(self, objective: str) -> "TaskOptions":
+        normalized = self._normalize(objective)
+        three_d_intent = self._matches(
+            normalized,
+            (
+                r"\b3d\b",
+                r"\b(glb|gltf|fbx)\b",
+                r"\b(modelo 3d|malha 3d|objeto 3d|ativo 3d)\b",
+                r"\b(generate|create|criar|gerar|import)\b.{0,28}\b(3d model|modelo 3d|mesh|malha|texture|textura|geometry)\b",
+            ),
+        )
+        visual_intent = three_d_intent or self._matches(
+            normalized,
+            (
+                r"\b(concept art|visual concept|reference image|six views|orthographic)\b",
+                r"\b(criar|gerar|generate|create)\b.{0,24}\b(image|imagem|logo|icon|icone|sprite|texture)\b",
+            ),
+        )
+        create_mode = self._coerce_feature_mode(self.create_3d_mode)
+        visual_mode = self._coerce_feature_mode(self.visual_mode)
+        create_3d = (
+            self.create_3d_asset
+            or create_mode == FeatureMode.ON
+            or (create_mode == FeatureMode.AUTO and three_d_intent)
+        )
+        visual_first = (
+            self.visual_first
+            or visual_mode == FeatureMode.ON
+            or (visual_mode == FeatureMode.AUTO and visual_intent)
+            or create_3d
+        )
+        if self._coerce_chat_mode(self.chat_mode) == ChatMode.TEMP:
+            create_3d = False
+            visual_first = False
+        return replace(self, visual_first=visual_first, create_3d_asset=create_3d)
+
+    @property
+    def review_rounds(self) -> int:
+        effort = self._coerce_effort(self.effort)
+        if effort == EffortProfile.MINIMUM:
+            return min(2, self.max_revisions)
+        if effort == EffortProfile.MAXIMUM:
+            return min(5, self.max_revisions)
+        return min(3, self.max_revisions)
+
+    @property
+    def qa_profile(self) -> str:
+        effort = self._coerce_effort(self.effort)
+        if effort == EffortProfile.MINIMUM:
+            return "SMOKE"
+        if effort == EffortProfile.MAXIMUM or self.risk_level == "high":
+            return "DEEP"
+        return "STANDARD"
 
     @staticmethod
     def _risk(value: Any) -> str:
         normalized = str(value).strip().casefold()
         return normalized if normalized in {"low", "medium", "high"} else "medium"
+
+    @classmethod
+    def _feature_mode(cls, value: Any) -> FeatureMode:
+        if isinstance(value, (bool, int)) and value in {0, 1}:
+            return FeatureMode.ON if value else FeatureMode.OFF
+        return cls._coerce_feature_mode(value)
+
+    @staticmethod
+    def _coerce_feature_mode(value: Any) -> FeatureMode:
+        try:
+            return FeatureMode(str(value).strip().upper())
+        except ValueError:
+            return FeatureMode.AUTO
+
+    @staticmethod
+    def _effort(value: Any) -> EffortProfile:
+        return TaskOptions._coerce_effort(value)
+
+    @staticmethod
+    def _coerce_effort(value: Any) -> EffortProfile:
+        normalized = str(value).strip().upper()
+        aliases = {"MIN": EffortProfile.MINIMUM, "MED": EffortProfile.MEDIUM, "MAX": EffortProfile.MAXIMUM}
+        if normalized in aliases:
+            return aliases[normalized]
+        try:
+            return EffortProfile(normalized)
+        except ValueError:
+            return EffortProfile.AUTO
+
+    @staticmethod
+    def _chat_mode(value: Any) -> ChatMode:
+        return TaskOptions._coerce_chat_mode(value)
+
+    @staticmethod
+    def _coerce_chat_mode(value: Any) -> ChatMode:
+        try:
+            return ChatMode(str(value).strip().upper())
+        except ValueError:
+            return ChatMode.PROJECT
+
+    @staticmethod
+    def _deadline(value: Any) -> int:
+        try:
+            return max(5, min(240, int(value)))
+        except TypeError, ValueError:
+            return 60
+
+    @staticmethod
+    def _normalize(value: str) -> str:
+        decomposed = unicodedata.normalize("NFKD", value.casefold())
+        return "".join(character for character in decomposed if not unicodedata.combining(character))
+
+    @staticmethod
+    def _matches(value: str, patterns: tuple[str, ...]) -> bool:
+        return any(re.search(pattern, value) for pattern in patterns)
 
 
 @dataclass(slots=True)
@@ -312,7 +451,7 @@ class ReviewResult:
     def from_dict(cls, raw: dict[str, Any], raw_text: str = "") -> "ReviewResult":
         try:
             confidence = max(0.0, min(1.0, float(raw.get("confidence", 0.0))))
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             confidence = 0.0
         return cls(
             verdict=str(raw.get("verdict", "revise")).strip().lower(),

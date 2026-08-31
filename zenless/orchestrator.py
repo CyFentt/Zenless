@@ -27,6 +27,7 @@ from .models import (
     validate_stage_transition,
 )
 from .policy import classify_action, is_read_only, validate_proposal
+from .project_index import ProjectIndex
 from .prompts import (
     final_review_prompt,
     principal_prompt,
@@ -38,7 +39,9 @@ from .prompts import (
     visual_view_prompt,
 )
 from .protocol import ProtocolError, extract_json_object
+from .research_broker import ResearchBroker
 from .store import SQLiteStore, now_iso
+from .studio_discovery import StudioDiscoveryManager
 from .studio_mcp import MCPError, StudioMCPClient
 
 EventCallback = Callable[[PipelineEvent], None]
@@ -100,6 +103,7 @@ class ZenlessOrchestrator:
         play_test_seconds: float = 5.0,
         brain: ZenlessBrain | None = None,
         qa_callback: QACallback | None = None,
+        studio_discovery: StudioDiscoveryManager | None = None,
     ) -> None:
         self.store = store
         self.bridge = bridge
@@ -109,12 +113,16 @@ class ZenlessOrchestrator:
         self.play_test_seconds = max(1.0, min(30.0, play_test_seconds))
         self.brain = brain or ZenlessBrain()
         self.qa_callback = qa_callback
+        self.studio_discovery = studio_discovery or StudioDiscoveryManager(studio)
+        self.project_index = ProjectIndex(self.run_root.parent / "project-index.json")
+        self.research = ResearchBroker(bridge)
         self._run_lock = threading.Lock()
         self._tasks: dict[str, threading.Thread] = {}
         self._cancel: dict[str, threading.Event] = {}
         self._pause: dict[str, threading.Event] = {}
         self._paused_from: dict[str, Stage] = {}
         self._gates: dict[tuple[str, str], _ApprovalGate] = {}
+        self._task_providers: dict[str, dict[str, str]] = {}
         self._state_lock = threading.RLock()
         self.current_task_id = ""
 
@@ -315,6 +323,7 @@ class ZenlessOrchestrator:
                 self._cancel.pop(task_id, None)
                 self._pause.pop(task_id, None)
                 self._paused_from.pop(task_id, None)
+                self._task_providers.pop(task_id, None)
                 stale = [key for key in self._gates if key[0] == task_id]
                 for key in stale:
                     self._gates.pop(key, None)
@@ -328,21 +337,32 @@ class ZenlessOrchestrator:
         attachment_paths: tuple[Path, ...],
     ) -> None:
         self._check_control(task_id, cancel_event)
-        required = [("chatgpt", "Builder")]
+        options = options.resolve(objective)
+        self._task_providers[task_id] = self._resolve_role_providers()
+        if options.chat_mode == "TEMP":
+            self._run_temp_chat(task_id, objective, attachment_paths, cancel_event)
+            return
+        required = [(self._provider(task_id, "BUILDER"), "Builder")]
         if options.independent_review:
-            required.append(("deepseek", "Reviewer"))
+            required.append((self._provider(task_id, "REVIEWER"), "Reviewer"))
+        if options.visual_first or options.create_3d_asset:
+            required.append((self._provider(task_id, "VISUAL"), "Visual Generator"))
         if options.create_3d_asset:
-            required.append(("hunyuan", "3D Generator"))
-        for provider, label in required:
+            required.append((self._provider(task_id, "3D"), "3D Generator"))
+        for provider, label in dict(required).items():
             if not self.bridge.wait_for_provider(provider, timeout=2):
                 raise BridgeError(f"{label} requires login.")
         self._emit(task_id, Stage.COLLECTING_CONTEXT, "Reading the active Studio project.")
-        if not self.studio.running:
-            self.studio.start()
-        studios = self.studio.list_studios()
-        if not studios:
-            raise OrchestratorError("No Studio instance is connected.")
-        target = studios[0]
+        preferred = self.store.get_setting("studio.selection", {})
+        preferred = preferred if isinstance(preferred, dict) else {}
+        selection = self.studio_discovery.discover(
+            preferred_studio_id=str(preferred.get("studioId") or ""),
+            preferred_place_id=str(preferred.get("placeId") or ""),
+            preferred_universe_id=str(preferred.get("universeId") or ""),
+        )
+        target = selection.selected
+        if target is None:
+            raise OrchestratorError(selection.detail or f"Studio is not ready: {selection.state.value}")
         self.store.update_task(task_id, studio_id=target.studio_id)
         analysis = self.brain.analyze(
             objective,
@@ -350,29 +370,23 @@ class ZenlessOrchestrator:
             create_3d=options.create_3d_asset,
         )
         context = self._collect_context(task_id, target.studio_id, analysis)
+        context["effort"] = options.effort
         self.store.update_task(task_id, context_json=context)
 
-        if not self.bridge.wait_for_provider("chatgpt", timeout=2):
+        builder = self._provider(task_id, "BUILDER")
+        if not self.bridge.wait_for_provider(builder, timeout=2):
             raise BridgeError("Builder requires login.")
         if attachment_paths:
             self._emit(task_id, Stage.COLLECTING_CONTEXT, "Uploading validated attachments to the builder.")
-            uploaded = self.bridge.request(
-                "chatgpt",
-                "upload_files",
-                {"files": [str(path) for path in attachment_paths]},
-                task_id=task_id,
-                timeout=120,
-            )
-            if str(uploaded.get("status", "ok")).casefold() != "ok":
-                raise BridgeError("The provider rejected this job's attachments.")
+            self._upload_attachments(builder, task_id, attachment_paths)
 
         proposal, evidence = self._build_proposal(
             task_id,
             objective,
             context,
             target.studio_id,
-            options,
             cancel_event,
+            options,
         )
         proposal, review = self._review_and_revise(
             task_id,
@@ -463,7 +477,9 @@ class ZenlessOrchestrator:
                     f"Builder is preparing correction {fix_count}/{options.max_test_fixes} from the actual output.",
                     "warning",
                 )
-                repair = self._request_repair(task_id, objective, proposal, console_output, apply_evidence)
+                repair = self._request_repair(
+                    task_id, objective, proposal, console_output, apply_evidence, options.effort
+                )
                 repair, repair_review = self._review_and_revise(
                     task_id,
                     objective,
@@ -511,6 +527,102 @@ class ZenlessOrchestrator:
         self.store.update_task(task_id, final_text=final_text)
         self._emit(task_id, Stage.COMPLETE, "Implementation completed and released.", "success")
 
+    def _resolve_role_providers(self) -> dict[str, str]:
+        resolved = {
+            "BUILDER": "chatgpt",
+            "REVIEWER": "deepseek",
+            "VISUAL": "chatgpt",
+            "RESEARCH": "chatgpt",
+            "3D": "hunyuan",
+        }
+        configured = self.store.get_setting("provider.roles", {})
+        if not isinstance(configured, dict):
+            return resolved
+        for provider, roles in configured.items():
+            if provider not in {"chatgpt", "deepseek", "hunyuan"} or not isinstance(roles, list):
+                continue
+            for role in roles:
+                normalized = str(role).strip().upper()
+                if normalized in resolved:
+                    resolved[normalized] = str(provider)
+        return resolved
+
+    def _provider(self, task_id: str, role: str) -> str:
+        defaults = {"BUILDER": "chatgpt", "REVIEWER": "deepseek", "VISUAL": "chatgpt", "3D": "hunyuan"}
+        providers = getattr(self, "_task_providers", {}).get(task_id, {})
+        return providers.get(role, defaults.get(role, "chatgpt"))
+
+    def _run_temp_chat(
+        self,
+        task_id: str,
+        objective: str,
+        attachment_paths: tuple[Path, ...],
+        cancel_event: threading.Event,
+    ) -> None:
+        builder = self._provider(task_id, "BUILDER")
+        if not self.bridge.wait_for_provider(builder, timeout=2):
+            raise BridgeError("Builder requires login.")
+        self._emit(task_id, Stage.COLLECTING_CONTEXT, "Preparing temporary chat without project mutation access.")
+        if attachment_paths:
+            self._upload_attachments(builder, task_id, attachment_paths)
+        self._check_control(task_id, cancel_event)
+        prompt = (
+            "Answer the request directly. This is a temporary chat with no Studio context and no mutation authority. "
+            "Do not claim that project files, Studio state, tests, or external systems were inspected.\n\n" + objective
+        )
+        response = self._send_agent_prompt(builder, prompt, task_id=task_id)
+        self.store.append_message(task_id, "Builder", "assistant", response)
+        self.store.update_task(task_id, final_text=response)
+        self._emit(task_id, Stage.COMPLETE, "Temporary chat completed.", "success")
+
+    def _upload_attachments(self, provider: str, task_id: str, paths: tuple[Path, ...]) -> None:
+        response = self.bridge.request(provider, "capabilities", {}, task_id=task_id, timeout=15)
+        raw = response.get("capabilities")
+        capabilities = raw if isinstance(raw, dict) else {}
+        if not bool(capabilities.get("upload_files") or capabilities.get("supportsFiles")):
+            raise BridgeError("CAPABILITY_UNAVAILABLE: the selected provider mode does not expose file upload.")
+        maximum = max(1, int(capabilities.get("max_image_inputs") or capabilities.get("maxFiles") or 1))
+        self._upload_file_batches(
+            provider,
+            task_id,
+            tuple(str(path) for path in paths),
+            maximum,
+            Stage.COLLECTING_CONTEXT,
+        )
+
+    def _upload_file_batches(
+        self,
+        provider: str,
+        task_id: str,
+        files: tuple[str, ...],
+        maximum: int,
+        stage: Stage,
+    ) -> None:
+        maximum = max(1, maximum)
+        batches = [files[index : index + maximum] for index in range(0, len(files), maximum)]
+        for index, batch in enumerate(batches, 1):
+            uploaded = self.bridge.request(
+                provider,
+                "upload_files",
+                {
+                    "files": list(batch),
+                    "batchIndex": index,
+                    "totalBatches": len(batches),
+                    "continuation": index < len(batches),
+                },
+                task_id=task_id,
+                timeout=120,
+            )
+            confirmed = int(uploaded.get("uploaded") or len(batch))
+            if str(uploaded.get("status", "ok")).casefold() != "ok" or confirmed != len(batch):
+                raise BridgeError(f"The provider rejected attachment batch {index}/{len(batches)}.")
+            self._emit(
+                task_id,
+                stage,
+                f"Uploaded attachment batch {index}/{len(batches)}.",
+                "success",
+            )
+
     def _collect_context(self, task_id: str, studio_id: str, analysis: BrainAnalysis) -> dict[str, Any]:
         calls: list[tuple[str, dict[str, Any]]] = [
             ("get_studio_state", {}),
@@ -532,8 +644,28 @@ class ZenlessOrchestrator:
                 continue
             result = self.studio.call_tool(tool_name, arguments, studio_id=studio_id, timeout=90)
             context["reads"][tool_name + f":{len(context['reads'])}"] = result.compact(28_000)
+            if tool_name == "search_game_tree" and not result.is_error:
+                self.project_index.refresh(result.text)
             self._emit(task_id, Stage.COLLECTING_CONTEXT, f"Context collected: {tool_name}.", "success")
         context["tool_count"] = len(self.studio.tools)
+        context["project_index"] = self.project_index.relevant(analysis.keywords)
+        capabilities: dict[str, Any] = {}
+        try:
+            response = self.bridge.request(
+                self._provider(task_id, "RESEARCH"),
+                "capabilities",
+                {},
+                task_id=task_id,
+                timeout=15,
+            )
+            raw_capabilities = response.get("capabilities")
+            capabilities = raw_capabilities if isinstance(raw_capabilities, dict) else {}
+        except BridgeError:
+            pass
+        context["research"] = {
+            "routes": self.research.routes(capabilities, tuple(self.studio.tools)),
+            "capabilities": capabilities,
+        }
         return self.brain.compact_context(context)
 
     def _build_proposal(
@@ -542,28 +674,23 @@ class ZenlessOrchestrator:
         objective: str,
         context: dict[str, Any],
         studio_id: str,
-        options: TaskOptions,
         cancel_event: threading.Event,
+        options: TaskOptions,
     ) -> tuple[AgentProposal, list[dict[str, Any]]]:
         tools = self._tool_catalog()
         evidence: list[dict[str, Any]] = []
         seen_reads: set[str] = set()
         proposal: AgentProposal | None = None
-
-        # Respect TaskOptions effort and research settings
-        max_rounds = 3 if options.effort == "max" else (1 if options.effort == "min" else 2)
-        if options.research == "on":
-            self._emit(task_id, Stage.COLLECTING_CONTEXT, "Research mode active: inspecting documentation and web resources.")
-
-        for research_round in range(1, max_rounds + 1):
+        maximum_rounds = options.review_rounds
+        for research_round in range(1, maximum_rounds + 1):
             self._check_control(task_id, cancel_event)
             self._emit(
                 task_id,
                 Stage.CREATING,
-                f"Builder is creating the strategic plan (round {research_round}/{max_rounds}).",
+                f"Builder is creating the strategic plan (round {research_round}/{maximum_rounds}).",
             )
-            prompt = principal_prompt(objective, context, tools, evidence, research_round)
-            raw = self._send_agent_prompt("chatgpt", prompt, task_id=task_id)
+            prompt = principal_prompt(objective, context, tools, evidence, research_round, options.effort)
+            raw = self._send_agent_prompt(self._provider(task_id, "BUILDER"), prompt, task_id=task_id)
             self.store.append_message(task_id, "Builder", "agent", raw)
             proposal = self._parse_proposal(raw)
             errors = validate_proposal(proposal.actions, set(self.studio.tools))
@@ -580,9 +707,12 @@ class ZenlessOrchestrator:
                     continue
                 seen_reads.add(key)
                 unique_reads.append(action)
+            if not unique_reads:
+                proposal.actions = [action for action in proposal.actions if not is_read_only(action.tool)]
+                break
             self._emit(task_id, Stage.COLLECTING_CONTEXT, "Running the reads requested by the builder.")
             evidence.extend(self._execute_read_actions(task_id, studio_id, unique_reads))
-            if research_round == max_rounds:
+            if research_round == maximum_rounds:
                 proposal.actions = [action for action in proposal.actions if not is_read_only(action.tool)]
         if proposal is None:
             raise OrchestratorError("The builder did not produce a proposal.")
@@ -629,7 +759,8 @@ class ZenlessOrchestrator:
     ) -> tuple[AgentProposal, ReviewResult | None]:
         if not options.independent_review:
             return proposal, None
-        if not self.bridge.wait_for_provider("deepseek", timeout=2):
+        reviewer = self._provider(task_id, "REVIEWER")
+        if not self.bridge.wait_for_provider(reviewer, timeout=2):
             raise BridgeError("Reviewer requires login for independent review.")
 
         review: ReviewResult | None = None
@@ -638,7 +769,7 @@ class ZenlessOrchestrator:
             self._check_control(task_id, cancel_event)
             self._emit(task_id, Stage.REVIEWING, "Reviewer is independently reviewing the plan.")
             raw = self._send_agent_prompt(
-                "deepseek",
+                reviewer,
                 review_prompt(objective, context, proposal, evidence),
                 task_id=task_id,
             )
@@ -649,13 +780,13 @@ class ZenlessOrchestrator:
                 return proposal, review
             if review.verdict == "block":
                 raise TaskBlocked("Reviewer blocked the plan: " + (review.summary or "no summary"))
-            if revisions >= options.max_revisions:
+            if revisions >= options.review_rounds:
                 raise OrchestratorError("The revision limit was reached without independent approval.")
             revisions += 1
             self._emit(
                 task_id,
                 Stage.REVISING,
-                f"Builder is addressing review feedback ({revisions}/{options.max_revisions}).",
+                f"Builder is addressing review feedback ({revisions}/{options.review_rounds}).",
                 "warning",
             )
             proposal = self._request_revision(task_id, objective, context, proposal, review, "")
@@ -678,7 +809,7 @@ class ZenlessOrchestrator:
             required_changes=[user_note] if user_note else [],
         )
         raw = self._send_agent_prompt(
-            "chatgpt",
+            self._provider(task_id, "BUILDER"),
             revision_prompt(objective, context, proposal, effective_review, user_note),
             task_id=task_id,
         )
@@ -694,6 +825,7 @@ class ZenlessOrchestrator:
         cancel_event: threading.Event,
     ) -> None:
         visual_required = options.visual_first or options.create_3d_asset
+        visual_provider = self._provider(task_id, "VISUAL")
         visual_prompt = proposal.visual_prompt.strip() or proposal.model_3d_prompt.strip() or objective
         if visual_required:
             version = 0
@@ -705,7 +837,7 @@ class ZenlessOrchestrator:
                 self._check_control(task_id, cancel_event)
                 if not master or (revision_note and not revision_note.startswith("regen:")):
                     raw_master = self._send_agent_prompt(
-                        "chatgpt",
+                        visual_provider,
                         visual_master_prompt(objective, visual_prompt, revision_note),
                         task_id=task_id,
                     )
@@ -773,7 +905,7 @@ class ZenlessOrchestrator:
                 raise TaskBlocked(
                     "The builder did not provide a 3D prompt, so the 3D generator cannot run without a specification."
                 )
-            if not self.bridge.wait_for_provider("hunyuan", timeout=2):
+            if not self.bridge.wait_for_provider(self._provider(task_id, "3D"), timeout=2):
                 raise BridgeError("The 3D generator is not connected to create the requested asset.")
             target = "all"
             model_version = 0
@@ -833,7 +965,7 @@ class ZenlessOrchestrator:
                 shutil.copy2(prior_path, output)
             else:
                 response = self.bridge.request(
-                    "chatgpt",
+                    self._provider(task_id, "VISUAL"),
                     "generate_image",
                     {
                         "prompt": visual_view_prompt(master, view),
@@ -854,7 +986,7 @@ class ZenlessOrchestrator:
                 asset_id,
                 job_id=task_id,
                 name=output.name,
-                kind="PNG",
+                kind="VIEW",
                 path=output,
                 mime="image/png",
                 metadata={"view": view.upper(), "version": version, "width": width, "height": height},
@@ -885,17 +1017,22 @@ class ZenlessOrchestrator:
                 "warnings": ["Two or more views have identical PNG content."],
                 "summary": "Deterministic visual QA detected duplicate directions.",
             }
-        upload = self.bridge.request(
-            "chatgpt",
-            "upload_files",
-            {"files": paths},
-            task_id=task_id,
-            timeout=120,
+        visual_provider = self._provider(task_id, "VISUAL")
+        response = self.bridge.request(visual_provider, "capabilities", {}, task_id=task_id, timeout=15)
+        raw = response.get("capabilities")
+        capabilities = raw if isinstance(raw, dict) else {}
+        if not bool(capabilities.get("upload_files") or capabilities.get("supportsFiles")):
+            raise BridgeError("CAPABILITY_UNAVAILABLE: the visual provider mode does not expose file upload.")
+        maximum = max(1, int(capabilities.get("max_image_inputs") or capabilities.get("maxFiles") or 1))
+        self._upload_file_batches(
+            visual_provider,
+            task_id,
+            tuple(paths),
+            maximum,
+            Stage.GENERATING_CONCEPT,
         )
-        if int(upload.get("uploaded") or 0) != 6:
-            raise BridgeError("Visual QA requires confirmed uploads for all six separate views.")
         raw = self._send_agent_prompt(
-            "chatgpt",
+            visual_provider,
             visual_qa_prompt(master, version),
             task_id=task_id,
         )
@@ -932,7 +1069,8 @@ class ZenlessOrchestrator:
         version: int,
         target: str,
     ) -> dict[str, Any]:
-        capabilities_response = self.bridge.request("hunyuan", "capabilities", {}, task_id=task_id, timeout=45)
+        provider = self._provider(task_id, "3D")
+        capabilities_response = self.bridge.request(provider, "capabilities", {}, task_id=task_id, timeout=45)
         capabilities = capabilities_response.get("capabilities")
         caps = capabilities if isinstance(capabilities, dict) else {}
         required = {"upload_files", "geometry", "texture"}
@@ -956,10 +1094,9 @@ class ZenlessOrchestrator:
                 "The 3D generator requires all six approved PNG views: front, back, left, right, top, and bottom."
             )
         try:
-            max_images = max(1, min(6, int(caps.get("max_image_inputs") or 1)))
+            max_images = max(1, int(caps.get("max_image_inputs") or caps.get("maxFiles") or 1))
         except (TypeError, ValueError):
             max_images = 1
-        references = references[:max_images]
         self._emit(
             task_id,
             Stage.GENERATING_3D,
@@ -969,13 +1106,9 @@ class ZenlessOrchestrator:
         previous: dict[str, Any] = raw_previous if isinstance(raw_previous, dict) else {}
         geometry_path = str(previous.get("geometry_path") or "")
         if target in {"all", "geometry"}:
-            uploaded = self.bridge.request(
-                "hunyuan", "upload_files", {"files": references}, task_id=task_id, timeout=120
-            )
-            if int(uploaded.get("uploaded") or 0) != len(references):
-                raise BridgeError("The 3D generator did not confirm all supported visual references.")
+            self._upload_file_batches(provider, task_id, tuple(references), max_images, Stage.GENERATING_3D)
             geometry = self.bridge.request(
-                "hunyuan",
+                provider,
                 "generate_geometry",
                 {"prompt": prompt, "timeout_ms": 600_000},
                 task_id=task_id,
@@ -995,17 +1128,9 @@ class ZenlessOrchestrator:
         if not geometry_path or not Path(geometry_path).is_file():
             raise BridgeError("The texture and PBR stage requires valid local GLB geometry.")
         texture_inputs = [geometry_path, *references]
-        uploaded_texture = self.bridge.request(
-            "hunyuan",
-            "upload_files",
-            {"files": texture_inputs[:max_images]},
-            task_id=task_id,
-            timeout=120,
-        )
-        if int(uploaded_texture.get("uploaded") or 0) != len(texture_inputs[:max_images]):
-            raise BridgeError("The 3D generator did not confirm the texture and PBR inputs.")
+        self._upload_file_batches(provider, task_id, tuple(texture_inputs), max_images, Stage.GENERATING_3D)
         textured = self.bridge.request(
-            "hunyuan",
+            provider,
             "generate_texture",
             {
                 "prompt": prompt + "\nPreserve the approved geometry; generate final texture and PBR materials.",
@@ -1067,6 +1192,8 @@ class ZenlessOrchestrator:
         run_dir = self.run_root / task_id
         run_dir.mkdir(parents=True, exist_ok=True)
         evidence: list[dict[str, Any]] = []
+        if actions:
+            self.store.invalidate_test_runs(task_id)
         for index, action in enumerate(actions, start=1):
             decision = classify_action(action, set(self.studio.tools))
             if not decision.allowed or decision.risk == "critical":
@@ -1158,6 +1285,9 @@ class ZenlessOrchestrator:
                 raise
         (run_dir / "apply-evidence.json").write_text(
             json.dumps(evidence, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        self.project_index.mark_mutation(
+            [str(action.arguments.get("file_path") or action.arguments.get("target_file") or "") for action in actions]
         )
         return evidence
 
@@ -1318,10 +1448,11 @@ class ZenlessOrchestrator:
         proposal: AgentProposal,
         console_output: str,
         source_evidence: list[dict[str, Any]],
+        effort: str,
     ) -> AgentProposal:
         raw = self._send_agent_prompt(
-            "chatgpt",
-            repair_prompt(objective, proposal, console_output, source_evidence),
+            self._provider(task_id, "BUILDER"),
+            repair_prompt(objective, proposal, console_output, source_evidence, effort),
             task_id=task_id,
         )
         self.store.append_message(task_id, "Builder", "agent", raw)
@@ -1343,7 +1474,33 @@ class ZenlessOrchestrator:
         cancel_event: threading.Event,
         studio_id: str,
     ) -> tuple[AgentProposal, list[dict[str, Any]], str]:
-        if not self.bridge.wait_for_provider("deepseek", timeout=2):
+        if not options.independent_review:
+            final_state = self._collect_final_state(studio_id, mutation_evidence)
+            latest_test = self.store.latest_test_run(task_id)
+            failures = [item for item in mutation_evidence if item.get("is_error")]
+            if failures:
+                raise TaskBlocked("Deterministic final verification found failed mutation evidence.")
+            if self._console_has_errors(console_output):
+                raise TaskBlocked("Deterministic final verification found an error in the latest Studio output.")
+            if options.automatic_play_test and (latest_test is None or latest_test.get("status") != "PASSED"):
+                raise TaskBlocked("Deterministic final verification requires a current passing automatic QA run.")
+            result = {
+                "verdict": "approve",
+                "reviewType": "DETERMINISTIC",
+                "summary": "Mutation read-back and current QA evidence passed deterministic final verification.",
+                "finalStateCaptured": bool(final_state),
+            }
+            self.store.update_task(task_id, final_review_json=result)
+            self._emit(
+                task_id,
+                Stage.FINAL_REVIEW,
+                "Deterministic final verification approved the current Studio state.",
+                "success",
+                result["summary"],
+            )
+            return proposal, mutation_evidence, console_output
+        reviewer = self._provider(task_id, "REVIEWER")
+        if not self.bridge.wait_for_provider(reviewer, timeout=2):
             raise BridgeError("Reviewer requires login for the mandatory independent final review.")
         revisions = 0
         while True:
@@ -1366,8 +1523,8 @@ class ZenlessOrchestrator:
             if self._console_has_errors(console_output):
                 warnings.append("The latest Studio output still contains an error marker.")
             raw = self._send_agent_prompt(
-                "deepseek",
-                final_review_prompt(objective, final_state, mutation_evidence, qa_result, warnings),
+                reviewer,
+                final_review_prompt(objective, final_state, mutation_evidence, qa_result, warnings, options.effort),
                 task_id=task_id,
             )
             self.store.append_message(task_id, "Reviewer", "final-reviewer", raw)

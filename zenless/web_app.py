@@ -46,11 +46,12 @@ def run_web_app(
             height=880,
             min_size=(1000, 650),
             resizable=True,
-            background_color="#060608",
+            background_color="#050505",
             text_select=True,
         )
         if window is None:
             raise RuntimeError("The embedded browser did not create the main window.")
+        core.set_shutdown_callback(window.destroy)
 
         def after_start() -> None:
             if ui_ready is not None:

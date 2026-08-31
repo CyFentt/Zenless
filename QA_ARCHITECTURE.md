@@ -1,65 +1,92 @@
 # QA architecture
 
-## Evidence states
+## Evidence boundary
 
-- `PASSED`: the case ran and the observed condition passed.
-- `FAILED`: the case ran and produced an error or mismatch.
-- `SKIPPED`: the required capability was unavailable or the case did not apply.
-- `NOT RUN`: no execution was attempted for this verification.
+- `PASSED`: the case executed and the observed assertion passed.
+- `FAILED`: the case executed and produced an error or mismatch.
+- `SKIPPED`: an advertised requirement was unavailable or the case did not apply.
+- `STALE`: the evidence predates the latest relevant mutation.
+- `NOT RUN`: no execution was attempted for this release check.
 
-Source inspection cannot turn a Play test, provider operation, visual asset, or clean-machine check into `PASSED`.
+Source inspection cannot turn a Play test, provider operation, visual workflow, installer test, or clean-machine check into `PASSED`.
 
-## Release gate
+## Canonical flow
 
-`build.ps1` stops at the first failure and reaches packaging only after:
+Automatic QA is part of the project pipeline after the final approved mutation reaches Studio:
 
-1. Ruff lint and formatting checks.
-2. Pyright type checking.
-3. Backend pytest coverage.
-4. Clean frontend dependency installation.
-5. ESLint and TypeScript checks.
-6. Frontend Vitest coverage.
-7. A production Vite build with mocks disabled.
+```text
+APPLY -> READ-BACK -> INVALIDATE OLD EVIDENCE -> TEST
+  -> bounded FIX -> APPLY -> READ-BACK -> RETEST
+  -> FINAL VERIFICATION
+```
 
-This gate verifies local code, contracts, persistence, transport, and packaging. It does not prove external services or gameplay.
+The manual test API remains available for diagnostics and reruns, but it is not the normal completion path. A later mutation changes earlier `PASSED` or `FAILED` runs to `STALE` before final verification.
 
-## QA profiles
+## Profiles
 
-| Profile | Intended use | Scope |
-| --- | --- | --- |
-| `SMOKE` | Low-risk local or visual change | Short Play and focused checks |
-| `STANDARD` | Common change | Evidence, Edit state, Play output, and safe input smoke |
-| `DEEP` | Persistence, remotes, physics, multiplayer, or high risk | Standard coverage plus device and opt-in multiplayer harnesses |
+| Profile | Maximum duration | Maximum scenarios | Maximum clients | Chaos iterations |
+| --- | ---: | ---: | ---: | ---: |
+| `SMOKE` | 45 seconds | 4 | 1 | 0 |
+| `STANDARD` | 120 seconds | 10 | 2 | 2 |
+| `DEEP` | 240 seconds | 18 | 4 | 5 |
 
-Each run records an ID, deterministic seed, plan, cases, duration, pass/skip/fail counts, output, and reproducible failures. Cancellation and maximum duration are enforced. Cleanup always requests Stop when Play was started.
+`MINIMUM` effort selects `SMOKE`. `MAXIMUM` effort or high risk selects `DEEP`. Other tasks select `STANDARD`. Each run records its profile, seed, plan, cases, duration, counts, output, failures, and mutation relationship.
+
+## Scenario compiler and executor
+
+AI-generated scenario descriptions are inputs to a bounded compiler, not executable code. The internal step vocabulary is:
+
+`START_PLAY`, `WAIT`, `MOVE_CHARACTER`, `KEY_PRESS`, `MOUSE_CLICK`, `CALL_SAFE_TEST_HARNESS`, `ASSERT_PROPERTY`, `ASSERT_OUTPUT_NOT_CONTAINS_ERROR`, `CAPTURE_SCREEN`, and `STOP_PLAY`.
+
+The current compiler emits Start, a bounded wait, optional bounded movement intent, Output assertion, optional screen capture, and Stop. The executor maps only compatible advertised Studio tools. Unsupported input schemas and other unmapped steps are `SKIPPED`. It never executes LLM-generated Luau.
+
+Cancellation and deadlines are checked between steps. If Play starts, cleanup requests Stop in `finally`, including failure and cancellation paths.
 
 ## Capability rules
 
 | Area | Execution | Missing capability |
 | --- | --- | --- |
-| Edit, Play, Stop, Output | Connected Studio tools | Explicit failure or skip by criticality |
+| Edit, Play, Stop, Output | Selected Studio target and advertised tools | Fail or skip according to criticality |
 | Project test runner | Explicit project or Studio harness | `SKIPPED`, never inferred from filenames |
-| Multiplayer | Opt-in project harness with bounded players and time | `SKIPPED` without the exact contract |
-| Virtual input | Validated client input schema during Play | `SKIPPED`, never simulated through internal state |
-| Device emulation | Validated apply, capture, read-back, and restore | `SKIPPED` without capability; failure on incomplete restore |
-| Persistent data | Isolated test namespace and idempotent cleanup | Block when isolation is unsafe |
+| Feature scenarios | Compiled bounded DSL | Unsupported step is `SKIPPED` |
+| Multiplayer | Opt-in bounded project harness | `SKIPPED` without the exact protocol |
+| Virtual input | Validated Studio-side schema during Play | `SKIPPED` when unavailable |
+| Device emulation | Apply, capture, read-back, and restore | `SKIPPED` when unavailable; fail on unsafe restore |
+| Persistent data | Isolated namespace and idempotent cleanup | Block when isolation is unsafe |
 
-The multiplayer harness belongs to the game and must declare its protocol. Transport smoke does not replace gameplay assertions.
+Multiplayer and device tests are capability-dependent. Transport availability does not prove gameplay behavior.
 
-## Visual evidence
+## Visual and 3D evidence
 
-Each visual version must contain six distinct PNG files. Verification records format, non-empty content, minimum dimensions, SHA-256 per view, duplicate detection, direction, version metadata, and authorized asset rendering.
+Each visual version contains separate `FRONT`, `BACK`, `LEFT`, `RIGHT`, `TOP`, and `BOTTOM` PNG assets. Deterministic checks record dimensions, MIME, hash, direction, duplicates, version, and authorization. Approval publishes the six legacy per-view events plus one aggregate approval event.
 
-Semantic review compares identity, proportions, colors, details, and orientation against the master specification. Regeneration creates a new version and preserves prior evidence.
+3D evidence is separated into upload acceptance, geometry, texture, authorized download, local structural validation, and approval. A provider message or URL alone cannot establish model readiness.
 
-## 3D evidence
+## Final review policy
 
-The adapter records observed capabilities and upload limits before sending assets. Evidence separately covers accepted references, structurally valid geometry, texture application, authorized download, local viewing, and independent regeneration targets.
+Independent review runs only when task policy enables it. When disabled, final verification still checks current mutation evidence, current QA status, and console findings. It is not labeled independent review.
 
-Missing controls, incompatible limits, empty downloads, and invalid local models fail the stage. A URL or provider message is not a validated model.
+## Development gates
 
-## External verification
+The backend gate is:
 
-Final release verification should observe provider login persistence, streaming, independent reviews, the six-view workflow, geometry and texture generation, Studio approval and read-back, Play and Stop, recovery after safe interruption, and recovery after a potentially mutating interruption.
+```powershell
+python -m ruff check .
+python -m pyright
+python -m pytest -o addopts= -q
+```
 
-When no real Studio connection, authenticated provider session, or clean Windows machine is available, those checks remain `NOT RUN` and are reported as such.
+Frontend lint, types, tests, and production build run only with `build.ps1 -FrontendIntegration` after frontend integration. Frozen startup, installer install/uninstall, live Studio, live providers, and clean Windows are separate release gates.
+
+Jest Roblox is currently an on-demand catalog entry, not a globally installed or automatically injected runner. Existing project test conventions remain authoritative. No release should report Jest integration unless a real compatible project test was executed.
+
+## Manual external checklist
+
+When resources are available, record these independently:
+
+1. Live Studio discovery, target selection, tree read, controlled mutation, read-back, Play, Output, capture, input when advertised, and Stop.
+2. Login, restart persistence, streaming, mode switching, capability refresh, file limits, cancellation, and recovery for each enabled provider.
+3. Six-view upload, geometry, texture, download, and local model validation for the 3D provider.
+4. Per-user setup, first launch without developer tooling, repair, Keep Settings uninstall, Full Remove uninstall, and reinstall in a clean Windows 11 x64 profile.
+
+Unavailable resources remain `NOT RUN` or `LOGIN_REQUIRED`; they are never inferred from unit tests.

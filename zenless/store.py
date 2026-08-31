@@ -583,6 +583,14 @@ class SQLiteStore:
                 (status, json.dumps(summary, ensure_ascii=False), now_iso(), run_id),
             )
 
+    def invalidate_test_runs(self, job_id: str) -> int:
+        with closing(self._connect()) as connection:
+            cursor = connection.execute(
+                "UPDATE test_runs SET status = 'STALE' WHERE job_id = ? AND status IN ('PASSED', 'FAILED')",
+                (job_id,),
+            )
+        return cursor.rowcount
+
     def append_test_case(
         self,
         case_id: str,

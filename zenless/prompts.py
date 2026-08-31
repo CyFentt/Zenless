@@ -1,9 +1,32 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from datetime import date
+from typing import Any, Callable
 
 from .models import AgentProposal, ReviewResult
+
+
+class PromptPolicyEngine:
+    def __init__(self, date_provider: Callable[[], date] = date.today) -> None:
+        self.date_provider = date_provider
+
+    def render(self, *, role: str, task: str, effort: str = "AUTO", block: str = "GLOBAL") -> str:
+        return (
+            "PRODUCT:\nZenless is modifying a live Roblox Studio game.\n\n"
+            "LANGUAGE:\nLuau and current Roblox engine APIs.\n\n"
+            "SOURCE OF TRUTH:\nThe selected live Roblox Studio project.\n\n"
+            f"CURRENT DATE:\n{self.date_provider().isoformat()}\n\n"
+            f"ROLE:\n{role}\n\n"
+            f"TASK:\n{task}\n\n"
+            f"EFFORT:\n{effort}\n\n"
+            f"BLOCK:\n{block}\n\n"
+            "POLICY:\nServer authority, validated remote inputs, mutation safety, evidence-based conclusions, "
+            "no invented APIs, no fabricated tool results, and no private chain-of-thought."
+        )
+
+
+POLICY_ENGINE = PromptPolicyEngine()
 
 PRINCIPAL_CONTRACT = """
 You are the principal implementation agent inside Zenless for the live Roblox Studio project.
@@ -15,7 +38,7 @@ Rules:
 - Use strict Luau for new modules, task APIs, connection cleanup, and streaming-aware design.
 - Never invent Roblox APIs. If current API evidence is missing, propose an official-doc read action first.
 - Prefer multi_edit for persistent source changes. Do not propose execute_luau, keyboard/mouse input, or play controls.
-- Use Roblox's rbx-docs-search skill/http_get when an API needs current verification.
+- Use only documentation or fetch capabilities that Zenless actually advertised. Record uncertainty when unavailable.
 - For a 3D asset that must land directly in Studio, prefer the available Roblox generate_mesh or
   generate_procedural_model tool. Treat those as persistent actions that require user approval.
 - Use model_3d_prompt only when an external Hunyuan3D artifact/preview materially helps the task.
@@ -37,7 +60,7 @@ Schema:
 
 
 REVIEW_CONTRACT = """
-You are the independent DeepSeek reviewer. Review the proposed Roblox Studio block against the objective,
+You are the assigned independent reviewer. Review the proposed Roblox Studio block against the objective,
 live evidence, server authority, Luau correctness, API reality, regressions, performance, and test coverage.
 Do not rewrite the implementation and do not approve based on confidence alone.
 Return one JSON object only:
@@ -54,7 +77,7 @@ Return one JSON object only:
 
 
 FINAL_REVIEW_CONTRACT = """
-You are the independent DeepSeek FINAL reviewer. This review happens only after approved mutations,
+You are the assigned independent FINAL reviewer. This review happens only after approved mutations,
 real QA execution, bounded fixes, and reruns. Judge the final Studio state rather than the earlier proposal.
 Check the user objective, final relevant source, mutation/read-back evidence, QA results, remaining warnings,
 server authority, regressions, and whether any claim lacks evidence. Never approve a failed or skipped
@@ -100,10 +123,15 @@ def principal_prompt(
     tools: list[dict[str, Any]],
     evidence: list[dict[str, Any]],
     round_index: int,
+    effort: str = "AUTO",
 ) -> str:
+    raw_brain = context.get("brain")
+    brain: dict[str, Any] = raw_brain if isinstance(raw_brain, dict) else {}
+    blocks = ", ".join(str(item) for item in brain.get("review_blocks", [])) or "GLOBAL"
     return (
+        f"{POLICY_ENGINE.render(role='BUILDER', task=objective, effort=effort, block=blocks)}\n\n"
         f"{PRINCIPAL_CONTRACT}\n\n"
-        f"USER OBJECTIVE:\n{objective}\n\n"
+        f"REVIEW BLOCKS:\n{compact_json(brain.get('review_blocks', []), 2_000)}\n\n"
         f"RESEARCH ROUND: {round_index}\n\n"
         f"LIVE STUDIO CONTEXT:\n{compact_json(context, 44_000)}\n\n"
         f"AVAILABLE MCP TOOLS:\n{compact_json(tools, 38_000)}\n\n"
@@ -117,9 +145,13 @@ def review_prompt(
     proposal: AgentProposal,
     evidence: list[dict[str, Any]],
 ) -> str:
+    raw_brain = context.get("brain")
+    brain: dict[str, Any] = raw_brain if isinstance(raw_brain, dict) else {}
+    blocks = ", ".join(str(item) for item in brain.get("review_blocks", [])) or "GLOBAL"
+    effort = str(context.get("effort") or "AUTO")
     return (
+        f"{POLICY_ENGINE.render(role='REVIEWER', task=objective, effort=effort, block=blocks)}\n\n"
         f"{REVIEW_CONTRACT}\n\n"
-        f"USER OBJECTIVE:\n{objective}\n\n"
         f"LIVE STUDIO CONTEXT:\n{compact_json(context, 30_000)}\n\n"
         f"PRINCIPAL PROPOSAL:\n{compact_json(proposal.to_dict(), 48_000)}\n\n"
         f"READ EVIDENCE:\n{compact_json(evidence, 36_000)}"
@@ -134,7 +166,12 @@ def revision_prompt(
     user_note: str = "",
 ) -> str:
     note = user_note.strip() or "No additional user note."
+    raw_brain = context.get("brain")
+    brain: dict[str, Any] = raw_brain if isinstance(raw_brain, dict) else {}
+    blocks = ", ".join(str(item) for item in brain.get("review_blocks", [])) or "GLOBAL"
+    effort = str(context.get("effort") or "AUTO")
     return (
+        f"{POLICY_ENGINE.render(role='BUILDER', task=objective, effort=effort, block=blocks)}\n\n"
         f"{PRINCIPAL_CONTRACT}\n\n"
         "Revise the proposal once, addressing every required change. Do not repeat unchanged read calls.\n\n"
         f"USER OBJECTIVE:\n{objective}\n\n"
@@ -150,8 +187,10 @@ def repair_prompt(
     proposal: AgentProposal,
     console_output: str,
     source_evidence: list[dict[str, Any]],
+    effort: str = "AUTO",
 ) -> str:
     return (
+        f"{POLICY_ENGINE.render(role='BUILDER', task=objective, effort=effort, block='A')}\n\n"
         f"{PRINCIPAL_CONTRACT}\n\n"
         "The approved block was applied and the real Play Test produced errors. Propose the smallest repair block.\n\n"
         f"ORIGINAL OBJECTIVE:\n{objective}\n\n"
@@ -167,10 +206,11 @@ def final_review_prompt(
     mutation_evidence: list[dict[str, Any]],
     qa_result: dict[str, Any],
     remaining_warnings: list[str],
+    effort: str = "AUTO",
 ) -> str:
     return (
+        f"{POLICY_ENGINE.render(role='REVIEWER', task=objective, effort=effort, block='GLOBAL')}\n\n"
         f"{FINAL_REVIEW_CONTRACT}\n\n"
-        f"USER OBJECTIVE:\n{objective}\n\n"
         f"FINAL STUDIO STATE AND RELEVANT SOURCE:\n{compact_json(final_state, 52_000)}\n\n"
         f"MUTATION AND READ-BACK EVIDENCE:\n{compact_json(mutation_evidence, 42_000)}\n\n"
         f"QA RESULT:\n{compact_json(qa_result, 24_000)}\n\n"
@@ -181,8 +221,8 @@ def final_review_prompt(
 def visual_master_prompt(objective: str, visual_prompt: str, user_note: str = "") -> str:
     note = user_note.strip() or "No additional revision note."
     return (
+        f"{POLICY_ENGINE.render(role='VISUAL', task=objective, block='B')}\n\n"
         f"{VISUAL_MASTER_CONTRACT}\n\n"
-        f"USER OBJECTIVE:\n{objective}\n\n"
         f"DESIGN DIRECTION:\n{visual_prompt}\n\n"
         f"REVISION NOTE:\n{note}"
     )
@@ -190,6 +230,7 @@ def visual_master_prompt(objective: str, visual_prompt: str, user_note: str = ""
 
 def visual_view_prompt(master_spec: dict[str, Any], view: str) -> str:
     return (
+        f"{POLICY_ENGINE.render(role='VISUAL', task=f'Generate the {view} view.', block='B')}\n\n"
         "Generate exactly ONE production concept image, not a contact sheet and not multiple variants. "
         f"Show the {view.upper()} orthographic view of the SAME object defined below. "
         "Use no perspective, no isometric angle, no labels, no dimensions, no text, and no extra objects. "
@@ -201,6 +242,7 @@ def visual_view_prompt(master_spec: dict[str, Any], view: str) -> str:
 
 def visual_qa_prompt(master_spec: dict[str, Any], version: int) -> str:
     return (
+        f"{POLICY_ENGINE.render(role='VISUAL QA', task='Validate six orthographic views.', block='B')}\n\n"
         "Inspect the six attached PNG files named front, back, left, right, top, and bottom. They must show "
         "the same object from six distinct orthographic directions and match the master specification. "
         "Reject duplicated directions, perspective/isometric framing, contact sheets, inconsistent geometry, "

@@ -14,6 +14,18 @@ from typing import Any, BinaryIO, cast
 
 from .managed_browser import PROVIDERS, ProviderSpec
 from .native_host import read_native_message, write_native_message
+from .provider_registry import normalize_capabilities
+
+
+def _mode_options(raw: Any) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    if not isinstance(raw, list):
+        return ()
+    result = []
+    for item in raw:
+        if not isinstance(item, list) or len(item) != 2 or not isinstance(item[1], list):
+            continue
+        result.append((str(item[0]), tuple(str(value) for value in item[1])))
+    return tuple(result)
 
 
 def _specs_from_file(path: Path | None) -> dict[str, ProviderSpec]:
@@ -31,6 +43,13 @@ def _specs_from_file(path: Path | None) -> dict[str, ProviderSpec]:
             sends=tuple(str(value) for value in item.get("sends", [])),
             stops=tuple(str(value) for value in item.get("stops", [])),
             responses=tuple(str(value) for value in item.get("responses", [])),
+            composers=tuple(str(value) for value in item.get("composers", [])),
+            accounts=tuple(str(value) for value in item.get("accounts", [])),
+            unauthenticated=tuple(str(value) for value in item.get("unauthenticated", [])),
+            challenges=tuple(str(value) for value in item.get("challenges", [])),
+            login_paths=tuple(str(value) for value in item.get("login_paths", [])),
+            authenticated_paths=tuple(str(value) for value in item.get("authenticated_paths", [])),
+            mode_options=_mode_options(item.get("mode_options")),
         )
     return result
 
@@ -64,7 +83,7 @@ class WebViewHost:
             width=1000,
             height=760,
             hidden=True,
-            background_color="#09090C",
+            background_color="#090909",
         )
         if self._control is None:
             return 2
@@ -120,8 +139,11 @@ class WebViewHost:
             if delta:
                 self._write({"id": request_id, "event": "stream", "delta": delta})
 
+        def emit_event(event: str, payload: dict[str, Any]) -> None:
+            self._write({"id": request_id, "event": event, **payload})
+
         try:
-            result = self._handle(request, stream_callback=emit_stream)
+            result = self._handle(request, stream_callback=emit_stream, event_callback=emit_event)
             return {"id": request_id, "ok": True, "result": result}
         except Exception as exc:
             return {"id": request_id, "ok": False, "error": f"{type(exc).__name__}: {exc}"}
@@ -131,6 +153,7 @@ class WebViewHost:
         request: dict[str, Any],
         *,
         stream_callback: Callable[[str], None] | None = None,
+        event_callback: Callable[[str, dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
         action = str(request.get("action") or "")
         provider = str(request.get("provider") or "")
@@ -155,11 +178,24 @@ class WebViewHost:
         if action == "login":
             window.show()
             window.restore()
+            if event_callback is not None:
+                event_callback(
+                    "login_window_opened",
+                    {
+                        "provider": provider,
+                        "transport": "webview2",
+                        "url": str(window.get_current_url() or spec.url),
+                    },
+                )
             deadline = time.monotonic() + max(30.0, min(900.0, float(payload.get("timeout", 600))))
+            detected_at = 0.0
             while time.monotonic() < deadline and not self._stop.wait(0.75):
                 state = self._composer_state(window, spec)
-                if state.get("ready"):
-                    time.sleep(1.5)
+                if state.get("state") == "AUTHENTICATED":
+                    detected_at = detected_at or time.monotonic()
+                else:
+                    detected_at = 0.0
+                if detected_at and time.monotonic() - detected_at >= 2.0:
                     window.hide()
                     return {"state": "ready", "url": str(window.get_current_url() or spec.url)}
             if self._stop.is_set():
@@ -171,6 +207,8 @@ class WebViewHost:
                 return self._upload_files(window, payload)
             if provider_action == "select_model":
                 return self._select_model(window, str(payload.get("model") or ""))
+            if provider_action == "select_mode":
+                return self._select_mode(window, spec, str(payload.get("mode") or ""))
             if provider_action == "get_models":
                 return self._discover_models(window)
             if provider_action == "cancel":
@@ -208,7 +246,7 @@ class WebViewHost:
             width=1050,
             height=780,
             hidden=True,
-            background_color="#09090C",
+            background_color="#090909",
         )
         if window is None:
             raise RuntimeError(f"Could not create WebView2 window for {provider}")
@@ -226,14 +264,38 @@ class WebViewHost:
     def _composer_state(self, window: Any, spec: ProviderSpec) -> dict[str, Any]:
         script = f"""
         (() => {{
-          const selectors = {json.dumps(spec.inputs)};
+          const composers = {json.dumps(spec.composers or spec.inputs)};
+          const accounts = {json.dumps(spec.accounts)};
+          const sends = {json.dumps(spec.sends)};
+          const unauthenticated = {json.dumps(spec.unauthenticated)};
+          const challenges = {json.dumps(spec.challenges)};
+          const loginPaths = {json.dumps(spec.login_paths)};
+          const authenticatedPaths = {json.dumps(spec.authenticated_paths)};
           const visible = (node) => {{
             if (!node) return false;
             const style = getComputedStyle(node);
             const box = node.getBoundingClientRect();
             return style.visibility !== 'hidden' && style.display !== 'none' && box.width > 0 && box.height > 0;
           }};
-          return {{ready: selectors.some(selector => [...document.querySelectorAll(selector)].some(visible))}};
+          const any = selectors => selectors.some(selector => [...document.querySelectorAll(selector)].some(visible));
+          const url = location.href.toLocaleLowerCase();
+          const signals = {{
+            composer: any(composers),
+            account: any(accounts),
+            send: any(sends),
+            unauthenticated: any(unauthenticated) || loginPaths.some(path => url.includes(path.toLocaleLowerCase())),
+            challenge: any(challenges),
+            authenticatedUrl: authenticatedPaths.some(path => url.includes(path.toLocaleLowerCase())),
+            legacy: accounts.length === 0 && unauthenticated.length === 0 &&
+              challenges.length === 0 && loginPaths.length === 0 && authenticatedPaths.length === 0
+          }};
+          let state = 'UNKNOWN';
+          if (signals.challenge) state = 'CHALLENGE';
+          else if (signals.unauthenticated) state = 'LOGIN_REQUIRED';
+          else if ((signals.account && signals.composer) ||
+            (signals.authenticatedUrl && signals.composer && signals.send) ||
+            (signals.legacy && signals.composer && signals.send)) state = 'AUTHENTICATED';
+          return {{state, ready: state === 'AUTHENTICATED', signals}};
         }})()
         """
         result = window.evaluate_js(script)
@@ -245,13 +307,28 @@ class WebViewHost:
           const visible = (node) => !!node && getComputedStyle(node).display !== 'none' &&
             getComputedStyle(node).visibility !== 'hidden';
           const any = (selectors) => selectors.some(selector => [...document.querySelectorAll(selector)].some(visible));
-          const file = document.querySelector('input[type="file"]');
+          const file = [...document.querySelectorAll('input[type="file"]')].find(visible);
           const accept = (file?.getAttribute('accept') || '').split(',').map(value => value.trim()).filter(Boolean);
           const body = (document.body?.innerText || '').slice(0, 200000);
           const countMatch = body.match(/(?:up to|max(?:imum)?|最多|至多)\\s*(\\d+)\\s*(?:images?|views?|photos?|图片|图)/i);
           const explicitCount = countMatch ? Math.max(1, Math.min(6, Number(countMatch[1]))) : 0;
-          const labels = [...document.querySelectorAll('button,[role="tab"],[role="option"]')]
-            .map(node => (node.innerText || node.textContent || '').trim()).filter(Boolean).slice(0, 400).join('\\n');
+          const selected = node => node.getAttribute('aria-pressed') === 'true' ||
+            node.getAttribute('aria-selected') === 'true' ||
+            ['active', 'on', 'checked'].includes((node.getAttribute('data-state') || '').toLocaleLowerCase()) ||
+            /(^|\\s)(active|selected|checked)(\\s|$)/i.test(node.className || '');
+          const controls = [...document.querySelectorAll('button,[role="tab"],[role="option"]')]
+            .filter(visible).slice(0, 400);
+          const labels = controls
+            .map(node => (node.innerText || node.textContent || '').trim()).filter(Boolean).join('\\n');
+          const modeOptions = {json.dumps({mode: [label.casefold() for label in labels] for mode, labels in spec.mode_options})};
+          const matches = (node, options) => {{
+            const text = (node.innerText || node.textContent || '').trim().toLocaleLowerCase();
+            return options.some(label => text === label ||
+              (text.startsWith(label) && text.length <= label.length + 20));
+          }};
+          const modeControl = controls.find(node => Object.values(modeOptions).some(options => matches(node, options)));
+          const activeMode = Object.entries(modeOptions)
+            .find(([, options]) => controls.some(node => selected(node) && matches(node, options)))?.[0] || '';
           return {{
             send_text: any({json.dumps(spec.inputs)}) && any({json.dumps(spec.sends)}),
             upload_files: !!file,
@@ -259,7 +336,12 @@ class WebViewHost:
             max_image_inputs: file ? (file.multiple ? (explicitCount || 1) : 1) : 0,
             cancel: any({json.dumps(spec.stops)}),
             select_model: !!document.querySelector('[role="option"], [role="menuitem"], [data-model]'),
+            select_mode: !!modeControl,
             responses: any({json.dumps(spec.responses)}),
+            search: /(web search|search the web|pesquisar na web|联网搜索|搜索)/i.test(labels),
+            reasoning: /(reasoning|thinking|expert|reasoner|raciocinio|deepthink|deep think|深度思考|思考)/i.test(labels),
+            mode: activeMode,
+            image_generation: /(create image|generate image|image generation|criar imagem|gerar imagem|生成图像|生成图片)/i.test(labels),
             geometry: /(geometry|shape|mesh|几何|形状)/i.test(labels),
             texture: /(texture|pbr|material|纹理|贴图|材质)/i.test(labels),
             download_artifact: [...document.querySelectorAll('a[href]')].some(a => /\\.(glb|gltf|fbx|obj)(\\?|$)/i.test(a.href))
@@ -267,7 +349,7 @@ class WebViewHost:
         }})()
         """
         result = window.evaluate_js(script)
-        return dict(result) if isinstance(result, dict) else {}
+        return normalize_capabilities(dict(result) if isinstance(result, dict) else {}, source="LIVE")
 
     @staticmethod
     def _devtools(window: Any, method: str, parameters: dict[str, Any]) -> dict[str, Any]:
@@ -355,6 +437,47 @@ class WebViewHost:
         )
         models = [str(item).strip() for item in result] if isinstance(result, list) else []
         return {"status": "ok", "models": [item for item in models if item], "transport": "webview2"}
+
+    def _select_mode(self, window: Any, spec: ProviderSpec, mode: str) -> dict[str, Any]:
+        normalized = mode.strip().casefold()
+        labels = dict(spec.mode_options).get(normalized)
+        if labels is None:
+            raise RuntimeError("The provider mode is not supported by this adapter.")
+        result = window.evaluate_js(
+            f"""
+            (() => {{
+              const labels = {json.dumps([item.casefold() for item in labels])};
+              const visible = node => !!node && getComputedStyle(node).display !== 'none' &&
+                getComputedStyle(node).visibility !== 'hidden';
+              const selected = node => node.getAttribute('aria-pressed') === 'true' ||
+                node.getAttribute('aria-selected') === 'true' ||
+                ['active', 'on', 'checked'].includes((node.getAttribute('data-state') || '').toLocaleLowerCase()) ||
+                /(^|\\s)(active|selected|checked)(\\s|$)/i.test(node.className || '');
+              const nodes = [...document.querySelectorAll('button,[role="tab"],[role="option"]')];
+              const target = nodes.find(node => {{
+                const text = (node.innerText || node.textContent || '').trim().toLocaleLowerCase();
+                return visible(node) && labels.some(label => text === label ||
+                  (text.startsWith(label) && text.length <= label.length + 20));
+              }});
+              if (!target) return {{ok: false}};
+              const before = selected(target);
+              if (!before) target.click();
+              return {{ok: true, changed: !before}};
+            }})()
+            """
+        )
+        if not isinstance(result, dict) or not result.get("ok"):
+            raise RuntimeError("CAPABILITY_UNAVAILABLE: the provider did not expose a verified mode control.")
+        time.sleep(0.35)
+        capabilities = self._capabilities(window, spec)
+        if str(capabilities.get("mode") or "").casefold() != normalized:
+            raise RuntimeError("CAPABILITY_UNAVAILABLE: the provider mode change could not be verified.")
+        return {
+            "status": "ok",
+            "selected": normalized,
+            "capabilities": capabilities,
+            "transport": "webview2",
+        }
 
     @staticmethod
     def _cancel(window: Any, spec: ProviderSpec) -> dict[str, Any]:

@@ -29,6 +29,7 @@ class BrainAnalysis:
     scopes: tuple[str, ...]
     providers: tuple[str, ...]
     requires_mutation: bool
+    review_blocks: tuple[str, ...]
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -74,6 +75,13 @@ class ZenlessBrain:
             providers.append("hunyuan")
         read_only_markers = ("read only", "only read", "explain", "audit", "analyze without changes")
         requires_mutation = not any(marker in normalized for marker in read_only_markers)
+        blocks = []
+        if any(intent in intents for intent in ("debug", "test")):
+            blocks.append("A")
+        if requires_mutation and any(intent in intents for intent in ("visual", "3d", "code", "audit")):
+            blocks.append("B")
+        if not blocks:
+            blocks.append("B" if requires_mutation else "A")
         canonical = json.dumps(
             {"objective": " ".join(tokens), "intents": intents, "scopes": scopes},
             ensure_ascii=False,
@@ -81,7 +89,7 @@ class ZenlessBrain:
             separators=(",", ":"),
         )
         fingerprint = hashlib.blake2b(canonical.encode("utf-8"), digest_size=16).hexdigest()
-        return BrainAnalysis(fingerprint, intents, keywords, scopes, tuple(providers), requires_mutation)
+        return BrainAnalysis(fingerprint, intents, keywords, scopes, tuple(providers), requires_mutation, tuple(blocks))
 
     def compact_context(self, context: dict[str, Any], *, max_chars: int = 96_000) -> dict[str, Any]:
         result = dict(context)

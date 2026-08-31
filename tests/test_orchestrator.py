@@ -115,6 +115,8 @@ class FakeVisualBridge(FakeBridge):
         task_id: str,
         timeout: float,
     ) -> dict[str, Any]:
+        if action == "capabilities":
+            return {"status": "ok", "capabilities": {"upload_files": True, "max_image_inputs": 6}}
         if action == "generate_image":
             output = Path(str(payload["output_path"]))
             output.parent.mkdir(parents=True, exist_ok=True)

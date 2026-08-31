@@ -64,10 +64,40 @@ def find_studio_mcp(explicit_path: str = "") -> Path:
         version_dir = candidate.parent
         if (version_dir / "RobloxStudioBeta.exe").is_file() or (version_dir / "RobloxStudio.exe").is_file():
             paired.append(candidate)
-    candidates = paired or fallback
+    running_directories = _running_studio_directories()
+    running_matches = [candidate for candidate in paired if candidate.parent in running_directories]
+    candidates = running_matches or paired or fallback
     if not candidates:
         raise MCPError("StudioMCP.exe was not found. Update Studio and enable Assistant > MCP Servers.")
     return max(candidates, key=lambda path: path.stat().st_mtime)
+
+
+def _running_studio_directories() -> set[Path]:
+    if os.name != "nt":
+        return set()
+    command = (
+        "Get-CimInstance Win32_Process | Where-Object { "
+        "$_.Name -in @('RobloxStudioBeta.exe','RobloxStudio.exe') } | "
+        "Select-Object -ExpandProperty ExecutablePath"
+    )
+    try:
+        completed = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", command],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=8,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            check=False,
+        )
+    except OSError, subprocess.TimeoutExpired:
+        return set()
+    if completed.returncode != 0:
+        return set()
+    return {Path(line.strip()).resolve().parent for line in completed.stdout.splitlines() if line.strip()}
 
 
 class StudioMCPClient:
@@ -123,7 +153,7 @@ class StudioMCPClient:
                     {
                         "protocolVersion": MCP_PROTOCOL_VERSION,
                         "capabilities": {},
-                        "clientInfo": {"name": "Zenless", "version": "2.0.0"},
+                        "clientInfo": {"name": "Zenless", "version": "2.1.0"},
                     },
                     timeout=25,
                 )

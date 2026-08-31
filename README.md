@@ -1,84 +1,89 @@
 # Zenless
 
-Zenless is a local Windows application that coordinates Studio development through authenticated browser sessions without API keys. Login, MFA, CAPTCHA, and consent remain manual.
+Zenless is a local Windows desktop orchestrator for Roblox Studio development. It connects an authenticated local interface, browser-based AI providers, Studio MCP, durable project state, controlled mutations, and bounded QA. Provider login, MFA, CAPTCHA, consent, and account permissions remain manual.
 
 ```text
 request
-  -> read Studio state
-  -> create a proposal
-  -> run an independent review
-  -> request user approval
-  -> apply verified Studio changes
-  -> run bounded QA and repair
-  -> perform a final review
-  -> complete or block
+  -> active readiness and task-intent checks
+  -> Studio discovery and relevant context collection
+  -> bounded research, planning, and review
+  -> explicit approval for protected changes
+  -> snapshot, hash precondition, mutation, and read-back
+  -> automatic QA, bounded repair, and final verification
+  -> complete, block, or fail with evidence
 ```
 
-## Usage
+## Run
 
-1. Open the current Studio project in Edit mode and connect a compatible MCP server.
-2. Run `Zenless.exe`.
-3. Use Settings > Links to authenticate the Builder, Reviewer, and 3D Generator when required.
-4. Submit a complete objective in Chat and approve each relevant write gate.
+Windows 11 x64 is the primary target. Windows 10 x64 is best effort.
 
-Persistent data is stored under `%LOCALAPPDATA%\Zenless`, including the local database, rotating logs, private browser profiles, validated attachments, snapshots, evidence, and generated assets.
+1. Install with `ZenlessSetup.exe` or run the portable `Zenless.exe`.
+2. Open the intended Roblox Studio project in Edit mode with a compatible Studio MCP server enabled.
+3. Complete provider login only when readiness or the selected task requires it.
+4. Submit the objective in Chat and approve protected changes when prompted.
 
-## Guarantees
+Readiness distinguishes core, bridge, browser, provider, storage, and Studio states. Multiple detected Studio instances require an explicit selection. Ordinary code tasks do not require the 3D provider unless task intent or an explicit option enables 3D.
 
-- The HTTP and WebSocket bridge binds only to loopback with an ephemeral port, a per-process token, strict host and origin validation, and request IDs.
-- The Core is authoritative. The UI requests actions but cannot apply changes or declare success.
-- Mutations require a current read, snapshot, SHA-256 precondition, idempotent operation, application, read-back, and verification.
-- Recovery never repeats an uncertain write automatically.
-- Browser deltas are forwarded through WebSocket while completed responses alone become durable state.
-- Visual First uses six versioned orthographic views with explicit approval and controlled regeneration.
-- 3D generation discovers available capabilities and keeps geometry and texture stages separate.
-- QA records its profile, seed, cases, evidence, output, and result. Missing capabilities are skipped or blocked, never reported as successful.
-- Shutdown is cooperative across the bridge, browser controllers, Studio connection, queues, and database.
+## Task controls
 
-## Limits
+- `visualFirst` and `create3D`: `AUTO`, `ON`, or `OFF`; legacy booleans remain accepted.
+- `effort`: `AUTO`, `MINIMUM`, `MEDIUM`, or `MAXIMUM`.
+- `chatMode`: `PROJECT` or `TEMP`; temporary chat cannot enable Studio mutation or asset generation.
+- Independent review is optional. Deterministic final verification remains required when it is disabled.
 
-- Browser automation depends on current provider interfaces and may require selector updates.
-- The managed browser fallback is provisioned only when needed.
-- Local 3D import depends on capabilities exposed by the connected Studio server.
-- Multiplayer, virtual input, and device emulation run only when the connected Studio server exposes them.
-- The release is a single-file executable and does not include a separate installer.
+## Safety and privacy
+
+- The HTTP and WebSocket bridge binds only to loopback, uses an ephemeral port and per-process token, and validates host and origin.
+- The Core is authoritative. The interface cannot declare provider readiness, apply a Studio change, or fabricate QA success.
+- Persistent changes use a current read, durable snapshot, SHA-256 precondition, idempotent operation, allowlisted Studio call, read-back, and evidence.
+- Provider profiles stay under Zenless-owned local storage. Passwords are never stored and cookies are never sent to the frontend.
+- ZIP extraction rejects traversal, absolute paths, links, special files, reserved Windows names, excessive counts, excessive sizes, and suspicious compression ratios.
+- Optional tools are never installed by default. Automatic installation requires an HTTPS package with a pinned version and SHA-256 checksum.
+- Storage cleanup evicts only disposable data. The database, browser session profiles, required runtime, active evidence, and explicitly protected paths are preserved.
+
+Application data is stored under `%LOCALAPPDATA%\Zenless`. The per-user installer uses `%LOCALAPPDATA%\Programs\Zenless` and does not require elevation for normal installation or launch.
 
 ## Development
 
+Install backend dependencies and run the backend gate:
+
 ```powershell
 python -m pip install -r requirements-dev.txt
-npm --prefix frontend ci
 python -m ruff check .
 python -m pyright
 python -m pytest -o addopts= -q
-npm --prefix frontend run lint
-npm --prefix frontend run typecheck
-npm --prefix frontend run test
-npm --prefix frontend run build
 ```
 
-`tests/live_studio_smoke.py` starts Play only after Studio confirms Edit mode and always requests Stop in `finally`. It requires a real connected instance.
-
-Build the release with:
+Build the portable executable and installer from an existing compiled frontend:
 
 ```powershell
 .\build.ps1
 ```
 
-The build runs Ruff, Pyright, pytest, dependency installation, ESLint, TypeScript, Vitest, a production Vite build with mocks disabled, and PyInstaller. The only release artifact is `dist\Zenless.exe`.
+The default build does not edit or rebuild frontend source. After the frontend integration branch is merged, its gate can be requested explicitly:
 
-## Source layout
+```powershell
+.\build.ps1 -FrontendIntegration
+```
 
-- `frontend/`: canonical React and TypeScript source plus the transport contract.
-- `zenless/core.py`: authoritative application state and UI adapters.
-- `zenless/web_bridge.py`: authenticated local REST and WebSocket transport.
-- `zenless/orchestrator.py`: pipeline, approval gates, mutation, and final review.
-- `zenless/agent_gateway.py`: browser route selection by capability.
-- `zenless/studio_mcp.py`: Studio protocol client.
-- `zenless/store.py`: local database, idempotent operations, and recovery.
-- `zenless/qa_breaker.py`: QA planning, execution, and evidence.
-- `Zenless.spec`: console-free single-file Windows package.
+`build.ps1` requires a compiled `frontend\dist`, PyInstaller, and NSIS 3.12 unless `-SkipInstaller` is used. Outputs are `dist\Zenless.exe` and, unless skipped, `dist\ZenlessSetup.exe`.
 
-See [ARCHITECTURE.md](ARCHITECTURE.md), [QA_ARCHITECTURE.md](QA_ARCHITECTURE.md), [frontend/BACKEND_CONTRACT.md](frontend/BACKEND_CONTRACT.md), and [RELEASE_NOTES.md](RELEASE_NOTES.md).
+## Verification boundary
 
-Licensed under GPL-3.0. See `NOTICE.md` for required legal notices.
+Ruff, Pyright, pytest, frozen startup, installer execution, live providers, live Studio, and a clean Windows profile are separate gates. A static or unit-test result does not certify an external provider, gameplay, installation, or clean-machine workflow. Current release evidence is recorded in [RELEASE_NOTES.md](RELEASE_NOTES.md).
+
+## Source map
+
+- `zenless/core.py`: authoritative application state, REST adapters, and user-visible events.
+- `zenless/orchestrator.py`: task pipeline, approvals, mutation safety, QA, repair, and final verification.
+- `zenless/provider_registry.py`: provider manifests, auth states, modes, and normalized capabilities.
+- `zenless/agent_gateway.py`: persistent route selection across embedded and managed browser controllers.
+- `zenless/studio_discovery.py`: bounded discovery, selection, readiness, and capability classification.
+- `zenless/attachments.py`: inspection, safe ZIP extraction, provider routing, ranking, and batching.
+- `zenless/qa_breaker.py` and `zenless/scenario_qa.py`: QA profiles, evidence, bounded scenarios, and cleanup.
+- `zenless/storage.py`, `zenless/tool_manager.py`, and `zenless/uninstall.py`: local lifecycle controls.
+- `zenless/web_bridge.py`: authenticated REST, upload, asset, and WebSocket transport.
+
+See [ARCHITECTURE.md](ARCHITECTURE.md), [PROVIDER_ARCHITECTURE.md](PROVIDER_ARCHITECTURE.md), [QA_ARCHITECTURE.md](QA_ARCHITECTURE.md), [TOOLS_ARCHITECTURE.md](TOOLS_ARCHITECTURE.md), [INSTALLATION_ARCHITECTURE.md](INSTALLATION_ARCHITECTURE.md), and [BOLT_BACKEND_REQUIREMENTS.md](BOLT_BACKEND_REQUIREMENTS.md).
+
+Licensed under GPL-3.0.

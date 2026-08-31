@@ -1,58 +1,63 @@
 # Release Notes
 
-## Unreleased - 2026-08-30
+## Unreleased backend-vnext - 2026-08-30
 
-### Runtime and recovery
+### Provider and readiness core
 
-- Application-lifetime ownership keeps the WebSocket, subscriptions, and hydration active after the splash closes.
-- Startup waits for both backend readiness and an authoritative REST snapshot.
-- Every reconnect refreshes connections, agents, jobs, settings, diagnostics, assets, Studio state, messages, context, changes, visual state, model state, and test state.
-- Agent, job, and message updates use idempotent upserts to prevent missing rows and duplicate chat history.
-- Interrupted jobs are recovered conservatively according to their last persisted stage.
+- Added an authoritative readiness snapshot for core, bridge, WebSocket, UI, browser, providers, Studio, storage, and system diagnostics.
+- Replaced generic composer authentication with provider-specific URL, account, application, composer, generation, login, and challenge signals.
+- Added stable authentication confirmation, persistence verification, durable route selection, and non-secret provider session metadata.
+- Added a provider registry with support status, role bindings, mode-level capability hints, live capability normalization, selection, refresh, and reassignment APIs.
+- Kept unsupported catalog entries visible but disabled; enabled browser adapters remain `BETA` until real external verification.
+- Added `AUTO`, `ON`, and `OFF` visual and 3D intent, provider-independent effort, bounded deadlines, and temporary chat mode.
 
-### Chat and providers
+### Studio, orchestration, and QA
 
-- Provider authentication is checked before a job is created or Studio work begins.
-- Login-required responses are structured, visible in chat, and expose a legitimate Login action.
-- Blocked and failed pipeline states persist and publish their real error messages.
-- Chat submission reconciles the temporary user message with its persisted server ID and hydrates the new job immediately.
-- Visible agent names are Builder, Reviewer, 3D Generator, and Studio.
+- Added bounded Studio discovery retry, persisted target matching, multiple-instance selection, running-version MCP preference, and dynamic capability classification.
+- Added incremental project indexing, current-date prompts, bounded official research routes, block-aware review metadata, and adaptive review rounds.
+- Made automatic QA follow the final applied mutation and invalidate stale test evidence after later mutations.
+- Added a bounded scenario compiler and executor that maps feature descriptions only to validated internal steps.
+- Preserved deterministic final verification when independent external review is disabled.
 
-### Core and safety
+### Files, artifacts, storage, and tools
 
-- The local bridge uses an ephemeral port, random session token, strict host and origin checks, authenticated WebSocket access, bounded multipart input, and ID-based assets.
-- Mutations require snapshots, SHA-256 preconditions, operation claims, read-back, and correlated evidence.
-- Pending mutation operations are never replayed automatically after a crash.
-- Diagnostics collect startup, bridge, browser, Studio, and pipeline failures in bounded rotating logs.
+- Added content-aware attachment inspection, safe bounded ZIP extraction, provider type and size validation, relevance ranking, and complete batching.
+- Normalized six-view assets to `VIEW`, model runtime states to `IDLE`, `GENERATING`, `READY`, or `FAILED`, and approval to a separate field.
+- Added observable chat activity, unified image/model/file artifacts, aggregate visual approval, and user-visible diagnostic events.
+- Expanded storage accounting to database, logs, runs, snapshots, generated assets, downloads, temporary data, browser cache and profiles, runtime, tools, tool cache, and test artifacts.
+- Added configurable 1-100 GB budgets with a 10 GB default and LRU cleanup limited to disposable data.
+- Added a checksum-pinned optional ToolManager. Current default entries are catalog-only and `ON_DEMAND`; no unpinned package is automatically installed.
 
-### QA and release
+### Windows lifecycle
 
-- QA records profile, seed, plan, cases, output, failures, and independent review, and always requests Play cleanup.
-- Conditional checks remain `SKIPPED` when the required tool, schema, project harness, or live Studio session is unavailable.
-- `build.ps1` blocks packaging until Ruff, Pyright, pytest, ESLint, TypeScript, Vitest, and the production Vite build pass.
-- `Zenless.spec` produces one Windows executable without a console or unused GUI toolkits.
+- Changed native startup and WebView2 shell colors to monochrome.
+- Added Windows x64, disk, memory, WebView2, and Studio diagnostics plus component-scoped repair endpoints.
+- Added a per-user NSIS installer, Windows uninstall entry, current-user shortcuts, Keep Settings uninstall, Full Remove uninstall, and exact owned-root validation.
+- `build.ps1` keeps backend and frontend work isolated by default and produces the portable executable plus installer when NSIS is available.
 
-### Verification
+### Verification status
 
-| Gate | Current result |
-|---|---|
-| Ruff | `PASS` |
-| Pyright | `PASS` - 0 errors, 0 warnings |
-| pytest | `PASS` - 51 tests |
-| ESLint | `PASS` |
-| TypeScript | `PASS` |
-| Vitest | `PASS` - 5 files, 50 tests |
-| Production dependency audit | `PASS` - 0 vulnerabilities |
-| Production Vite build | `PASS` |
-| One-file executable | `PASS` - 63,738,647 bytes, SHA-256 `757FF4E68460D61AA32DDFB2352990CC448C40EC1AB1DD522071D48F10AD9854` |
-| Frozen executable startup | `PASS` |
-| Frozen embedded browser round trip | `PASS` |
-| Live Studio, Play, and Output | `NOT RUN` - no connected Studio session |
-| Live provider and visual workflow | `NOT RUN` |
-| Clean Windows machine | `NOT RUN` |
+The entries above describe the implementation, not external E2E certification. Final gate results must be recorded from the release run.
+
+| Gate | Current release evidence |
+| --- | --- |
+| Ruff | Pending final branch run |
+| Pyright | Pending final branch run |
+| pytest | Pending final branch run |
+| Frozen executable startup | Pending final package run |
+| Installer build and per-user install/uninstall | Pending final package run |
+| Live Studio, Play, Output, and mutation | `NOT RUN` unless separately recorded |
+| ChatGPT browser workflow | `LOGIN_REQUIRED` or `NOT RUN` unless separately recorded |
+| DeepSeek browser workflow | `LOGIN_REQUIRED` or `NOT RUN` unless separately recorded |
+| Hunyuan 3D workflow | `LOGIN_REQUIRED` or `NOT RUN` unless separately recorded |
+| Clean Windows 11 x64 profile | `NOT RUN` unless separately recorded |
 
 ### Known limits
 
-- Provider sites and account permissions can change independently and may require adapter maintenance.
-- The release produces `Zenless.exe` without a separate installer.
-- Local GLB support still depends on the import capabilities exposed by Studio and its bridge.
+- Provider interfaces and account permissions can change independently of Zenless; live capability probes remain authoritative.
+- Current provider catalog entries beyond the three enabled adapters have no active transport and cannot be selected.
+- Optional tool manifests are not installable until a verified versioned package and checksum are configured.
+- RAR and 7Z are detected but not extracted by the built-in safe extractor.
+- The scenario executor skips input and harness steps without a compatible advertised Studio schema.
+- Jest Roblox is not injected into user projects and is not a release PASS without a real project execution.
+- The Settings uninstall endpoint requires an installed per-user uninstaller; the portable executable cannot uninstall itself through that endpoint.

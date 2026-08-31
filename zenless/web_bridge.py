@@ -23,9 +23,9 @@ REQUEST_ID_KEY = web.RequestKey("request_id", str)
 
 class LocalWebBridge:
     MAX_JSON_BYTES = 2 * 1024 * 1024
-    MAX_ATTACHMENT_BYTES = 32 * 1024 * 1024
-    MAX_MULTIPART_BYTES = 96 * 1024 * 1024
-    MAX_ATTACHMENTS = 5
+    MAX_ATTACHMENT_BYTES = 128 * 1024 * 1024
+    MAX_MULTIPART_BYTES = 512 * 1024 * 1024
+    MAX_ATTACHMENTS = 50
 
     def __init__(
         self,
@@ -176,9 +176,16 @@ class LocalWebBridge:
         app.router.add_get("/api/session", self._session)
         app.router.add_get("/api/bootstrap", self._sync_handler(self.core.bootstrap))
         app.router.add_get("/api/status", self._sync_handler(self.core.status))
+        app.router.add_get("/api/readiness", self._readiness)
         app.router.add_get("/api/connections", self._sync_handler(self.core.connections))
         app.router.add_get("/api/agents", self._sync_handler(self.core.agents))
+        app.router.add_get("/api/providers", self._providers)
+        app.router.add_post("/api/providers/custom", self._create_custom_provider)
+        app.router.add_get("/api/providers/{provider}", self._provider)
         app.router.add_post("/api/providers/{provider}/login", self._login_provider)
+        app.router.add_post("/api/providers/{provider}/refresh", self._refresh_provider)
+        app.router.add_post("/api/providers/{provider}/select", self._select_provider)
+        app.router.add_post("/api/providers/{provider}/assign-role", self._assign_provider_role)
 
         app.router.add_get("/api/jobs", self._sync_handler(self.core.jobs))
         app.router.add_get("/api/jobs/{job_id}", self._get_job)
@@ -217,6 +224,9 @@ class LocalWebBridge:
         app.router.add_get("/api/assets/{asset_id}/content", self._asset_content)
 
         app.router.add_get("/api/studio/state", self._sync_handler(self.core.studio_state))
+        app.router.add_get("/api/studios", self._studios)
+        app.router.add_post("/api/studios/select", self._select_studio)
+        app.router.add_post("/api/studios/refresh", self._refresh_studios)
         app.router.add_get("/api/studio/tree", self._sync_handler(self.core.studio_tree))
         app.router.add_get("/api/studio/search", self._search_studio)
         app.router.add_post("/api/studio/refresh", self._refresh_studio)
@@ -237,6 +247,14 @@ class LocalWebBridge:
         app.router.add_put("/api/settings/models", self._set_model)
         app.router.add_put("/api/settings/smart-routing", self._set_smart_routing)
         app.router.add_get("/api/diagnostics", self._sync_handler(self.core.diagnostics_payload))
+        app.router.add_get("/api/storage", self._sync_handler(self.core.storage_status))
+        app.router.add_post("/api/storage/cleanup", self._cleanup_storage)
+        app.router.add_patch("/api/storage/settings", self._update_storage_settings)
+        app.router.add_get("/api/tools", self._sync_handler(self.core.tool_catalog))
+        app.router.add_post("/api/tools/{tool_id}/install", self._install_tool)
+        app.router.add_post("/api/tools/{tool_id}/remove", self._remove_tool)
+        app.router.add_post("/api/system/uninstall", self._uninstall)
+        app.router.add_post("/api/system/repair", self._repair_component)
 
         app.router.add_get("/ws", self._websocket)
         app.router.add_get("/{tail:.*}", self._static)
@@ -244,8 +262,40 @@ class LocalWebBridge:
     async def _session(self, _request: web.Request) -> web.Response:
         return self._json({"token": self.token})
 
+    async def _readiness(self, request: web.Request) -> web.Response:
+        return self._json(self.core.readiness(refresh=request.query.get("refresh") == "1"))
+
+    async def _providers(self, request: web.Request) -> web.Response:
+        return self._json(self.core.providers(refresh=request.query.get("refresh") == "1"))
+
+    async def _provider(self, request: web.Request) -> web.Response:
+        return self._json(
+            self.core.provider(request.match_info["provider"], refresh=request.query.get("refresh") == "1")
+        )
+
+    async def _create_custom_provider(self, request: web.Request) -> web.Response:
+        body = await self._json_body(request)
+        return self._json(
+            self.core.create_custom_provider(
+                str(body.get("providerId") or ""),
+                str(body.get("displayName") or ""),
+                str(body.get("webUrl") or ""),
+            ),
+            status=201,
+        )
+
     async def _login_provider(self, request: web.Request) -> web.Response:
         return self._json({"ok": self.core.login_provider(request.match_info["provider"])})
+
+    async def _refresh_provider(self, request: web.Request) -> web.Response:
+        return self._json(self.core.refresh_provider(request.match_info["provider"]))
+
+    async def _select_provider(self, request: web.Request) -> web.Response:
+        return self._json(self.core.select_provider(request.match_info["provider"], await self._json_body(request)))
+
+    async def _assign_provider_role(self, request: web.Request) -> web.Response:
+        body = await self._json_body(request)
+        return self._json(self.core.assign_provider_role(request.match_info["provider"], str(body.get("role") or "")))
 
     async def _get_job(self, request: web.Request) -> web.Response:
         return self._json(self.core.job(request.match_info["job_id"]))
@@ -390,6 +440,16 @@ class LocalWebBridge:
     async def _refresh_studio(self, _request: web.Request) -> web.Response:
         return self._json({"ok": self.core.refresh_studio()})
 
+    async def _studios(self, request: web.Request) -> web.Response:
+        return self._json(self.core.studios(refresh=request.query.get("refresh") == "1"))
+
+    async def _select_studio(self, request: web.Request) -> web.Response:
+        body = await self._json_body(request)
+        return self._json(self.core.select_studio(str(body.get("studioId") or "")))
+
+    async def _refresh_studios(self, _request: web.Request) -> web.Response:
+        return self._json(self.core.studios(refresh=True))
+
     async def _inspect_studio(self, request: web.Request) -> web.Response:
         return self._json(self.core.inspect_studio(request.match_info["node_id"]))
 
@@ -437,6 +497,26 @@ class LocalWebBridge:
     async def _set_smart_routing(self, request: web.Request) -> web.Response:
         body = await self._json_body(request)
         return self._json({"ok": self.core.set_smart_routing(bool(body.get("enabled")))})
+
+    async def _cleanup_storage(self, _request: web.Request) -> web.Response:
+        return self._json(self.core.cleanup_storage())
+
+    async def _update_storage_settings(self, request: web.Request) -> web.Response:
+        return self._json(self.core.update_storage_settings(await self._json_body(request)))
+
+    async def _install_tool(self, request: web.Request) -> web.Response:
+        return self._json(self.core.install_tool(request.match_info["tool_id"]))
+
+    async def _remove_tool(self, request: web.Request) -> web.Response:
+        return self._json(self.core.remove_tool(request.match_info["tool_id"]))
+
+    async def _uninstall(self, request: web.Request) -> web.Response:
+        body = await self._json_body(request)
+        return self._json(self.core.uninstall(str(body.get("mode") or "KEEP_SETTINGS")))
+
+    async def _repair_component(self, request: web.Request) -> web.Response:
+        body = await self._json_body(request)
+        return self._json(self.core.repair_component(str(body.get("component") or "")))
 
     async def _websocket(self, request: web.Request) -> web.WebSocketResponse:
         if not secrets.compare_digest(request.query.get("token", ""), self.token):
@@ -490,7 +570,7 @@ class LocalWebBridge:
 
     async def _multipart_chat(self, request: web.Request) -> tuple[str, str | None, list[Path], dict[str, Any] | None]:
         if request.content_length and request.content_length > self.MAX_MULTIPART_BYTES:
-            raise CoreError("UPLOAD_TOO_LARGE", "Total upload exceeds 96 MB.", status=413)
+            raise CoreError("UPLOAD_TOO_LARGE", "Total upload exceeds 512 MB.", status=413)
         reader = await request.multipart()
         content = ""
         job_id: str | None = None
@@ -525,7 +605,7 @@ class LocalWebBridge:
                 if part.name != "attachments":
                     continue
                 if len(files) >= self.MAX_ATTACHMENTS:
-                    raise CoreError("TOO_MANY_ATTACHMENTS", "Maximum of 5 attachments.", status=413)
+                    raise CoreError("TOO_MANY_ATTACHMENTS", "Maximum of 50 attachments.", status=413)
                 filename = self._safe_filename(part.filename or f"attachment-{len(files) + 1}")
                 target = upload_root / f"{uuid.uuid4().hex[:10]}-{filename}"
                 size = 0

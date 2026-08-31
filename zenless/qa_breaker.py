@@ -13,6 +13,7 @@ from typing import Any
 from .event_bus import EventBus
 from .orchestrator import AgentTransport, OrchestratorError, TaskCancelled
 from .protocol import ProtocolError, extract_json_object
+from .scenario_qa import ScenarioCompiler, ScenarioExecutor
 from .store import SQLiteStore
 from .studio_mcp import MCPError, MCPToolResult, StudioMCPClient, validate_json_schema
 
@@ -158,6 +159,7 @@ class TestPlan:
     changed_tools: list[str]
     risk_areas: list[str]
     scenarios: list[str]
+    ai_scenarios: list[str]
     seed: int
 
 
@@ -206,16 +208,26 @@ class QABreaker:
         self._manual_lock = threading.Lock()
         self._manual_threads: dict[str, threading.Thread] = {}
         self._manual_cancel: dict[str, threading.Event] = {}
+        self._scenario_compiler = ScenarioCompiler()
+        self._scenario_executor = ScenarioExecutor(studio)
 
     def select_profile(self, job_id: str, evidence: list[dict[str, Any]]) -> TestProfile:
         task = self.store.load_task(job_id) or {}
         prompt = str(task.get("prompt", "")).casefold()
         risk = str((task.get("options") or {}).get("risk_level", "medium")).casefold()
+        effort = str((task.get("options") or {}).get("effort", "AUTO")).upper()
         tools = {str(item.get("tool", "")).casefold() for item in evidence}
         deep_terms = ("datastore", "persist", "currency", "remoteevent", "multiplayer", "ragdoll", "physics")
         smoke_terms = ("textlabel", "texto", "cor ", "label", "tooltip")
-        if risk == "high" or any(term in prompt for term in deep_terms) or any("remote" in tool for tool in tools):
+        if (
+            effort == "MAXIMUM"
+            or risk == "high"
+            or any(term in prompt for term in deep_terms)
+            or any("remote" in tool for tool in tools)
+        ):
             return PROFILES["DEEP"]
+        if effort == "MINIMUM":
+            return PROFILES["SMOKE"]
         if risk == "low" and len(evidence) <= 2 and any(term in prompt for term in smoke_terms):
             return PROFILES["SMOKE"]
         return PROFILES["STANDARD"]
@@ -388,6 +400,34 @@ class QABreaker:
                     )
                     self._enforce_bound(started_at, profile, cancel_event)
 
+                compiled = self._scenario_compiler.compile(plan.ai_scenarios, maximum=profile.max_scenarios)
+                for scenario in compiled:
+                    execution = self._scenario_executor.execute(
+                        scenario,
+                        studio_id=studio_id,
+                        cancel=cancel_event,
+                        deadline=started_at + profile.max_duration,
+                    )
+                    outcomes.append(
+                        self._run_case(
+                            run_id,
+                            job_id,
+                            scenario.id,
+                            scenario.title,
+                            "SCENARIO",
+                            lambda result=execution: (
+                                result.status,
+                                "The compiled bounded scenario completes without runtime errors",
+                                result.detail,
+                            ),
+                            failures,
+                            logs,
+                            seed,
+                            skip_is_ok=True,
+                        )
+                    )
+                    self._enforce_bound(started_at, profile, cancel_event)
+
                 review = self._review_results(job_id, plan, failures, output, rerun)
                 if review:
                     logs.append(review)
@@ -409,7 +449,7 @@ class QABreaker:
                 self.events.publish("TEST_FINISHED", {"passed": passed, "jobId": job_id})
                 joined = "\n".join(logs)[-20_000:]
                 if failures:
-                    return "ERROR: QA Breaker encontrou falhas.\n" + joined
+                    return "ERROR: QA found failures.\n" + joined
                 return joined or "QA completed without detected errors."
             except TaskCancelled:
                 self.store.finish_test_run(run_id, "CANCELLED", {"profile": profile.name, "seed": seed})
@@ -431,9 +471,16 @@ class QABreaker:
             studios = self.studio.list_studios()
             if not studios:
                 raise MCPError("No Roblox Studio instance is connected to StudioMCP.")
+            task = self.store.load_task(job_id) or {}
+            persisted_id = str(task.get("studio_id") or "")
+            target = next((studio for studio in studios if studio.studio_id == persisted_id), None)
+            if target is None and len(studios) == 1:
+                target = studios[0]
+            if target is None:
+                raise MCPError("Multiple Studio projects are available; select the job target before manual QA.")
             self.run(
                 job_id,
-                studio_id=studios[0].studio_id,
+                studio_id=target.studio_id,
                 profile_name=profile,
                 evidence=[],
                 cancel_event=cancel,
@@ -478,12 +525,15 @@ class QABreaker:
                     "Run the opt-in StudioTestService multiplayer harness when its exact protocol marker exists",
                 ]
             )
+        ai_scenarios = self._ai_scenarios(job_id, feature, changed_tools, risk_areas)
+        scenarios.extend(ai_scenarios)
         return TestPlan(
             profile=profile.name,
             feature=feature,
             changed_tools=changed_tools,
             risk_areas=risk_areas,
             scenarios=scenarios[: profile.max_scenarios],
+            ai_scenarios=ai_scenarios[: profile.max_scenarios],
             seed=seed,
         )
 
@@ -518,7 +568,9 @@ class QABreaker:
         output: str,
         rerun: bool,
     ) -> str:
-        if rerun or not self.bridge.wait_for_provider("deepseek", timeout=0.5):
+        task = self.store.load_task(job_id) or {}
+        independent = bool((task.get("options") or {}).get("independent_review", True))
+        if rerun or not independent or not self.bridge.wait_for_provider("deepseek", timeout=0.5):
             return ""
         payload = {
             "plan": asdict(plan),
@@ -663,7 +715,7 @@ class QABreaker:
                 expected=expected,
                 actual=actual,
                 seed=seed,
-                reproduction=[f"Execute o perfil QA e reproduza: {name}"],
+                reproduction=[f"Run the QA profile and reproduce: {name}"],
                 evidence=[actual[-4000:]],
                 probable_area=suite,
             )
@@ -682,7 +734,7 @@ class QABreaker:
                         "expected": expected,
                         "actual": actual,
                         "cause": failure.probable_area,
-                        "recovery": "Corrigir pelo fluxo Builder -> Reviewer -> safety gate e repetir este caso.",
+                        "recovery": "Use the reviewed repair flow, then rerun this case.",
                     },
                 },
             )
