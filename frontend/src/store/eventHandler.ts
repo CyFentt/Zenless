@@ -4,7 +4,7 @@ import { useStore } from '@/store';
 export function handleEvent(event: ZenlessEvent) {
   const store = useStore.getState();
   const currentJobId = store.currentJobId;
-  const isForCurrentJob = (jobId?: string) => !jobId || !currentJobId || jobId === currentJobId;
+  const isStrictlyCurrentJob = (jobId: string) => currentJobId !== null && jobId === currentJobId;
 
   switch (event.type) {
     case 'BOOT_STAGE_CHANGED':
@@ -33,11 +33,13 @@ export function handleEvent(event: ZenlessEvent) {
       break;
     case 'JOB_CREATED':
       store.upsertJob(event.data.job);
-      store.setCurrentJobId(event.data.job.id);
+      if (!store.currentJobId) {
+        store.setCurrentJobId(event.data.job.id);
+      }
       break;
     case 'JOB_UPDATED':
       store.updateJob(event.data.job.id, event.data.job);
-      if (event.data.job.status === 'RUNNING' || event.data.job.status === 'PAUSED' || event.data.job.status === 'NEW') {
+      if (!store.currentJobId) {
         store.setCurrentJobId(event.data.job.id);
       }
       break;
@@ -48,22 +50,34 @@ export function handleEvent(event: ZenlessEvent) {
       store.updateJob(event.data.jobId, { status: 'FAILED', stage: 'FAILED' });
       break;
     case 'CHAT_STREAM_STARTED':
-      store.setStreaming(event.data.messageId);
+      if (isStrictlyCurrentJob(event.data.jobId)) {
+        store.setStreaming(event.data.messageId);
+      }
       break;
     case 'CHAT_STREAM_DELTA':
-      store.appendStreamDelta(event.data.delta);
+      if (isStrictlyCurrentJob(event.data.jobId)) {
+        store.appendStreamDelta(event.data.delta);
+      }
       break;
     case 'CHAT_STREAM_FINISHED':
-      store.finishStream();
+      if (isStrictlyCurrentJob(event.data.jobId)) {
+        store.finishStream();
+      }
       break;
     case 'CHAT_MESSAGE':
-      store.addMessage(event.data.message);
+      if (isStrictlyCurrentJob(event.data.jobId)) {
+        store.addMessage(event.data.message);
+      }
       break;
     case 'CHAT_ACTIVITY':
-      store.addActivity(event.data.activity);
+      if (isStrictlyCurrentJob(event.data.jobId)) {
+        store.addActivity(event.data.activity);
+      }
       break;
     case 'CHAT_ARTIFACT':
-      store.addArtifact(event.data.artifact);
+      if (isStrictlyCurrentJob(event.data.jobId)) {
+        store.addArtifact(event.data.artifact);
+      }
       break;
     case 'PROVIDER_LOGIN_STATE':
       store.setLoginState(event.data.provider, event.data.state);
@@ -76,16 +90,16 @@ export function handleEvent(event: ZenlessEvent) {
       store.setReadiness(event.data.readiness);
       break;
     case 'CONTEXT_UPDATED':
-      if (isForCurrentJob(event.data.jobId)) store.setContextItems(event.data.items);
+      if (isStrictlyCurrentJob(event.data.jobId)) store.setContextItems(event.data.items);
       break;
     case 'CHANGES_UPDATED':
-      if (isForCurrentJob(event.data.jobId)) store.setChangedFiles(event.data.files);
+      if (isStrictlyCurrentJob(event.data.jobId)) store.setChangedFiles(event.data.files);
       break;
     case 'REVIEW_READY':
-      if (isForCurrentJob(event.data.jobId)) store.setChangedFiles(event.data.review.files);
+      if (isStrictlyCurrentJob(event.data.jobId)) store.setChangedFiles(event.data.review.files);
       break;
     case 'VISUAL_GENERATION_CHANGED':
-      if (event.data.view) {
+      if (isStrictlyCurrentJob(event.data.jobId) && event.data.view) {
         store.setViews(
           useStore.getState().views.map((v) =>
             v.name === event.data.view ? { ...v, state: event.data.state } : v,
@@ -94,14 +108,16 @@ export function handleEvent(event: ZenlessEvent) {
       }
       break;
     case 'VISUAL_READY':
-      store.setViews(
-        useStore.getState().views.map((v) =>
-          v.name === event.data.view ? { ...v, state: 'READY', imageUrl: event.data.imageUrl } : v,
-        ),
-      );
+      if (isStrictlyCurrentJob(event.data.jobId)) {
+        store.setViews(
+          useStore.getState().views.map((v) =>
+            v.name === event.data.view ? { ...v, state: 'READY', imageUrl: event.data.imageUrl } : v,
+          ),
+        );
+      }
       break;
     case 'VISUAL_APPROVED':
-      if (isForCurrentJob(event.data.jobId)) {
+      if (isStrictlyCurrentJob(event.data.jobId)) {
         const viewsToApprove = new Set(event.data.views || []);
         store.setViews(
           useStore.getState().views.map((v) =>
@@ -111,7 +127,7 @@ export function handleEvent(event: ZenlessEvent) {
       }
       break;
     case 'MODEL_GENERATION_CHANGED':
-      {
+      if (isStrictlyCurrentJob(event.data.jobId)) {
         const mi = useStore.getState().modelInfo;
         if (event.data.target === 'geometry') {
           store.setModelInfo({ ...mi, geometryStatus: event.data.state as 'IDLE' | 'GENERATING' | 'READY' | 'FAILED', state: event.data.state as 'EMPTY' | 'GENERATING' | 'READY' | 'APPROVED' | 'FAILED' });
@@ -121,10 +137,14 @@ export function handleEvent(event: ZenlessEvent) {
       }
       break;
     case 'MODEL_READY':
-      store.setModelInfo({ ...useStore.getState().modelInfo, state: 'READY', modelUrl: event.data.modelUrl, filename: event.data.filename });
+      if (isStrictlyCurrentJob(event.data.jobId)) {
+        store.setModelInfo({ ...useStore.getState().modelInfo, state: 'READY', modelUrl: event.data.modelUrl, filename: event.data.filename });
+      }
       break;
     case 'MODEL_APPROVED':
-      store.setModelInfo({ ...useStore.getState().modelInfo, state: 'APPROVED' });
+      if (isStrictlyCurrentJob(event.data.jobId)) {
+        store.setModelInfo({ ...useStore.getState().modelInfo, state: 'APPROVED' });
+      }
       break;
     case 'ASSETS_UPDATED':
       store.setAssets(event.data.assets);
@@ -136,37 +156,45 @@ export function handleEvent(event: ZenlessEvent) {
       store.setStudioTree(event.data.tree);
       break;
     case 'TEST_STARTED':
-      store.setTestState({ ...useStore.getState().testState, status: 'RUNNING' });
+      if (isStrictlyCurrentJob(event.data.jobId)) {
+        store.setTestState({ ...useStore.getState().testState, status: 'RUNNING' });
+      }
       break;
     case 'TEST_CASE_STARTED':
-      store.upsertTestCase(event.data.testCase);
-      break;
     case 'TEST_CASE_FINISHED':
-      store.upsertTestCase(event.data.testCase);
+      if (isStrictlyCurrentJob(event.data.jobId)) {
+        store.upsertTestCase(event.data.testCase);
+      }
       break;
     case 'TEST_FAILURE':
-      store.addTestFailure(event.data.failure);
-      store.addTestLog({
-        id: `failure_${event.data.failure.id}`,
-        timestamp: event.data.failure.timestamp,
-        level: 'ERR',
-        message: event.data.failure.message,
-        file: event.data.failure.file,
-        line: event.data.failure.line,
-        stack: event.data.failure.stack,
-        cause: event.data.failure.cause,
-        recovery: event.data.failure.recovery,
-        testCaseId: event.data.failure.testCaseId,
-        suite: event.data.failure.suite,
-        expected: event.data.failure.expected,
-        actual: event.data.failure.actual,
-      });
+      if (isStrictlyCurrentJob(event.data.jobId)) {
+        store.addTestFailure(event.data.failure);
+        store.addTestLog({
+          id: `failure_${event.data.failure.id}`,
+          timestamp: event.data.failure.timestamp,
+          level: 'ERR',
+          message: event.data.failure.message,
+          file: event.data.failure.file,
+          line: event.data.failure.line,
+          stack: event.data.failure.stack,
+          cause: event.data.failure.cause,
+          recovery: event.data.failure.recovery,
+          testCaseId: event.data.failure.testCaseId,
+          suite: event.data.failure.suite,
+          expected: event.data.failure.expected,
+          actual: event.data.failure.actual,
+        });
+      }
       break;
     case 'TEST_LOG':
-      store.addTestLog(event.data.log);
+      if (!event.data.jobId || isStrictlyCurrentJob(event.data.jobId)) {
+        store.addTestLog(event.data.log);
+      }
       break;
     case 'TEST_FINISHED':
-      store.setTestState({ ...useStore.getState().testState, status: event.data.passed ? 'IDLE' : 'FAILED' });
+      if (isStrictlyCurrentJob(event.data.jobId)) {
+        store.setTestState({ ...useStore.getState().testState, status: event.data.passed ? 'IDLE' : 'FAILED' });
+      }
       break;
     case 'SETTINGS_CHANGED':
       if (useStore.getState().settings) {

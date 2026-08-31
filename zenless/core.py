@@ -925,17 +925,17 @@ class ZenlessCore:
         if event.kind == "stream_start":
             self.events.publish(
                 "CHAT_STREAM_STARTED",
-                {"messageId": event.message, "jobId": event.task_id, "provider": event.detail},
+                {"jobId": event.task_id, "messageId": event.message, "provider": event.detail},
             )
             return
         if event.kind == "stream_delta":
             self.events.publish(
                 "CHAT_STREAM_DELTA",
-                {"messageId": event.message, "delta": event.detail},
+                {"jobId": event.task_id, "messageId": event.message, "delta": event.detail},
             )
             return
         if event.kind == "stream_finish":
-            self.events.publish("CHAT_STREAM_FINISHED", {"messageId": event.message})
+            self.events.publish("CHAT_STREAM_FINISHED", {"jobId": event.task_id, "messageId": event.message})
             return
         try:
             job = self.job(event.task_id)
@@ -997,7 +997,7 @@ class ZenlessCore:
             )
             self.events.publish("CHAT_ARTIFACT", {"artifact": diff_art})
         elif event.stage == Stage.WAITING_IMAGE_APPROVAL:
-            self.events.publish("VISUAL_GENERATION_CHANGED", {"state": "READY"})
+            self.events.publish("VISUAL_GENERATION_CHANGED", {"jobId": event.task_id, "state": "READY"})
             img_art = self.store.upsert_artifact(
                 artifact_id=f"art_img_{event.task_id[:10]}",
                 job_id=event.task_id,
@@ -1007,7 +1007,7 @@ class ZenlessCore:
             )
             self.events.publish("CHAT_ARTIFACT", {"artifact": img_art})
         elif event.stage == Stage.GENERATING_3D:
-            self.events.publish("MODEL_GENERATION_CHANGED", {"target": "geometry", "state": "GENERATING"})
+            self.events.publish("MODEL_GENERATION_CHANGED", {"jobId": event.task_id, "target": "geometry", "state": "GENERATING"})
         elif event.stage == Stage.WAITING_3D_APPROVAL:
             self._register_model_from_event(event)
             model_art = self.store.upsert_artifact(
@@ -1072,7 +1072,7 @@ class ZenlessCore:
         self.events.publish("ASSETS_UPDATED", {"assets": self.assets()})
         self.events.publish(
             "MODEL_READY",
-            {"modelUrl": f"/api/assets/{asset}/content", "filename": path.name},
+            {"jobId": event.task_id, "modelUrl": f"/api/assets/{asset}/content", "filename": path.name},
         )
 
     def _on_diagnostic(self, event: DiagnosticEvent) -> None:

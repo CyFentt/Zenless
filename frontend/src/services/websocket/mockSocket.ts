@@ -90,9 +90,10 @@ export class MockZenlessSocket implements ZenlessSocket {
       this.respondedMessages.add(lastUser.id);
 
       const responseId = `msg_${Date.now()}`;
+      const jobId = lastUser.jobId ?? "mock_job";
       this.emit({
         type: "CHAT_STREAM_STARTED",
-        data: { messageId: responseId, jobId: lastUser.jobId },
+        data: { jobId, messageId: responseId },
       });
 
       const fullText =
@@ -103,11 +104,11 @@ export class MockZenlessSocket implements ZenlessSocket {
         if (idx >= words.length) {
           clearInterval(streamTimer);
           this.timers.delete(streamTimer);
-          this.emit({ type: "CHAT_STREAM_FINISHED", data: { messageId: responseId } });
+          this.emit({ type: "CHAT_STREAM_FINISHED", data: { jobId, messageId: responseId } });
           return;
         }
         const delta = (idx === 0 ? "" : " ") + words[idx];
-        this.emit({ type: "CHAT_STREAM_DELTA", data: { messageId: responseId, delta } });
+        this.emit({ type: "CHAT_STREAM_DELTA", data: { jobId, messageId: responseId, delta } });
         idx++;
       }, 80);
       this.timers.add(streamTimer);

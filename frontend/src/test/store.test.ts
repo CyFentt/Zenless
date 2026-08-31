@@ -93,13 +93,14 @@ describe('Store', () => {
 
   it('tracks structured test case lifecycle events', () => {
     useStore.getState().resetTestDetails();
+    useStore.getState().setCurrentJobId('job_001');
     handleEvent({
       type: 'TEST_CASE_STARTED',
-      data: { testCase: { id: 'case_1', name: 'spawns player', suite: 'PlayTest', status: 'RUNNING', startedAt: 100 } },
+      data: { jobId: 'job_001', testCase: { id: 'case_1', name: 'spawns player', suite: 'PlayTest', status: 'RUNNING', startedAt: 100 } },
     });
     handleEvent({
       type: 'TEST_CASE_FINISHED',
-      data: { testCase: { id: 'case_1', name: 'spawns player', suite: 'PlayTest', status: 'PASSED', startedAt: 100, finishedAt: 140, durationMs: 40 } },
+      data: { jobId: 'job_001', testCase: { id: 'case_1', name: 'spawns player', suite: 'PlayTest', status: 'PASSED', startedAt: 100, finishedAt: 140, durationMs: 40 } },
     });
     expect(useStore.getState().testCases).toHaveLength(1);
     expect(useStore.getState().testCases[0]).toMatchObject({ id: 'case_1', status: 'PASSED', durationMs: 40 });
@@ -108,9 +109,11 @@ describe('Store', () => {
   it('stores TEST_FAILURE details and exposes them as an error log', () => {
     useStore.getState().resetTestDetails();
     useStore.getState().setTestLogs([]);
+    useStore.getState().setCurrentJobId('job_001');
     handleEvent({
       type: 'TEST_FAILURE',
       data: {
+        jobId: 'job_001',
         failure: {
           id: 'failure_1',
           testCaseId: 'case_1',
