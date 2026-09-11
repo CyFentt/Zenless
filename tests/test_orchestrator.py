@@ -245,7 +245,7 @@ class OrchestratorTests(unittest.TestCase):
             bridge = FakeBridge({"chatgpt": [proposal()], "deepseek": [review(), review()]})
             studio = FakeStudio([""])
             orchestrator, store = self.make_system(folder, bridge, studio)
-            task_id = orchestrator.submit("Mude o script", TaskOptions(create_3d_asset=False))
+            task_id = orchestrator.submit("Update the script", TaskOptions(create_3d_asset=False))
             self.finish_with_gate_decisions(orchestrator, task_id, ["approve"])
             task = store.load_task(task_id)
             self.assertEqual(task["stage"], Stage.COMPLETE.value)
@@ -265,7 +265,7 @@ class OrchestratorTests(unittest.TestCase):
             studio = FakeStudio()
             orchestrator, store = self.make_system(folder, bridge, studio)
             task_id = "precondition"
-            store.create_task(task_id, "Mude o script", TaskOptions())
+            store.create_task(task_id, "Update the script", TaskOptions())
             store.update_task(task_id, stage=Stage.APPLYING, status="running")
             action = ProposalAction(
                 tool="multi_edit",
@@ -293,7 +293,7 @@ class OrchestratorTests(unittest.TestCase):
                                 "approved": True,
                                 "failed_views": [],
                                 "warnings": [],
-                                "summary": "Seis vistas coerentes.",
+                                "summary": "Six consistent views.",
                             }
                         )
                     ]
@@ -389,7 +389,7 @@ class OrchestratorTests(unittest.TestCase):
             studio = FakeStudio([""])
             orchestrator, store = self.make_system(folder, bridge, studio)
             options = TaskOptions(create_3d_asset=False, require_approval=False)
-            task_id = orchestrator.submit("Aplique no modo autorizado", options)
+            task_id = orchestrator.submit("Apply in the authorized mode", options)
             self.finish_with_gate_decisions(orchestrator, task_id, [])
             self.assertEqual(store.load_task(task_id)["stage"], Stage.COMPLETE.value)
             self.assertIn("multi_edit", [name for name, _ in studio.calls])

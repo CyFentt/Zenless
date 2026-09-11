@@ -192,6 +192,7 @@ export const mockViews: ViewTile[] = [
 
 export const mockModelInfo: ModelInfo = {
   state: 'READY',
+  approvalState: 'PENDING_APPROVAL',
   geometryStatus: 'READY',
   textureStatus: 'READY',
   modelUrl: '/mock/model.glb',

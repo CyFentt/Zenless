@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Activity, ChevronDown, ChevronRight, CheckCircle2, AlertTriangle, RefreshCw } from 'lucide-react';
-import type { ChatActivity } from '@/types';
+import { AGENT_NAMES, type AgentId, type ChatActivity } from '@/types';
 
 interface Props {
   activities: ChatActivity[];
@@ -19,10 +19,11 @@ export function ChatActivityGroup({ activities, onOpenContext }: Props) {
 
   const activePhase = running.length > 0 ? running[0].phase : activities[activities.length - 1].phase;
   const activeTitle = running.length > 0 ? running[0].title : activities[activities.length - 1].title;
+  const active = running[0] ?? activities[activities.length - 1];
+  const provider = active.providerId ? AGENT_NAMES[active.providerId as AgentId] ?? active.providerId : null;
 
   return (
     <div className="my-2 bg-ink-900/90 border border-ink-700/80 rounded font-mono text-2xs overflow-hidden transition-all duration-200 hover:border-ink-600">
-      {/* Summary Header */}
       <div
         onClick={() => setExpanded(!expanded)}
         className="flex items-center justify-between px-3 py-2 cursor-pointer bg-ink-900 hover:bg-ink-850 select-none transition-colors"
@@ -33,6 +34,8 @@ export function ChatActivityGroup({ activities, onOpenContext }: Props) {
             {activePhase}
           </span>
           <span className="text-ink-100 font-medium truncate">{activeTitle}</span>
+          {provider && <span className="text-ink-400 shrink-0">{provider}</span>}
+          {active.role && <span className="text-ink-500 shrink-0">{active.role}</span>}
         </div>
 
         <div className="flex items-center gap-2 shrink-0 ml-3">
@@ -62,7 +65,6 @@ export function ChatActivityGroup({ activities, onOpenContext }: Props) {
         </div>
       </div>
 
-      {/* Expanded Timeline Details */}
       {expanded && (
         <div className="border-t border-ink-800/80 p-2 space-y-1.5 bg-ink-950/60">
           {activities.map((act) => (

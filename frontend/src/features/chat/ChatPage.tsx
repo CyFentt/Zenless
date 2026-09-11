@@ -5,7 +5,19 @@ import { getApi } from '@/services';
 import { ApiError } from '@/services/api/realApi';
 import { frontendDiagnostics } from '@/services/diagnostics';
 import { Tooltip } from '@/components/Tooltip';
-import { DEFAULT_TASK_OPTIONS, type ChatMessage, type ProviderId, type TaskOptions, type ChatArtifact } from '@/types';
+import {
+  DEFAULT_TASK_OPTIONS,
+  PROVIDER_NAMES,
+  type ChatActivity,
+  type ChatArtifact,
+  type ChatMessage,
+  type ModelInfo,
+  type ProviderId,
+  type TaskOptions,
+  type ViewName,
+  type ViewState,
+  type ViewTile,
+} from '@/types';
 
 import { ChatActivityGroup } from './ChatActivityGroup';
 import { ChatChangeCard } from './ChatChangeCard';
@@ -16,6 +28,48 @@ import { ChatErrorCard } from './ChatErrorCard';
 
 const TaskOptionsPanel = lazy(() => import('./TaskOptionsPanel').then((m) => ({ default: m.TaskOptionsPanel })));
 
+const VIEW_NAMES = new Set<ViewName>(['FRONT', 'BACK', 'LEFT', 'RIGHT', 'TOP', 'BOTTOM']);
+const VIEW_STATES = new Set<ViewState>(['EMPTY', 'GENERATING', 'READY', 'FAILED', 'APPROVED']);
+
+function artifactViews(artifact: ChatArtifact): ViewTile[] {
+  const raw = artifact.metadata?.views;
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((item) => {
+    if (!item || typeof item !== 'object') return [];
+    const value = item as Record<string, unknown>;
+    const name = String(value.name ?? '') as ViewName;
+    const state = String(value.state ?? 'EMPTY') as ViewState;
+    if (!VIEW_NAMES.has(name) || !VIEW_STATES.has(state)) return [];
+    return [{
+      name,
+      state,
+      assetId: typeof value.assetId === 'string' ? value.assetId : undefined,
+      imageUrl: typeof value.imageUrl === 'string' ? value.imageUrl : undefined,
+      version: typeof value.version === 'number' ? value.version : artifact.version,
+    }];
+  });
+}
+
+function artifactModel(artifact: ChatArtifact): ModelInfo {
+  const metadata = artifact.metadata ?? {};
+  const status = (value: unknown): ModelInfo['geometryStatus'] => {
+    const normalized = String(value ?? 'IDLE');
+    return normalized === 'GENERATING' || normalized === 'READY' || normalized === 'FAILED' ? normalized : 'IDLE';
+  };
+  return {
+    state: artifact.state === 'FAILED' || artifact.state === 'REJECTED'
+        ? 'FAILED'
+        : artifact.state === 'GENERATING'
+          ? 'GENERATING'
+          : 'READY',
+    approvalState: artifact.state === 'APPROVED' ? 'APPROVED' : 'PENDING_APPROVAL',
+    geometryStatus: status(metadata.geometryStatus),
+    textureStatus: status(metadata.textureStatus),
+    modelUrl: artifact.modelUrl || artifact.contentUrl,
+    filename: artifact.name,
+  };
+}
+
 export function ChatPage() {
   const messages = useStore((s) => s.messages);
   const activities = useStore((s) => s.activities);
@@ -25,12 +79,12 @@ export function ChatPage() {
   const modelInfo = useStore((s) => s.modelInfo);
   const testCases = useStore((s) => s.testCases);
   const testFailures = useStore((s) => s.testFailures);
+  const testState = useStore((s) => s.testState);
   const diagnostics = useStore((s) => s.diagnostics);
 
   const streamingMessageId = useStore((s) => s.streamingMessageId);
   const streamingContent = useStore((s) => s.streamingContent);
   const addMessage = useStore((s) => s.addMessage);
-  const setMessages = useStore((s) => s.setMessages);
   const reconcileMessage = useStore((s) => s.reconcileMessage);
   const upsertJob = useStore((s) => s.upsertJob);
   const currentJobId = useStore((s) => s.currentJobId);
@@ -69,9 +123,8 @@ export function ChatPage() {
       reconcileMessage(localId, result.messageId, result.jobId);
       if (result.jobId) {
         setCurrentJobId(result.jobId);
-        const [job, snapshot] = await Promise.all([getApi().getJob(result.jobId), getApi().getMessages(result.jobId)]);
+        const job = await getApi().getJob(result.jobId);
         upsertJob(job);
-        setMessages(snapshot);
       }
     } catch (error) {
       frontendDiagnostics.capture(error, 'chat', 'Failed to send message', { jobId: currentJobId ?? undefined });
@@ -80,6 +133,7 @@ export function ChatPage() {
         role: 'system',
         content: chatErrorMessage(error),
         timestamp: Date.now(),
+        jobId: currentJobId ?? undefined,
         action: chatErrorAction(error),
       });
     } finally {
@@ -98,7 +152,13 @@ export function ChatPage() {
       setAgents(agents);
     } catch (error) {
       frontendDiagnostics.capture(error, 'chat', 'Failed to open provider login');
-      addMessage({ id: `login_error_${Date.now()}`, role: 'system', content: 'The login window could not be opened.', timestamp: Date.now() });
+      addMessage({
+        id: `login_error_${Date.now()}`,
+        role: 'system',
+        content: 'The login window could not be opened.',
+        timestamp: Date.now(),
+        jobId: currentJobId ?? undefined,
+      });
     } finally {
       setLoggingProvider(null);
     }
@@ -122,7 +182,10 @@ export function ChatPage() {
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
-  // Filter activities, artifacts, and diagnostics strictly relevant to active job
+  const currentJob = useStore((s) => s.jobs.find((job) => job.id === s.currentJobId));
+  const jobMessages = currentJobId
+    ? messages.filter((message) => message.jobId === currentJobId)
+    : messages.filter((message) => !message.jobId);
   const jobActivities = currentJobId ? activities.filter((a) => a.jobId === currentJobId) : [];
   const imageArtifacts = currentJobId ? artifacts.filter((a) => a.type === 'IMAGE' && a.jobId === currentJobId) : [];
   const modelArtifacts = currentJobId ? artifacts.filter((a) => a.type === 'MODEL_3D' && a.jobId === currentJobId) : [];
@@ -131,73 +194,76 @@ export function ChatPage() {
     ? diagnostics.filter((d) => (d.severity === 'critical' || d.severity === 'error') && d.jobId === currentJobId)
     : [];
 
-  // Chronological timeline item composition
   type TimelineItem =
     | { type: 'MESSAGE'; id: string; timestamp: number; message: ChatMessage }
-    | { type: 'ACTIVITY_GROUP'; id: string; timestamp: number }
+    | { type: 'ACTIVITY_GROUP'; id: string; timestamp: number; activities: ChatActivity[] }
     | { type: 'DIFF_ARTIFACT'; id: string; timestamp: number; artifact: (typeof artifacts)[0] }
-    | { type: 'IMAGE_GALLERY'; id: string; timestamp: number }
-    | { type: 'MODEL_CARD'; id: string; timestamp: number; artifact?: (typeof artifacts)[0] }
+    | { type: 'IMAGE_GALLERY'; id: string; timestamp: number; artifact: (typeof artifacts)[0]; views: ViewTile[] }
+    | { type: 'MODEL_CARD'; id: string; timestamp: number; artifact: (typeof artifacts)[0] }
     | { type: 'TEST_CARD'; id: string; timestamp: number }
     | { type: 'ERROR_CARD'; id: string; timestamp: number; diag: (typeof diagnostics)[0] };
 
   const timelineItems: TimelineItem[] = [];
 
-  messages.forEach((msg) => {
+  jobMessages.forEach((msg) => {
     timelineItems.push({ type: 'MESSAGE', id: msg.id, timestamp: msg.timestamp, message: msg });
   });
 
-  if (jobActivities.length > 0) {
-    const latestActivityTs = Math.max(...jobActivities.map((a) => a.timestamp || 0));
-    timelineItems.push({ type: 'ACTIVITY_GROUP', id: 'activity_group', timestamp: latestActivityTs });
-  }
+  const groupedActivities = new Map<string, ChatActivity[]>();
+  [...jobActivities]
+    .sort((left, right) => (left.startedAt ?? left.timestamp) - (right.startedAt ?? right.timestamp))
+    .forEach((activity) => {
+      const key = `${activity.phase}:${activity.cycle ?? 1}:${activity.attempt ?? 1}`;
+      const group = groupedActivities.get(key) ?? [];
+      group.push(activity);
+      groupedActivities.set(key, group);
+    });
+  groupedActivities.forEach((group, key) => {
+    const timestamp = Math.min(...group.map((activity) => activity.startedAt ?? activity.timestamp));
+    timelineItems.push({ type: 'ACTIVITY_GROUP', id: `activity:${key}`, timestamp, activities: group });
+  });
 
   diffArtifacts.forEach((art) => {
     timelineItems.push({ type: 'DIFF_ARTIFACT', id: art.id, timestamp: art.createdAt, artifact: art });
   });
 
-  if (views.length > 0 || imageArtifacts.length > 0) {
-    const latestImageTs = Math.max(
-      ...imageArtifacts.map((a) => a.createdAt),
-      0
-    );
-    timelineItems.push({ type: 'IMAGE_GALLERY', id: 'image_gallery', timestamp: latestImageTs || Date.now() });
-  }
+  imageArtifacts.forEach((artifact) => {
+    const historicalViews = artifactViews(artifact);
+    const galleryViews = historicalViews.length > 0
+      ? historicalViews
+      : artifact.id === imageArtifacts[imageArtifacts.length - 1]?.id
+        ? views
+        : [];
+    timelineItems.push({
+      type: 'IMAGE_GALLERY',
+      id: artifact.id,
+      timestamp: artifact.createdAt,
+      artifact,
+      views: galleryViews,
+    });
+  });
 
-  if (modelInfo.modelUrl || modelArtifacts.length > 0) {
-    const latestModelTs = modelArtifacts[0]?.createdAt || Date.now();
-    const modelStateMap: Record<string, ChatArtifact['state']> = {
-      EMPTY: 'GENERATING',
-      GENERATING_GEOMETRY: 'GENERATING',
-      GEOMETRY_READY: 'READY',
-      GENERATING_TEXTURE: 'GENERATING',
-      TEXTURE_READY: 'READY',
-      READY: 'READY',
-      FAILED: 'FAILED',
-    };
-    const defaultModelArtifact: ChatArtifact = {
-      id: 'model_art',
-      type: 'MODEL_3D',
-      name: modelInfo.filename || '3D Model',
-      state: modelStateMap[modelInfo.state] || 'READY',
-      jobId: currentJobId ?? undefined,
-      createdAt: latestModelTs,
-    };
-    timelineItems.push({ type: 'MODEL_CARD', id: modelArtifacts[0]?.id || 'model_card', timestamp: latestModelTs, artifact: modelArtifacts[0] || defaultModelArtifact });
-  }
+  modelArtifacts
+    .filter((artifact) => Boolean(artifact.modelUrl || artifact.contentUrl))
+    .forEach((artifact) => {
+      timelineItems.push({ type: 'MODEL_CARD', id: artifact.id, timestamp: artifact.createdAt, artifact });
+    });
 
-  if (testCases.length > 0 || testFailures.length > 0) {
-    timelineItems.push({ type: 'TEST_CARD', id: 'test_card', timestamp: Date.now() });
+  const testTimestamp = Math.max(
+    0,
+    ...testCases.map((testCase) => testCase.finishedAt || testCase.startedAt || 0),
+    ...testFailures.map((failure) => failure.timestamp || 0),
+  );
+  if (testTimestamp > 0) {
+    timelineItems.push({ type: 'TEST_CARD', id: 'test-card', timestamp: testTimestamp });
   }
 
   criticalErrors.forEach((diag) => {
     timelineItems.push({ type: 'ERROR_CARD', id: diag.id, timestamp: diag.timestamp, diag });
   });
 
-  // Sort timeline chronologically
-  timelineItems.sort((a, b) => a.timestamp - b.timestamp);
+  timelineItems.sort((left, right) => left.timestamp - right.timestamp || left.id.localeCompare(right.id));
 
-  // Domain Action Handlers
   const handleApproveChanges = async (jobId: string) => {
     await getApi().approveChanges(jobId);
   };
@@ -226,8 +292,10 @@ export function ChatPage() {
   };
 
   const setNavigationTarget = useStore((s) => s.setNavigationTarget);
+  const latestDiffId = diffArtifacts[diffArtifacts.length - 1]?.id;
+  const latestImageId = imageArtifacts[imageArtifacts.length - 1]?.id;
+  const latestModelId = modelArtifacts[modelArtifacts.length - 1]?.id;
 
-  // Deep Link Handlers with Navigation Targets
   const openBuildPage = (jobId: string, tab: string = 'changes') => {
     setCurrentJobId(jobId);
     setNavigationTarget({ page: 'build', tab });
@@ -253,13 +321,12 @@ export function ChatPage() {
       <div className="flex-1 flex flex-col min-w-0">
         <div ref={scrollRef} className="flex-1 overflow-y-auto scrollbar-zen">
           <div className="max-w-3xl mx-auto px-6 py-4 space-y-3">
-            {messages.length === 0 && !streamingMessageId && jobActivities.length === 0 && (
+            {jobMessages.length === 0 && !streamingMessageId && jobActivities.length === 0 && (
               <div className="flex items-center justify-center h-full text-xs text-ink-400 uppercase tracking-wider pt-20">
                 Start a conversation
               </div>
             )}
 
-            {/* Unified Chronological Timeline */}
             {timelineItems.map((item) => {
               if (item.type === 'MESSAGE') {
                 return (
@@ -275,8 +342,8 @@ export function ChatPage() {
                 return (
                   <ChatActivityGroup
                     key={item.id}
-                    activities={jobActivities}
-                onOpenContext={() => currentJobId && openBuildPage(currentJobId, 'context')}
+                    activities={item.activities}
+                    onOpenContext={() => currentJobId && openBuildPage(currentJobId, 'context')}
                   />
                 );
               }
@@ -285,6 +352,7 @@ export function ChatPage() {
                   <ChatChangeCard
                     key={item.id}
                     artifact={item.artifact}
+                    actionable={item.artifact.id === latestDiffId && currentJob?.stage === 'WAITING_CHANGE_APPROVAL'}
                     onApprove={handleApproveChanges}
                     onReject={handleRejectChanges}
                     onRequestRevision={handleRequestRevision}
@@ -296,8 +364,10 @@ export function ChatPage() {
                 return (
                   <ChatImageGallery
                     key={item.id}
-                    views={views}
-                    conceptVersion={conceptVersion}
+                    views={item.views}
+                    conceptVersion={item.artifact.version ?? conceptVersion}
+                    state={item.artifact.state}
+                    actionable={item.artifact.id === latestImageId && currentJob?.stage === 'WAITING_IMAGE_APPROVAL'}
                     jobId={currentJobId ?? undefined}
                     onApproveVisual={handleApproveVisual}
                     onRegenerateVisual={handleRegenerateVisual}
@@ -306,28 +376,16 @@ export function ChatPage() {
                 );
               }
               if (item.type === 'MODEL_CARD') {
-                const modelStateMap: Record<string, ChatArtifact['state']> = {
-                  EMPTY: 'GENERATING',
-                  GENERATING_GEOMETRY: 'GENERATING',
-                  GEOMETRY_READY: 'READY',
-                  GENERATING_TEXTURE: 'GENERATING',
-                  TEXTURE_READY: 'READY',
-                  READY: 'READY',
-                  FAILED: 'FAILED',
-                };
-                const fallbackModelArt: ChatArtifact = {
-                  id: 'model_art',
-                  type: 'MODEL_3D',
-                  name: modelInfo.filename || '3D Model',
-                  state: modelStateMap[modelInfo.state] || 'READY',
-                  jobId: currentJobId ?? undefined,
-                  createdAt: Date.now(),
-                };
+                const historicalModel = artifactModel(item.artifact);
+                const visibleModel = item.artifact.id === latestModelId
+                  ? { ...historicalModel, ...modelInfo, state: historicalModel.state, modelUrl: historicalModel.modelUrl }
+                  : historicalModel;
                 return (
                   <ChatModelCard
                     key={item.id}
-                    artifact={item.artifact || fallbackModelArt}
-                    modelInfo={modelInfo}
+                    artifact={item.artifact}
+                    modelInfo={visibleModel}
+                    actionable={item.artifact.id === latestModelId && currentJob?.stage === 'WAITING_3D_APPROVAL'}
                     onApproveModel={handleApproveModel}
                     onRegenerateGeometry={handleRegenerateGeometry}
                     onRegenerateTexture={handleRegenerateTexture}
@@ -342,6 +400,7 @@ export function ChatPage() {
                     jobId={currentJobId ?? undefined}
                     testCases={testCases}
                     failures={testFailures}
+                    testState={testState}
                     onOpenTestPage={openTestPage}
                   />
                 );
@@ -362,7 +421,13 @@ export function ChatPage() {
 
             {streamingMessageId && (
               <ChatMessageRow
-                message={{ id: streamingMessageId, role: 'zenless', content: streamingContent + '▊', timestamp: Date.now() }}
+                message={{
+                  id: streamingMessageId,
+                  role: 'zenless',
+                  content: streamingContent + '▊',
+                  timestamp: currentJob?.updatedAt ?? 0,
+                  jobId: currentJobId ?? undefined,
+                }}
                 streaming
                 onLogin={handleProviderLogin}
               />
@@ -370,10 +435,8 @@ export function ChatPage() {
           </div>
         </div>
 
-        {/* Composer Controls & Input */}
         <div className="shrink-0 border-t border-ink-600 px-6 py-3">
           <div className="max-w-3xl mx-auto space-y-2">
-            {/* Control Center Toolbar */}
             <div className="flex items-center justify-between font-mono text-2xs">
               <div className="flex flex-wrap items-center gap-2">
                 <Tooltip content="Research mode for official docs">
@@ -525,8 +588,7 @@ function chatErrorAction(error: unknown): ChatMessage['action'] {
 function chatErrorMessage(error: unknown): string {
   const action = chatErrorAction(error);
   if (action) {
-    const labels: Record<ProviderId, string> = { chatgpt: 'Builder', deepseek: 'Reviewer', hunyuan: '3D Generator' };
-    return `${labels[action.provider]} requires login.`;
+    return `${PROVIDER_NAMES[action.provider]} requires login.`;
   }
   return error instanceof Error && error.message.trim() ? error.message : 'The message could not be sent.';
 }

@@ -8,47 +8,59 @@ interface Props {
   onReject: (jobId: string) => Promise<void>;
   onRequestRevision: (jobId: string, feedback: string) => Promise<void>;
   onOpenDiff: (jobId: string) => void;
+  actionable?: boolean;
 }
 
-export function ChatChangeCard({ artifact, onApprove, onReject, onRequestRevision, onOpenDiff }: Props) {
+export function ChatChangeCard({ artifact, onApprove, onReject, onRequestRevision, onOpenDiff, actionable = true }: Props) {
   const [acting, setActing] = useState(false);
   const [showRevisionInput, setShowRevisionInput] = useState(false);
   const [revisionFeedback, setRevisionFeedback] = useState('');
+  const [actionError, setActionError] = useState('');
 
   const jobId = artifact.jobId ?? '';
   const metadata = artifact.metadata || {};
   const risk = metadata.risk ? String(metadata.risk).toUpperCase() : null;
   const fileCount = metadata.fileCount !== undefined ? Number(metadata.fileCount) : null;
   const reviewer = metadata.reviewer ? String(metadata.reviewer) : null;
+  const reviewerRole = metadata.reviewerRole ? String(metadata.reviewerRole) : null;
   const decision = metadata.decision ? String(metadata.decision).toUpperCase() : null;
 
   const handleApprove = async () => {
-    if (!jobId || acting) return;
+    if (!jobId || acting || !actionable) return;
     setActing(true);
+    setActionError('');
     try {
       await onApprove(jobId);
+    } catch (error) {
+      setActionError(error instanceof Error && error.message ? error.message : 'The changes could not be approved.');
     } finally {
       setActing(false);
     }
   };
 
   const handleReject = async () => {
-    if (!jobId || acting) return;
+    if (!jobId || acting || !actionable) return;
     setActing(true);
+    setActionError('');
     try {
       await onReject(jobId);
+    } catch (error) {
+      setActionError(error instanceof Error && error.message ? error.message : 'The changes could not be rejected.');
     } finally {
       setActing(false);
     }
   };
 
   const handleSubmitRevision = async () => {
-    if (!jobId || !revisionFeedback.trim() || acting) return;
+    if (!jobId || !revisionFeedback.trim() || acting || !actionable) return;
     setActing(true);
+    setActionError('');
     try {
       await onRequestRevision(jobId, revisionFeedback.trim());
       setShowRevisionInput(false);
       setRevisionFeedback('');
+    } catch (error) {
+      setActionError(error instanceof Error && error.message ? error.message : 'The revision request could not be sent.');
     } finally {
       setActing(false);
     }
@@ -56,7 +68,6 @@ export function ChatChangeCard({ artifact, onApprove, onReject, onRequestRevisio
 
   return (
     <div className="my-3 p-4 bg-ink-900/90 border border-ink-700 rounded font-mono text-2xs space-y-3 shadow-lg">
-      {/* Header */}
       <div className="flex items-center justify-between border-b border-ink-800 pb-2">
         <div className="flex items-center gap-2">
           <FileCode size={14} className="text-ink-200" />
@@ -75,7 +86,6 @@ export function ChatChangeCard({ artifact, onApprove, onReject, onRequestRevisio
         </span>
       </div>
 
-      {/* Review & Stats Summary */}
       <div className="grid grid-cols-2 gap-3 bg-ink-950/80 p-3 rounded border border-ink-800">
         <div>
           <span className="text-ink-400 text-2xs uppercase block mb-1">INDEPENDENT REVIEW</span>
@@ -88,7 +98,8 @@ export function ChatChangeCard({ artifact, onApprove, onReject, onRequestRevisio
               <AlertTriangle size={13} className="text-zen-warnBright" />
             ) : null}
             <span className="text-ink-100 font-bold">{decision || 'PENDING'}</span>
-            {reviewer && <span className="text-ink-400 text-2xs">({reviewer})</span>}
+            {reviewer && <span className="text-ink-300 text-2xs">{reviewer}</span>}
+            {reviewerRole && <span className="text-ink-500 text-2xs">{reviewerRole}</span>}
           </div>
         </div>
 
@@ -115,8 +126,14 @@ export function ChatChangeCard({ artifact, onApprove, onReject, onRequestRevisio
         </div>
       </div>
 
-      {/* Revision Form */}
-      {showRevisionInput && (
+      {actionError && (
+        <div role="alert" className="flex items-center gap-2 px-2.5 py-2 bg-zen-err/10 border border-zen-err/30 rounded text-zen-errBright">
+          <AlertTriangle size={12} />
+          <span>{actionError}</span>
+        </div>
+      )}
+
+      {showRevisionInput && actionable && (
         <div className="space-y-2 p-2.5 bg-ink-950 border border-ink-700 rounded">
           <span className="text-ink-300 text-2xs uppercase font-semibold">REQUEST REVISION FEEDBACK</span>
           <textarea
@@ -145,10 +162,9 @@ export function ChatChangeCard({ artifact, onApprove, onReject, onRequestRevisio
         </div>
       )}
 
-      {/* Action Buttons */}
       <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
         <div className="flex items-center gap-2">
-          {artifact.state !== 'APPROVED' && (
+          {actionable && artifact.state !== 'APPROVED' && (
             <button
               onClick={handleApprove}
               disabled={acting}
@@ -159,16 +175,18 @@ export function ChatChangeCard({ artifact, onApprove, onReject, onRequestRevisio
             </button>
           )}
 
-          <button
-            onClick={() => setShowRevisionInput(!showRevisionInput)}
-            disabled={acting}
-            className="flex items-center gap-1 px-2.5 py-1.5 bg-ink-800 text-ink-100 border border-ink-700 rounded uppercase hover:bg-ink-700 transition-colors"
-          >
-            <MessageSquare size={12} />
-            REQUEST CHANGES
-          </button>
+          {actionable && (
+            <button
+              onClick={() => setShowRevisionInput(!showRevisionInput)}
+              disabled={acting}
+              className="flex items-center gap-1 px-2.5 py-1.5 bg-ink-800 text-ink-100 border border-ink-700 rounded uppercase hover:bg-ink-700 transition-colors"
+            >
+              <MessageSquare size={12} />
+              REQUEST CHANGES
+            </button>
+          )}
 
-          {artifact.state !== 'REJECTED' && artifact.state !== 'APPROVED' && (
+          {actionable && artifact.state !== 'REJECTED' && artifact.state !== 'APPROVED' && (
             <button
               onClick={handleReject}
               disabled={acting}

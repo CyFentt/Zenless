@@ -7,6 +7,27 @@ from typing import Any
 from urllib.parse import urlparse
 
 
+def resolve_provider_roles(configured: Any = None) -> dict[str, str]:
+    resolved = {
+        "BUILDER": "chatgpt",
+        "REVIEWER": "deepseek",
+        "VISUAL": "chatgpt",
+        "RESEARCH": "chatgpt",
+        "3D": "hunyuan",
+    }
+    if not isinstance(configured, dict):
+        return resolved
+    for provider, roles in configured.items():
+        if provider not in {"chatgpt", "deepseek", "hunyuan"} or not isinstance(roles, list):
+            continue
+        for role in roles:
+            normalized = str(role).strip().upper()
+            target = "3D" if normalized in {"3D", "THREED"} else normalized
+            if target in resolved:
+                resolved[target] = provider
+    return resolved
+
+
 class AuthState(StrEnum):
     UNKNOWN = "UNKNOWN"
     CHECKING = "CHECKING"
@@ -200,7 +221,7 @@ def evaluate_auth(spec: ProviderSpec, signals: AuthSignals) -> AuthState:
         return AuthState.AUTHENTICATED
     if signals.account and (signals.composer or signals.generation):
         return AuthState.AUTHENTICATED
-    if signals.composer and signals.send and not spec.login_url_patterns:
+    if spec.code != "chatgpt" and signals.composer and signals.send:
         return AuthState.AUTHENTICATED
     return AuthState.UNKNOWN
 
@@ -352,29 +373,14 @@ BUILTIN_MANIFESTS = (
     ),
     ProviderManifest(
         "hunyuan",
-        "Hunyuan 3D",
+        "Hunyuan",
         "https://3d.hunyuan.tencent.com/",
         ProviderSupport.BETA,
         "web",
-        ("3D",),
+        ("THREED",),
         (ProviderMode("3d", "3D", THREE_D_HINT),),
         True,
     ),
-    ProviderManifest("claude", "Claude", "https://claude.ai/", ProviderSupport.UNSUPPORTED, "none"),
-    ProviderManifest("gemini", "Gemini", "https://gemini.google.com/", ProviderSupport.UNSUPPORTED, "none"),
-    ProviderManifest("grok", "Grok", "https://grok.com/", ProviderSupport.UNSUPPORTED, "none"),
-    ProviderManifest("copilot", "Copilot", "https://copilot.microsoft.com/", ProviderSupport.UNSUPPORTED, "none"),
-    ProviderManifest("perplexity", "Perplexity", "https://www.perplexity.ai/", ProviderSupport.UNSUPPORTED, "none"),
-    ProviderManifest("mistral", "Le Chat", "https://chat.mistral.ai/", ProviderSupport.UNSUPPORTED, "none"),
-    ProviderManifest("qwen", "Qwen", "https://chat.qwen.ai/", ProviderSupport.UNSUPPORTED, "none"),
-    ProviderManifest("kimi", "Kimi", "https://www.kimi.com/", ProviderSupport.UNSUPPORTED, "none"),
-    ProviderManifest("poe", "Poe", "https://poe.com/", ProviderSupport.UNSUPPORTED, "none"),
-    ProviderManifest("meta", "Meta AI", "https://www.meta.ai/", ProviderSupport.UNSUPPORTED, "none"),
-    ProviderManifest("yuanbao", "Yuanbao", "https://yuanbao.tencent.com/", ProviderSupport.UNSUPPORTED, "none"),
-    ProviderManifest("doubao", "Doubao", "https://www.doubao.com/", ProviderSupport.UNSUPPORTED, "none"),
-    ProviderManifest("huggingchat", "HuggingChat", "https://huggingface.co/chat/", ProviderSupport.UNSUPPORTED, "none"),
-    ProviderManifest("you", "You.com", "https://you.com/", ProviderSupport.UNSUPPORTED, "none"),
-    ProviderManifest("duck", "Duck.ai", "https://duck.ai/", ProviderSupport.UNSUPPORTED, "none"),
 )
 
 

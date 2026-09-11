@@ -1,29 +1,42 @@
 import { CheckCircle2, AlertTriangle, Play } from 'lucide-react';
-import type { TestCaseResult, TestFailure } from '@/types';
+import type { TestCaseResult, TestFailure, TestState } from '@/types';
 
 interface Props {
   jobId?: string;
   testCases?: TestCaseResult[];
   failures?: TestFailure[];
+  testState?: TestState;
   onOpenTestPage: (jobId: string) => void;
 }
 
-export function ChatTestCard({ jobId, testCases = [], failures = [], onOpenTestPage }: Props) {
-  const passed = testCases.filter((c) => c.status === 'PASSED').length;
-  const failed = testCases.filter((c) => c.status === 'FAILED').length;
-  const skipped = testCases.filter((c) => c.status === 'SKIPPED').length;
-  const totalCases = testCases.length;
+export function ChatTestCard({ jobId, testCases = [], failures = [], testState, onOpenTestPage }: Props) {
+  const derivedCounts = {
+    total: testCases.length,
+    passed: testCases.filter((item) => item.status === 'PASSED').length,
+    failed: testCases.filter((item) => item.status === 'FAILED').length,
+    skipped: testCases.filter((item) => item.status === 'SKIPPED').length,
+  };
+  const counts = testState?.counts ?? derivedCounts;
+  const { passed, failed, skipped, total: totalCases } = counts;
 
   const hasFailures = failed > 0 || failures.length > 0;
   const hasExecutedCases = totalCases > 0;
 
-  // Truthful status determination
   let statusText = 'NOT RUN';
   let statusStyle = 'bg-ink-800 text-ink-300';
 
-  if (hasFailures) {
+  if (testState?.resultStatus === 'FAILED' || hasFailures) {
     statusText = 'FAILED';
     statusStyle = 'bg-zen-err/20 text-zen-errBright';
+  } else if (testState?.resultStatus === 'CANCELLED') {
+    statusText = 'CANCELLED';
+    statusStyle = 'bg-zen-warn/20 text-zen-warnBright';
+  } else if (testState?.resultStatus === 'SKIPPED') {
+    statusText = 'SKIPPED';
+    statusStyle = 'bg-zen-warn/20 text-zen-warnBright';
+  } else if (testState?.resultStatus === 'PASSED') {
+    statusText = skipped > 0 ? `PASSED (${skipped} SKIPPED)` : 'PASSED';
+    statusStyle = 'bg-zen-ok/20 text-zen-okBright';
   } else if (hasExecutedCases && passed > 0 && skipped === 0) {
     statusText = 'PASSED';
     statusStyle = 'bg-zen-ok/20 text-zen-okBright';
@@ -37,7 +50,6 @@ export function ChatTestCard({ jobId, testCases = [], failures = [], onOpenTestP
 
   return (
     <div className="my-3 p-4 bg-ink-900/90 border border-ink-700 rounded font-mono text-2xs space-y-3 shadow-lg">
-      {/* Header */}
       <div className="flex items-center justify-between border-b border-ink-800 pb-2">
         <div className="flex items-center gap-2">
           <Play size={14} className="text-ink-200" />
@@ -48,7 +60,6 @@ export function ChatTestCard({ jobId, testCases = [], failures = [], onOpenTestP
         </span>
       </div>
 
-      {/* Summary Counts */}
       <div className="grid grid-cols-3 gap-2 bg-ink-950 p-2.5 rounded border border-ink-800 text-center">
         <div>
           <span className="text-ink-400 text-2xs uppercase block">PASSED</span>
@@ -66,7 +77,6 @@ export function ChatTestCard({ jobId, testCases = [], failures = [], onOpenTestP
         </div>
       </div>
 
-      {/* Failure Highlight */}
       {failures.length > 0 && (
         <div className="p-2.5 bg-zen-err/10 border border-zen-err/30 rounded text-zen-errBright space-y-1">
           <div className="flex items-center gap-1.5 font-bold">
@@ -89,11 +99,11 @@ export function ChatTestCard({ jobId, testCases = [], failures = [], onOpenTestP
         </div>
       )}
 
-      {/* Action */}
       <div className="flex justify-end pt-1">
         <button
           onClick={() => jobId && onOpenTestPage(jobId)}
-          className="px-3 py-1.5 bg-ink-850 text-ink-200 border border-ink-700 rounded uppercase font-semibold hover:text-ink-0 hover:bg-ink-800 transition-colors"
+          disabled={!jobId}
+          className="px-3 py-1.5 bg-ink-850 text-ink-200 border border-ink-700 rounded uppercase font-semibold hover:text-ink-0 hover:bg-ink-800 transition-colors disabled:opacity-50"
         >
           VIEW TEST DETAILS
         </button>

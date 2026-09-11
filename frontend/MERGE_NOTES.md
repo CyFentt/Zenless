@@ -1,10 +1,5 @@
 # Merge notes
 
-Base: Bolt `project.rar`.
+The accepted React interface remains the single frontend source. Relevant configuration and centralized diagnostics were reconciled without introducing a second UI tree.
 
-The Lovable archive was **not** overlaid wholesale because it is mostly a generic TanStack/shadcn scaffold and would replace working Zenless-specific features. Only safe/useful ideas/configuration were incorporated:
-
-- Prettier configuration (`.prettierrc`, `.prettierignore`)
-- stronger centralized frontend error-description/diagnostic behavior, adapted to the existing Zenless architecture
-
-The Zenless-specific fixes were then completed directly on the Bolt base: attachments, dynamic models/settings persistence, richer diagnostics/dedup, Six View image rendering, production-safe 3D empty state, current-job handling, Review model, Studio actions, typed API/WebSocket contracts and the optional `ws` development fixture. The production integration now lives in the Python Core/Bridge; this file records frontend provenance only.
+The integration includes attachments, dynamic provider models, settings persistence, diagnostic deduplication, Six View rendering, a production-safe empty 3D state, selected-job hydration, review data, Studio actions, typed REST and WebSocket contracts, and the optional development fixture. Production authority remains in the Python Core and Bridge.

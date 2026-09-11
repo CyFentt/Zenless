@@ -159,7 +159,7 @@ class LoginWindowContractTests(unittest.TestCase):
         self.assertEqual(result["state"], "ready")
         self.assertEqual(order, ["page_opened", "callback"])
 
-    def test_native_host_emits_opened_after_show_and_restore(self) -> None:
+    def test_native_host_emits_opened_after_show_and_restore_without_blocking(self) -> None:
         spec = ProviderSpec("chatgpt", "https://provider.test/", (), (), (), ())
         source = io.BytesIO()
         target = io.BytesIO()
@@ -177,16 +177,39 @@ class LoginWindowContractTests(unittest.TestCase):
         def on_event(event: str, payload: dict[str, object]) -> None:
             opened.append((event, payload, list(window.steps)))
 
-        with patch("zenless.webview_host.time.monotonic", side_effect=[0.0, 1.0, 2.0, 4.1]):
-            result = host._handle(
-                {"action": "login", "provider": "chatgpt", "payload": {"timeout": 30}},
-                event_callback=on_event,
-            )
+        result = host._handle(
+            {"action": "login", "provider": "chatgpt", "payload": {"timeout": 30}},
+            event_callback=on_event,
+        )
 
-        self.assertEqual(result["state"], "ready")
+        self.assertEqual(result["state"], "login_window_open")
         self.assertEqual(opened[0][0], "login_window_opened")
         self.assertEqual(opened[0][1]["transport"], "webview2")
         self.assertEqual(opened[0][2], ["page_loaded", "shown", "restored"])
+
+    def test_webview_login_polls_without_monopolizing_the_host(self) -> None:
+        controller = WebView2BrowserController(data_root=Path("data"))
+        controller._process = SimpleNamespace(poll=lambda: None)
+        opened: list[tuple[str, str]] = []
+        actions: list[str] = []
+
+        def request(action: str, provider: str, *_args, **kwargs) -> dict[str, object]:
+            actions.append(action)
+            if action == "login":
+                callback = kwargs.get("window_opened_callback")
+                if callback is not None:
+                    callback(provider, "webview2")
+                return {"state": "login_window_open"}
+            if action == "health":
+                return {"ready": True, "state": "AUTHENTICATED", "url": "https://provider.test/"}
+            return {"state": "hidden"}
+
+        with patch.object(controller, "_request", side_effect=request), patch("zenless.webview2_browser.time.sleep"):
+            result = controller.login("chatgpt", timeout=30, on_window_opened=lambda *args: opened.append(args))
+
+        self.assertEqual(result["state"], "ready")
+        self.assertEqual(opened, [("chatgpt", "webview2")])
+        self.assertEqual(actions, ["login", "health", "health", "health", "hide"])
 
     def test_webview_controller_delivers_native_opened_event_once(self) -> None:
         stream = io.BytesIO()

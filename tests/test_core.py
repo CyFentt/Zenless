@@ -119,6 +119,24 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(raised.exception.details, {"provider": "chatgpt"})
         self.assertEqual(core.connections()["chatgpt"], "LOGIN")
 
+    def test_startup_provider_probe_restores_ready_sessions(self) -> None:
+        core = object.__new__(ZenlessCore)
+        core.bridge = _ProbeBridge({"chatgpt", "deepseek"})
+        core.events = EventBus()
+        core._closing = threading.Event()
+        core._connections_lock = threading.RLock()
+        core._connections = {provider: "OFF" for provider in ("chatgpt", "deepseek", "hunyuan")}
+        core._boot_lock = threading.RLock()
+        core._boot_steps = [{"stage": "AI", "state": "OFF"}]
+
+        core._probe_provider_sessions()
+
+        self.assertEqual(core.bridge.calls, ["chatgpt", "deepseek", "hunyuan"])
+        self.assertEqual(core._connections, {"chatgpt": "READY", "deepseek": "READY", "hunyuan": "LOGIN"})
+        ready = [event.data["providerId"] for event in core.events.recent() if event.type == "LOGIN_READY"]
+        self.assertEqual(ready, ["chatgpt", "deepseek"])
+        self.assertEqual(core._boot_steps[0]["state"], "READY")
+
     def test_blocked_pipeline_event_publishes_persisted_chat_error(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             core = object.__new__(ZenlessCore)
@@ -143,6 +161,19 @@ class _ProviderBridge:
 
     def wait_for_provider(self, provider: str, timeout: float = 0.0) -> bool:
         return provider in self.ready
+
+
+class _ProbeBridge(_ProviderBridge):
+    def __init__(self, ready: set[str]) -> None:
+        super().__init__(ready)
+        self.calls: list[str] = []
+
+    def wait_for_provider(self, provider: str, timeout: float = 0.0) -> bool:
+        self.calls.append(provider)
+        return super().wait_for_provider(provider, timeout)
+
+    def selected_route(self, provider: str) -> str:
+        return "webview2" if provider in self.ready else ""
 
 
 if __name__ == "__main__":

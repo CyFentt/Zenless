@@ -43,7 +43,7 @@ Role bindings are independent of provider identity: `BUILDER`, `REVIEWER`, `VISU
 
 ## Task policy and orchestration
 
-`TaskOptions` resolves `AUTO` visual and 3D modes from explicit intent. A code fix does not require 3D. A 3D request enables both the visual and 3D paths. `TEMP` mode disables visual generation, 3D, and Studio mutation.
+`TaskOptions` resolves `AUTO` visual and 3D modes from explicit intent. A code fix does not require 3D. A 3D request enables both the visual and 3D paths. `TEMP` starts without conversation handoff but still reads the selected Studio project and executes the same explicitly requested visual, 3D, QA, approval, and mutation flow.
 
 The project pipeline is:
 

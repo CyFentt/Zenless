@@ -17,15 +17,15 @@ type VisualTab = "views" | "3d" | "assets";
 export function VisualPage() {
   const navigationTarget = useStore((s) => s.navigationTarget);
   const setNavigationTarget = useStore((s) => s.setNavigationTarget);
-  const [tab, setTab] = useState<VisualTab>("views");
+  const [tab, setTab] = useState<VisualTab>(() => (
+    navigationTarget?.page === "visual"
+    && (navigationTarget.tab === "views" || navigationTarget.tab === "3d" || navigationTarget.tab === "assets")
+      ? navigationTarget.tab
+      : "views"
+  ));
 
   useEffect(() => {
-    if (navigationTarget?.page === "visual" && navigationTarget.tab) {
-      if (navigationTarget.tab === "views" || navigationTarget.tab === "3d" || navigationTarget.tab === "assets") {
-        setTab(navigationTarget.tab as VisualTab);
-      }
-      setNavigationTarget(null);
-    }
+    if (navigationTarget?.page === "visual") setNavigationTarget(null);
   }, [navigationTarget, setNavigationTarget]);
 
   return (
@@ -62,7 +62,6 @@ const VIEW_NAMES: ViewName[] = ["FRONT", "BACK", "LEFT", "RIGHT", "TOP", "BOTTOM
 
 function ViewsTab() {
   const views = useStore((s) => s.views);
-  const setViews = useStore((s) => s.setViews);
   const conceptVersion = useStore((s) => s.conceptVersion);
   const conceptStatus = useStore((s) => s.conceptStatus);
   const conceptPrompt = useStore((s) => s.conceptPrompt);
@@ -71,19 +70,6 @@ function ViewsTab() {
 
   const [editing, setEditing] = useState(false);
   const [draftPrompt, setDraftPrompt] = useState("");
-
-  useEffect(() => {
-    if (!currentJobId) return;
-    getApi()
-      .getVisual(currentJobId)
-      .then((data) => {
-        setViews(data.views);
-        setConcept(data.concept.version, data.concept.status, data.concept.prompt);
-      })
-      .catch((error) =>
-        frontendDiagnostics.capture(error, "visual", "Failed to load visual state"),
-      );
-  }, [currentJobId, setViews, setConcept]);
 
   const handleRegen = async () => {
     if (!currentJobId) return;
@@ -121,7 +107,7 @@ function ViewsTab() {
       <div className="flex-1 grid grid-cols-3 grid-rows-2 gap-px bg-ink-600 p-px">
         {VIEW_NAMES.map((name) => {
           const view = views.find((v) => v.name === name) ?? { name, state: "EMPTY" as const };
-          return <ViewTile key={name} view={view} jobId={currentJobId} />;
+          return <ViewTile key={name} view={view} jobId={currentJobId} actionable={conceptStatus === "READY"} />;
         })}
       </div>
       <div className="flex items-center justify-between px-3 h-10 border-t border-ink-600 shrink-0">
@@ -137,6 +123,7 @@ function ViewsTab() {
           <Tooltip content="Edit concept prompt">
             <button
               onClick={openEdit}
+              disabled={conceptStatus !== "READY"}
               className="flex items-center gap-1 px-2 h-7 text-2xs uppercase tracking-wider text-ink-150 border border-ink-600 hover:bg-ink-800 transition-colors"
             >
               <Pencil size={10} />
@@ -146,6 +133,7 @@ function ViewsTab() {
           <Tooltip content="Regenerate all views">
             <button
               onClick={handleRegen}
+              disabled={conceptStatus !== "READY"}
               className="flex items-center gap-1 px-2 h-7 text-2xs uppercase tracking-wider text-ink-150 border border-ink-600 hover:bg-ink-800 transition-colors"
             >
               <RefreshCw size={10} />
@@ -154,6 +142,7 @@ function ViewsTab() {
           </Tooltip>
           <button
             onClick={handleApprove}
+            disabled={conceptStatus !== "READY"}
             className="flex items-center gap-1 px-2 h-7 text-2xs uppercase tracking-wider text-zen-okBright border border-ink-600 hover:bg-ink-800 transition-colors"
           >
             <Check size={10} />
@@ -194,10 +183,10 @@ function ViewsTab() {
   );
 }
 
-function ViewTile({ view, jobId }: { view: ViewTile; jobId: string | null }) {
+function ViewTile({ view, jobId, actionable }: { view: ViewTile; jobId: string | null; actionable: boolean }) {
   const handleRegen = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!jobId) return;
+    if (!jobId || !actionable) return;
     try {
       await getApi().regenerateView(jobId, view.name);
     } catch (error) {
@@ -260,7 +249,7 @@ function ViewTile({ view, jobId }: { view: ViewTile; jobId: string | null }) {
           NO IMAGE
         </div>
       )}
-      {view.state !== "GENERATING" && (
+      {actionable && view.state !== "GENERATING" && (
         <button
           onClick={handleRegen}
           className="absolute bottom-2 right-2 w-6 h-6 flex items-center justify-center text-ink-400 hover:text-ink-0 opacity-0 group-hover:opacity-100 transition-opacity"
@@ -275,16 +264,8 @@ function ViewTile({ view, jobId }: { view: ViewTile; jobId: string | null }) {
 
 function ModelViewerTab() {
   const modelInfo = useStore((s) => s.modelInfo);
-  const setModelInfo = useStore((s) => s.setModelInfo);
   const currentJobId = useStore((s) => s.currentJobId);
-
-  useEffect(() => {
-    if (!currentJobId) return;
-    getApi()
-      .getModel(currentJobId)
-      .then(setModelInfo)
-      .catch((error) => frontendDiagnostics.capture(error, "visual", "Failed to load 3D model"));
-  }, [currentJobId, setModelInfo]);
+  const modelActionable = modelInfo.state === "READY" && modelInfo.approvalState !== "APPROVED";
 
   const runModelAction = async (action: (jobId: string) => Promise<unknown>, message: string) => {
     if (!currentJobId) return;
@@ -344,6 +325,7 @@ function ModelViewerTab() {
           <Tooltip content="Regenerate geometry">
             <button
               onClick={handleRegenGeo}
+              disabled={!modelActionable}
               className="px-2 h-7 text-2xs uppercase tracking-wider text-ink-150 border border-ink-600 hover:bg-ink-800"
             >
               <RefreshCw size={10} className="inline mr-1" />
@@ -353,6 +335,7 @@ function ModelViewerTab() {
           <Tooltip content="Regenerate texture">
             <button
               onClick={handleRegenTex}
+              disabled={!modelActionable}
               className="px-2 h-7 text-2xs uppercase tracking-wider text-ink-150 border border-ink-600 hover:bg-ink-800"
             >
               <RefreshCw size={10} className="inline mr-1" />
@@ -361,6 +344,7 @@ function ModelViewerTab() {
           </Tooltip>
           <button
             onClick={handleApprove}
+            disabled={!modelActionable}
             className="px-2 h-7 text-2xs uppercase tracking-wider text-zen-okBright border border-ink-600 hover:bg-ink-800"
           >
             <Check size={10} className="inline mr-1" />

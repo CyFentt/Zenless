@@ -8,7 +8,7 @@ import struct
 import threading
 import time
 import uuid
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, Protocol
 
@@ -39,7 +39,8 @@ from .prompts import (
     visual_view_prompt,
 )
 from .protocol import ProtocolError, extract_json_object
-from .research_broker import ResearchBroker
+from .provider_registry import resolve_provider_roles
+from .research_broker import ResearchBroker, ResearchError
 from .store import SQLiteStore, now_iso
 from .studio_discovery import StudioDiscoveryManager
 from .studio_mcp import MCPError, StudioMCPClient
@@ -339,9 +340,6 @@ class ZenlessOrchestrator:
         self._check_control(task_id, cancel_event)
         options = options.resolve(objective)
         self._task_providers[task_id] = self._resolve_role_providers()
-        if options.chat_mode == "TEMP":
-            self._run_temp_chat(task_id, objective, attachment_paths, cancel_event)
-            return
         required = [(self._provider(task_id, "BUILDER"), "Builder")]
         if options.independent_review:
             required.append((self._provider(task_id, "REVIEWER"), "Reviewer"))
@@ -351,7 +349,7 @@ class ZenlessOrchestrator:
             required.append((self._provider(task_id, "3D"), "3D Generator"))
         for provider, label in dict(required).items():
             if not self.bridge.wait_for_provider(provider, timeout=2):
-                raise BridgeError(f"{label} requires login.")
+                raise BridgeError(f"{self._provider_identity(provider)} requires login for the {label} role.")
         self._emit(task_id, Stage.COLLECTING_CONTEXT, "Reading the active Studio project.")
         preferred = self.store.get_setting("studio.selection", {})
         preferred = preferred if isinstance(preferred, dict) else {}
@@ -370,12 +368,21 @@ class ZenlessOrchestrator:
             create_3d=options.create_3d_asset,
         )
         context = self._collect_context(task_id, target.studio_id, analysis)
-        context["effort"] = options.effort
+        context["conversation"] = self._conversation_context(
+            task_id,
+            target.studio_id,
+            objective,
+            options.chat_mode,
+        )
+        requested_effort = options.effort
+        options = self._resolve_effort(options, analysis, context)
+        context["effort"] = {"requested": requested_effort, "resolved": options.effort}
+        context["research"] = self._perform_research(task_id, objective, options, analysis, context)
         self.store.update_task(task_id, context_json=context)
 
         builder = self._provider(task_id, "BUILDER")
         if not self.bridge.wait_for_provider(builder, timeout=2):
-            raise BridgeError("Builder requires login.")
+            raise BridgeError(f"{self._provider_identity(builder)} requires login for the Builder role.")
         if attachment_paths:
             self._emit(task_id, Stage.COLLECTING_CONTEXT, "Uploading validated attachments to the builder.")
             self._upload_attachments(builder, task_id, attachment_paths)
@@ -421,6 +428,11 @@ class ZenlessOrchestrator:
                 gate_round += 1
                 gate_name = f"changes:{gate_round}"
                 detail = self._proposal_detail(proposal, review)
+                self._emit_current(
+                    task_id,
+                    f"Preparing code change revision {gate_round} for review.",
+                    "diff_generation",
+                )
                 decision, note = self._wait_gate(
                     task_id,
                     gate_name,
@@ -495,6 +507,11 @@ class ZenlessOrchestrator:
                     review_json=repair_review.to_dict() if repair_review else {},
                 )
                 if options.require_approval:
+                    self._emit_current(
+                        task_id,
+                        f"Preparing correction {fix_count} for review.",
+                        "diff_generation",
+                    )
                     decision, note = self._wait_gate(
                         task_id,
                         f"repair:{fix_count}",
@@ -528,52 +545,175 @@ class ZenlessOrchestrator:
         self._emit(task_id, Stage.COMPLETE, "Implementation completed and released.", "success")
 
     def _resolve_role_providers(self) -> dict[str, str]:
-        resolved = {
-            "BUILDER": "chatgpt",
-            "REVIEWER": "deepseek",
-            "VISUAL": "chatgpt",
-            "RESEARCH": "chatgpt",
-            "3D": "hunyuan",
-        }
-        configured = self.store.get_setting("provider.roles", {})
-        if not isinstance(configured, dict):
-            return resolved
-        for provider, roles in configured.items():
-            if provider not in {"chatgpt", "deepseek", "hunyuan"} or not isinstance(roles, list):
-                continue
-            for role in roles:
-                normalized = str(role).strip().upper()
-                if normalized in resolved:
-                    resolved[normalized] = str(provider)
-        return resolved
+        return resolve_provider_roles(self.store.get_setting("provider.roles", {}))
 
     def _provider(self, task_id: str, role: str) -> str:
-        defaults = {"BUILDER": "chatgpt", "REVIEWER": "deepseek", "VISUAL": "chatgpt", "3D": "hunyuan"}
+        defaults = resolve_provider_roles()
         providers = getattr(self, "_task_providers", {}).get(task_id, {})
         return providers.get(role, defaults.get(role, "chatgpt"))
 
-    def _run_temp_chat(
+    @staticmethod
+    def _provider_identity(provider: str) -> str:
+        return {
+            "chatgpt": "ChatGPT",
+            "deepseek": "DeepSeek",
+            "hunyuan": "Hunyuan",
+        }.get(provider.casefold(), provider)
+
+    def _conversation_context(
+        self,
+        task_id: str,
+        studio_id: str,
+        objective: str,
+        chat_mode: str,
+    ) -> dict[str, str]:
+        mode = str(chat_mode).upper()
+        conversation_id = hashlib.blake2b(studio_id.encode("utf-8"), digest_size=12).hexdigest()
+        if mode == "TEMP":
+            return {
+                "mode": "TEMP",
+                "conversationId": task_id,
+                "parentJobId": "",
+                "handoffSummary": "",
+            }
+        for prior in self.store.recent_tasks(24):
+            prior_id = str(prior.get("id") or "")
+            if prior_id == task_id or str(prior.get("studio_id") or "") != studio_id:
+                continue
+            summary = str(prior.get("final_text") or prior.get("error") or prior.get("prompt") or "").strip()
+            if not summary:
+                continue
+            return {
+                "mode": "PROJECT",
+                "conversationId": conversation_id,
+                "parentJobId": prior_id,
+                "handoffSummary": self._compact_handoff(objective, summary),
+            }
+        return {
+            "mode": "PROJECT",
+            "conversationId": conversation_id,
+            "parentJobId": "",
+            "handoffSummary": "",
+        }
+
+    @staticmethod
+    def _compact_handoff(objective: str, summary: str) -> str:
+        objective_terms = {token for token in re.findall(r"[a-z0-9_]{3,}", objective.casefold())}
+        sentences = [part.strip() for part in re.split(r"(?<=[.!?])\s+|\n+", summary) if part.strip()]
+        ranked = sorted(
+            enumerate(sentences),
+            key=lambda item: (
+                -sum(term in item[1].casefold() for term in objective_terms),
+                item[0],
+            ),
+        )
+        selected = sorted(ranked[:6], key=lambda item: item[0])
+        return " ".join(sentence for _, sentence in selected)[:4_000]
+
+    @staticmethod
+    def _resolve_effort(
+        options: TaskOptions,
+        analysis: BrainAnalysis,
+        context: dict[str, Any],
+    ) -> TaskOptions:
+        if str(options.effort).upper() != "AUTO":
+            return options
+        risk = str(options.risk_level).casefold()
+        intents = set(analysis.intents)
+        dependency_count = len(context.get("project_index") or [])
+        complexity = len(analysis.scopes) + min(4, dependency_count // 8)
+        if options.visual_first or options.create_3d_asset:
+            complexity += 2
+        if risk == "high" or intents.intersection({"debug", "audit", "test"}) or complexity >= 4:
+            resolved = "MAXIMUM"
+        elif risk == "low" and not analysis.requires_mutation and complexity <= 1:
+            resolved = "MINIMUM"
+        else:
+            resolved = "MEDIUM"
+        return replace(options, effort=resolved)
+
+    def _perform_research(
         self,
         task_id: str,
         objective: str,
-        attachment_paths: tuple[Path, ...],
-        cancel_event: threading.Event,
-    ) -> None:
-        builder = self._provider(task_id, "BUILDER")
-        if not self.bridge.wait_for_provider(builder, timeout=2):
-            raise BridgeError("Builder requires login.")
-        self._emit(task_id, Stage.COLLECTING_CONTEXT, "Preparing temporary chat without project mutation access.")
-        if attachment_paths:
-            self._upload_attachments(builder, task_id, attachment_paths)
-        self._check_control(task_id, cancel_event)
-        prompt = (
-            "Answer the request directly. This is a temporary chat with no Studio context and no mutation authority. "
-            "Do not claim that project files, Studio state, tests, or external systems were inspected.\n\n" + objective
+        options: TaskOptions,
+        analysis: BrainAnalysis,
+        context: dict[str, Any],
+    ) -> dict[str, Any]:
+        mode = str(options.research).upper()
+        if mode == "OFF":
+            return {"mode": mode, "state": "DISABLED", "evidence": []}
+        auto_required = bool(
+            set(analysis.intents).intersection({"debug", "audit", "test"})
+            or re.search(r"\b(api|security|version|current|deprecated|datastore|marketplace|teleport)\b", objective, re.I)
         )
-        response = self._send_agent_prompt(builder, prompt, task_id=task_id)
-        self.store.append_message(task_id, "Builder", "assistant", response)
-        self.store.update_task(task_id, final_text=response)
-        self._emit(task_id, Stage.COMPLETE, "Temporary chat completed.", "success")
+        if mode == "AUTO" and not auto_required:
+            return {"mode": mode, "state": "NOT_REQUIRED", "evidence": []}
+        raw_prior = context.get("research")
+        prior: dict[str, Any] = raw_prior if isinstance(raw_prior, dict) else {}
+        raw_capabilities = prior.get("capabilities")
+        capabilities: dict[str, Any] = raw_capabilities if isinstance(raw_capabilities, dict) else {}
+        provider = self._provider(task_id, "RESEARCH")
+        routes = self.research.routes(capabilities, tuple(self.studio.tools))
+        official_urls = re.findall(r"https://[^\s<>\"']+", objective)
+        route = ""
+        if official_urls:
+            route = "DIRECT_OFFICIAL_FETCH"
+        elif "PROVIDER_SEARCH" in routes:
+            route = "PROVIDER_SEARCH"
+        elif "STUDIO_DOCUMENTATION" in routes:
+            route = "STUDIO_DOCUMENTATION"
+        if not route:
+            return {
+                "mode": mode,
+                "state": "UNAVAILABLE",
+                "warning": "RESEARCH UNAVAILABLE",
+                "routes": routes,
+                "evidence": [],
+            }
+        self._emit(task_id, Stage.COLLECTING_CONTEXT, "Research started.", "research_running", route)
+        try:
+            if route == "DIRECT_OFFICIAL_FETCH":
+                evidence = self.research.fetch_official(official_urls[0].rstrip(".,;)"), objective[:1_000])
+            elif route == "PROVIDER_SEARCH":
+                evidence = self.research.provider_search(
+                    provider,
+                    objective,
+                    "Current authoritative behavior needed by this task",
+                    capabilities,
+                    task_id=task_id,
+                )
+            else:
+                studio_id = str(context.get("studio_id") or "")
+                evidence = self.research.studio_documentation(
+                    objective,
+                    "Current Studio API behavior needed by this task",
+                    tuple(self.studio.tools),
+                    lambda tool, arguments: self.studio.call_tool(
+                        tool,
+                        arguments,
+                        studio_id=studio_id,
+                        timeout=90,
+                    ).compact(28_000),
+                )
+        except (ResearchError, BridgeError, MCPError, OSError) as exc:
+            self._emit(task_id, Stage.COLLECTING_CONTEXT, "Research unavailable.", "research_warning", str(exc)[:1_000])
+            return {
+                "mode": mode,
+                "state": "UNAVAILABLE",
+                "warning": str(exc)[:1_000],
+                "routes": routes,
+                "evidence": [],
+            }
+        public = evidence.public()
+        self._emit(
+            task_id,
+            Stage.COLLECTING_CONTEXT,
+            "Research completed.",
+            "research_done",
+            json.dumps({key: public[key] for key in ("source", "captured_at", "evidence_type", "supports")}),
+        )
+        return {"mode": mode, "state": "DONE", "routes": routes, "evidence": [public]}
 
     def _upload_attachments(self, provider: str, task_id: str, paths: tuple[Path, ...]) -> None:
         response = self.bridge.request(provider, "capabilities", {}, task_id=task_id, timeout=15)
@@ -700,7 +840,8 @@ class ZenlessOrchestrator:
             if not reads:
                 break
             unique_reads: list[ProposalAction] = []
-            max_read_actions = 12 if options.effort == "max" else (4 if options.effort == "min" else 8)
+            effort = str(options.effort).upper()
+            max_read_actions = 12 if effort == "MAXIMUM" else (4 if effort == "MINIMUM" else 8)
             for action in reads[:max_read_actions]:
                 key = json.dumps([action.tool, action.arguments], ensure_ascii=False, sort_keys=True, default=str)
                 if key in seen_reads:
@@ -761,7 +902,7 @@ class ZenlessOrchestrator:
             return proposal, None
         reviewer = self._provider(task_id, "REVIEWER")
         if not self.bridge.wait_for_provider(reviewer, timeout=2):
-            raise BridgeError("Reviewer requires login for independent review.")
+            raise BridgeError(f"{self._provider_identity(reviewer)} requires login for independent review.")
 
         review: ReviewResult | None = None
         revisions = 0
@@ -952,6 +1093,8 @@ class ZenlessOrchestrator:
             task_id,
             Stage.GENERATING_CONCEPT,
             f"Generating six actual orthographic views (version {version}).",
+            "visual_generation",
+            json.dumps({"version": version}),
         )
         version_dir = self.run_root.parent / "assets" / task_id / "concept" / f"v{version}"
         version_dir.mkdir(parents=True, exist_ok=True)
@@ -998,6 +1141,18 @@ class ZenlessOrchestrator:
                 "width": width,
                 "height": height,
             }
+            self.store.update_context_section(
+                task_id,
+                "visual",
+                {**visual, "version": version, "master": master, "status": "GENERATING"},
+            )
+            self._emit(
+                task_id,
+                Stage.GENERATING_CONCEPT,
+                f"{view.upper()} view is ready.",
+                "visual_ready",
+                json.dumps({"view": view.upper(), "assetId": asset_id, "conceptVersion": version}),
+            )
         return visual
 
     def _qa_visual_version(
@@ -1101,6 +1256,8 @@ class ZenlessOrchestrator:
             task_id,
             Stage.GENERATING_3D,
             f"3D Generator is creating separate geometry and PBR materials from {len(references)} supported reference(s).",
+            "model_generation",
+            json.dumps({"version": version, "target": target}),
         )
         raw_previous = context.get("model")
         previous: dict[str, Any] = raw_previous if isinstance(raw_previous, dict) else {}
@@ -1125,9 +1282,23 @@ class ZenlessOrchestrator:
                 mime="model/gltf-binary",
                 metadata={"phase": "geometry", "version": version, "references": len(references)},
             )
+            self._emit(
+                task_id,
+                Stage.GENERATING_3D,
+                "3D geometry is ready; texture generation is starting.",
+                "model_geometry_ready",
+                json.dumps({"version": version, "assetId": geometry_asset}),
+            )
         if not geometry_path or not Path(geometry_path).is_file():
             raise BridgeError("The texture and PBR stage requires valid local GLB geometry.")
         texture_inputs = [geometry_path, *references]
+        self._emit(
+            task_id,
+            Stage.GENERATING_3D,
+            "Texture and PBR generation started.",
+            "model_texture_generation",
+            json.dumps({"version": version}),
+        )
         self._upload_file_batches(provider, task_id, tuple(texture_inputs), max_images, Stage.GENERATING_3D)
         textured = self.bridge.request(
             provider,
@@ -1501,7 +1672,9 @@ class ZenlessOrchestrator:
             return proposal, mutation_evidence, console_output
         reviewer = self._provider(task_id, "REVIEWER")
         if not self.bridge.wait_for_provider(reviewer, timeout=2):
-            raise BridgeError("Reviewer requires login for the mandatory independent final review.")
+            raise BridgeError(
+                f"{self._provider_identity(reviewer)} requires login for the mandatory independent final review."
+            )
         revisions = 0
         while True:
             self._check_control(task_id, cancel_event)
@@ -1582,6 +1755,11 @@ class ZenlessOrchestrator:
                 review_json=repair_review.to_dict() if repair_review else {},
             )
             if options.require_approval:
+                self._emit_current(
+                    task_id,
+                    f"Preparing final correction {revisions} for review.",
+                    "diff_generation",
+                )
                 decision, note = self._wait_gate(
                     task_id,
                     f"final-repair:{revisions}",
@@ -1771,6 +1949,14 @@ class ZenlessOrchestrator:
             pass
         if self.event_callback is not None:
             self.event_callback(event)
+
+    def _emit_current(self, task_id: str, message: str, kind: str = "info", detail: str = "") -> None:
+        task = self.store.load_task(task_id) or {}
+        try:
+            stage = Stage(str(task.get("stage") or Stage.PLANNING.value))
+        except ValueError:
+            stage = Stage.PLANNING
+        self._emit(task_id, stage, message, kind, detail)
 
     def _finish_error(self, task_id: str, stage: Stage, message: str) -> None:
         try:

@@ -7,22 +7,22 @@ import { Modal } from '@/components/Modal';
 import { Tooltip } from '@/components/Tooltip';
 import { DiffViewer } from './DiffViewer';
 import { Check, X, RefreshCw, Lock, Unlock, Eye, FileCode, CheckCircle, AlertTriangle, ShieldAlert } from 'lucide-react';
-import type { ContextItem, Review, Job } from '@/types';
+import type { ContextItem, Job } from '@/types';
 
 type BuildTab = 'context' | 'changes' | 'history';
 
 export function BuildPage() {
   const navigationTarget = useStore((s) => s.navigationTarget);
   const setNavigationTarget = useStore((s) => s.setNavigationTarget);
-  const [activeTab, setActiveTab] = useState<BuildTab>('changes');
+  const [activeTab, setActiveTab] = useState<BuildTab>(() => (
+    navigationTarget?.page === 'build'
+    && (navigationTarget.tab === 'context' || navigationTarget.tab === 'changes' || navigationTarget.tab === 'history')
+      ? navigationTarget.tab
+      : 'changes'
+  ));
 
   useEffect(() => {
-    if (navigationTarget?.page === 'build' && navigationTarget.tab) {
-      if (navigationTarget.tab === 'context' || navigationTarget.tab === 'changes' || navigationTarget.tab === 'history') {
-        setActiveTab(navigationTarget.tab);
-      }
-      setNavigationTarget(null);
-    }
+    if (navigationTarget?.page === 'build') setNavigationTarget(null);
   }, [navigationTarget, setNavigationTarget]);
 
   return (
@@ -45,10 +45,6 @@ export function BuildPage() {
   );
 }
 
-/* =========================================================================
-   1. CONTEXT TAB
-   ========================================================================= */
-
 function ContextTab() {
   const currentJobId = useStore((s) => s.currentJobId);
   const contextItems = useStore((s) => s.contextItems);
@@ -56,16 +52,6 @@ function ContextTab() {
 
   const [inspectingItem, setInspectingItem] = useState<ContextItem | null>(null);
   const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    if (!currentJobId) return;
-    setLoading(true);
-    getApi()
-      .getContext(currentJobId)
-      .then((items) => setContextItems(items))
-      .catch((err) => frontendDiagnostics.capture(err, 'build', 'Failed to fetch context items'))
-      .finally(() => setLoading(false));
-  }, [currentJobId, setContextItems]);
 
   const handleRefresh = async () => {
     if (!currentJobId) return;
@@ -120,7 +106,6 @@ function ContextTab() {
 
   return (
     <div className="flex flex-col h-full p-4 overflow-hidden">
-      {/* Action Bar */}
       <div className="flex items-center justify-between pb-3 border-b border-ink-700">
         <div className="flex items-center gap-3">
           <span className="text-2xs uppercase tracking-widest text-ink-300">
@@ -138,7 +123,6 @@ function ContextTab() {
         </button>
       </div>
 
-      {/* List Area */}
       <div className="flex-1 overflow-y-auto scrollbar-zen py-3 space-y-2">
         {contextItems.length === 0 ? (
           <div className="p-8 text-center text-xs text-ink-400 font-mono">
@@ -158,7 +142,6 @@ function ContextTab() {
                       : 'bg-ink-950 border-ink-800 opacity-60'
                 }`}
               >
-                {/* Info */}
                 <div className="flex items-center gap-3 min-w-0 flex-1">
                   <FileCode size={16} className="text-ink-300 shrink-0" />
                   <div className="min-w-0 flex-1">
@@ -172,7 +155,6 @@ function ContextTab() {
                   </div>
                 </div>
 
-                {/* Relevance Bar & Actions */}
                 <div className="flex items-center gap-4 shrink-0">
                   <div className="flex items-center gap-2 w-28">
                     <span className="text-2xs font-mono text-ink-400 w-8 text-right">{relPercent}%</span>
@@ -238,7 +220,6 @@ function ContextTab() {
         )}
       </div>
 
-      {/* Inspect Modal */}
       {inspectingItem && (
         <Modal
           open={!!inspectingItem}
@@ -280,37 +261,20 @@ function ContextTab() {
   );
 }
 
-/* =========================================================================
-   2. CHANGES TAB
-   ========================================================================= */
-
 function ChangesTab() {
   const currentJobId = useStore((s) => s.currentJobId);
+  const currentJob = useStore((s) => s.jobs.find((job) => job.id === s.currentJobId));
   const changedFiles = useStore((s) => s.changedFiles);
   const setChangedFiles = useStore((s) => s.setChangedFiles);
+  const review = useStore((s) => s.review);
   const selectedFileId = useStore((s) => s.selectedFileId);
   const setSelectedFileId = useStore((s) => s.setSelectedFileId);
 
-  const [review, setReview] = useState<Review | null>(null);
-  const [loading, setLoading] = useState(false);
   const [acting, setActing] = useState(false);
 
   useEffect(() => {
-    if (!currentJobId) return;
-    setLoading(true);
-    Promise.all([
-      getApi().getChanges(currentJobId).catch(() => []),
-      getApi().getReview(currentJobId).catch(() => null),
-    ])
-      .then(([files, rev]) => {
-        setChangedFiles(files);
-        if (files.length > 0 && !selectedFileId) {
-          setSelectedFileId(files[0].id);
-        }
-        if (rev) setReview(rev);
-      })
-      .finally(() => setLoading(false));
-  }, [currentJobId, setChangedFiles, selectedFileId, setSelectedFileId]);
+    if (changedFiles.length > 0 && !selectedFileId) setSelectedFileId(changedFiles[0].id);
+  }, [changedFiles, selectedFileId, setSelectedFileId]);
 
   const selectedFile = changedFiles.find((f) => f.id === selectedFileId) ?? changedFiles[0];
 
@@ -347,9 +311,7 @@ function ChangesTab() {
 
   return (
     <div className="flex h-full overflow-hidden">
-      {/* Sidebar: File list & Review summary */}
       <div className="w-80 shrink-0 border-r border-ink-700 flex flex-col bg-ink-900 overflow-hidden">
-        {/* Review Header / Decision */}
         {review && (
           <div className="p-3 border-b border-ink-700 bg-ink-950 space-y-2">
             <div className="flex items-center justify-between">
@@ -412,11 +374,10 @@ function ChangesTab() {
           </div>
         )}
 
-        {/* Global Action Bar */}
         <div className="p-3 border-b border-ink-700 flex gap-2 bg-ink-950">
           <button
             onClick={handleApprove}
-            disabled={acting || changedFiles.length === 0}
+            disabled={acting || changedFiles.length === 0 || currentJob?.stage !== 'WAITING_CHANGE_APPROVAL'}
             className="flex-1 flex items-center justify-center gap-1.5 h-8 text-2xs font-mono uppercase font-semibold bg-zen-ok text-black rounded hover:bg-zen-okBright transition-colors disabled:opacity-50"
           >
             <Check size={12} />
@@ -424,7 +385,7 @@ function ChangesTab() {
           </button>
           <button
             onClick={handleReject}
-            disabled={acting || changedFiles.length === 0}
+            disabled={acting || changedFiles.length === 0 || currentJob?.stage !== 'WAITING_CHANGE_APPROVAL'}
             className="flex-1 flex items-center justify-center gap-1.5 h-8 text-2xs font-mono uppercase font-semibold bg-zen-err text-white rounded hover:bg-zen-errBright transition-colors disabled:opacity-50"
           >
             <X size={12} />
@@ -432,14 +393,13 @@ function ChangesTab() {
           </button>
         </div>
 
-        {/* Changed Files List */}
         <div className="flex-1 overflow-y-auto scrollbar-zen">
           <div className="px-3 py-2 text-2xs font-mono uppercase tracking-widest text-ink-400 border-b border-ink-800">
             CHANGED FILES ({changedFiles.length})
           </div>
           {changedFiles.length === 0 ? (
             <div className="p-4 text-xs font-mono text-ink-400 text-center italic">
-              {loading ? 'Loading changes...' : 'No changes in current job.'}
+              No changes in current job.
             </div>
           ) : (
             changedFiles.map((file) => {
@@ -479,7 +439,6 @@ function ChangesTab() {
         </div>
       </div>
 
-      {/* Main Diff Area */}
       <div className="flex-1 p-3 overflow-hidden">
         {selectedFile ? (
           <DiffViewer file={selectedFile} onSaveContent={handleSaveContent} />
@@ -492,10 +451,6 @@ function ChangesTab() {
     </div>
   );
 }
-
-/* =========================================================================
-   3. HISTORY TAB
-   ========================================================================= */
 
 function HistoryTab() {
   const jobs = useStore((s) => s.jobs);

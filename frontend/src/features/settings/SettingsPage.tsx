@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useStore } from '@/store';
-import { getApi, isMockMode, getMockApi } from '@/services';
+import { getApi } from '@/services';
 import { frontendDiagnostics } from '@/services/diagnostics';
 import { Tabs, Toggle, Select } from '@/components/Tabs';
 import { Tooltip } from '@/components/Tooltip';
@@ -13,15 +13,15 @@ type SettingsTab = 'general' | 'models' | 'links' | 'logs';
 export function SettingsPage() {
   const navigationTarget = useStore((s) => s.navigationTarget);
   const setNavigationTarget = useStore((s) => s.setNavigationTarget);
-  const [tab, setTab] = useState<SettingsTab>('general');
+  const [tab, setTab] = useState<SettingsTab>(() => (
+    navigationTarget?.page === 'settings'
+    && (navigationTarget.tab === 'general' || navigationTarget.tab === 'models' || navigationTarget.tab === 'links' || navigationTarget.tab === 'logs')
+      ? navigationTarget.tab
+      : 'general'
+  ));
 
   useEffect(() => {
-    if (navigationTarget?.page === 'settings' && navigationTarget.tab) {
-      if (navigationTarget.tab === 'general' || navigationTarget.tab === 'models' || navigationTarget.tab === 'links' || navigationTarget.tab === 'logs') {
-        setTab(navigationTarget.tab as SettingsTab);
-      }
-      setNavigationTarget(null);
-    }
+    if (navigationTarget?.page === 'settings') setNavigationTarget(null);
   }, [navigationTarget, setNavigationTarget]);
 
   const settings = useStore((s) => s.settings);
@@ -97,13 +97,6 @@ function GeneralTab({ settings, onChange }: { settings: Settings | null; onChang
           <span className="text-2xs font-mono text-ink-200">{settings.bridgePort || 'EPHEMERAL'}</span>
         </Row>
       </Section>
-      <Section title="MODE">
-        <Row label="Mock Mode" hint="Use mock data instead of real bridge">
-          <span className={`text-2xs uppercase tracking-wider ${isMockMode() ? 'text-zen-okBright' : 'text-ink-400'}`}>
-            {isMockMode() ? 'ON' : 'OFF'}
-          </span>
-        </Row>
-      </Section>
     </div>
   );
 }
@@ -146,7 +139,7 @@ function ModelsTab({ settings, catalog, onChange }: { settings: Settings | null;
 
   return (
     <div className="p-4 max-w-md space-y-4 animate-fade-in">
-      <Section title="BUILDER">
+      <Section title="CHATGPT · BUILDER">
         <Row label="Model">
           <Select value={models.chatgpt.model} options={available(catalog.chatgpt.models)} onChange={(value) => void selectModel('chatgpt', value)} />
         </Row>
@@ -154,7 +147,7 @@ function ModelsTab({ settings, catalog, onChange }: { settings: Settings | null;
           <Toggle checked={models.chatgpt.reasoning} onChange={(value) => void persistModels({ ...models, chatgpt: { ...models.chatgpt, reasoning: value } })} />
         </Row>
       </Section>
-      <Section title="REVIEWER">
+      <Section title="DEEPSEEK · REVIEWER">
         <Row label="Model">
           <Select value={models.deepseek.model} options={available(catalog.deepseek.models)} onChange={(value) => void selectModel('deepseek', value)} />
         </Row>
@@ -162,7 +155,7 @@ function ModelsTab({ settings, catalog, onChange }: { settings: Settings | null;
           <Toggle checked={models.deepseek.reasoning} onChange={(value) => void persistModels({ ...models, deepseek: { ...models.deepseek, reasoning: value } })} />
         </Row>
       </Section>
-      <Section title="3D GENERATOR">
+      <Section title="HUNYUAN · 3D GENERATOR">
         <Row label="Version">
           <Select value={models.hunyuan.version} options={available(catalog.hunyuan.versions)} onChange={(value) => void selectModel('hunyuan', value)} />
         </Row>
@@ -187,10 +180,10 @@ function LinksTab({ connections }: { connections: ConnectionInfo }) {
   const labels: { key: keyof ConnectionInfo; name: string; provider?: ProviderId }[] = [
     { key: 'bridge', name: 'Bridge' },
     { key: 'browser', name: 'Browser' },
-    { key: 'chatgpt', name: 'Builder', provider: 'chatgpt' },
-    { key: 'deepseek', name: 'Reviewer', provider: 'deepseek' },
-    { key: 'hunyuan', name: '3D Generator', provider: 'hunyuan' },
-    { key: 'studio', name: 'Studio' },
+    { key: 'chatgpt', name: 'ChatGPT · Builder', provider: 'chatgpt' },
+    { key: 'deepseek', name: 'DeepSeek · Reviewer', provider: 'deepseek' },
+    { key: 'hunyuan', name: 'Hunyuan · 3D Generator', provider: 'hunyuan' },
+    { key: 'studio', name: 'Roblox Studio · Editor' },
   ];
 
   const handleLogin = async () => {
@@ -221,21 +214,6 @@ function LinksTab({ connections }: { connections: ConnectionInfo }) {
                 <StatusBadge status={status} />
                 {(status === 'LOGIN' || status === 'OFF' || status === 'ERR') && provider && (
                   <button onClick={() => setLoginModal(provider)} className="px-2 h-6 text-2xs uppercase tracking-wider text-ink-50 border border-ink-500 hover:bg-ink-800 transition-colors">LOGIN</button>
-                )}
-                {status === 'OFF' && isMockMode() && (
-                  <Tooltip content="Retry connection">
-                    <button
-                      onClick={() => {
-                        const mockApi = getMockApi();
-                        if (!mockApi) return;
-                        mockApi.setMockConnection(key, 'CONNECTING');
-                        window.setTimeout(() => mockApi.setMockConnection(key, 'READY'), 800);
-                      }}
-                      className="px-2 h-6 text-2xs uppercase tracking-wider text-ink-300 border border-ink-600 hover:bg-ink-800 transition-colors"
-                    >
-                      CONNECT
-                    </button>
-                  </Tooltip>
                 )}
               </div>
             </div>

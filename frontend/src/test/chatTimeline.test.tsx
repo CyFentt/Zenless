@@ -18,10 +18,15 @@ describe('TopBar Project Identity & Provider Role', () => {
     expect(screen.queryByText('ARENA')).toBeNull();
   });
 
-  it('displays real project name from Studio tree when online', () => {
+  it('displays the authoritative project identity when online', () => {
     useStore.setState({
       studioState: 'ONLINE',
-      studioTree: [{ id: '1', name: 'SciFi_Game', className: 'DataModel', path: 'Game' }],
+      projectIdentity: {
+        name: 'SciFi_Game',
+        studioId: 'studio-1',
+        placeId: 42,
+        universeId: 84,
+      },
     });
     render(<TopBar />);
     expect(screen.getByText('SCIFI_GAME')).toBeInTheDocument();
@@ -88,6 +93,18 @@ describe('ChatTimeline Artifact & Activity Rendering', () => {
     useStore.setState({
       currentJobId: 'job_001',
       conceptVersion: 1,
+      artifacts: [
+        {
+          id: 'visual-v1',
+          jobId: 'job_001',
+          type: 'IMAGE',
+          name: 'Concept visual',
+          state: 'READY',
+          version: 1,
+          createdAt: 100,
+          metadata: {},
+        },
+      ],
       views: [
         { name: 'FRONT', state: 'READY', imageUrl: 'http://localhost/front.png' },
         { name: 'BACK', state: 'READY', imageUrl: 'http://localhost/back.png' },
@@ -106,8 +123,8 @@ describe('ChatTimeline Artifact & Activity Rendering', () => {
     useStore.setState({
       currentJobId: 'job_001',
       testCases: [
-        { id: 'c1', name: 'spawns player', status: 'PASSED' },
-        { id: 'c2', name: 'detonates bomb', status: 'FAILED' },
+        { id: 'c1', name: 'spawns player', status: 'PASSED', startedAt: 100, finishedAt: 110 },
+        { id: 'c2', name: 'detonates bomb', status: 'FAILED', startedAt: 120, finishedAt: 130 },
       ],
       testFailures: [{ id: 'f1', message: 'Bomb clip collision failure', timestamp: Date.now() }],
     });
@@ -125,8 +142,8 @@ describe('ChatTimeline Artifact & Activity Rendering', () => {
     useStore.setState({
       currentJobId: 'job_001',
       testCases: [
-        { id: 'c1', name: 'test 1', status: 'SKIPPED' },
-        { id: 'c2', name: 'test 2', status: 'SKIPPED' },
+        { id: 'c1', name: 'test 1', status: 'SKIPPED', startedAt: 100, finishedAt: 110 },
+        { id: 'c2', name: 'test 2', status: 'SKIPPED', startedAt: 120, finishedAt: 130 },
       ],
       testFailures: [],
     });

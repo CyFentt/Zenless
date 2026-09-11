@@ -19,6 +19,7 @@ from .event_bus import CoreEvent
 
 JsonHandler = Callable[[], Awaitable[dict[str, Any] | list[Any]]]
 REQUEST_ID_KEY = web.RequestKey("request_id", str)
+SESSION_COOKIE = "zenless_session"
 
 
 class LocalWebBridge:
@@ -129,7 +130,12 @@ class LocalWebBridge:
         try:
             self._validate_local_request(request)
             if request.path.startswith("/api/") and request.path != "/api/session":
-                if not secrets.compare_digest(request.headers.get("X-Zenless-Token", ""), self.token):
+                header_token = request.headers.get("X-Zenless-Token", "")
+                cookie_token = request.cookies.get(SESSION_COOKIE, "")
+                if not (
+                    secrets.compare_digest(header_token, self.token)
+                    or secrets.compare_digest(cookie_token, self.token)
+                ):
                     raise CoreError("UNAUTHORIZED", "Invalid local session.", status=401)
             response = await handler(request)
         except CoreError as exc:
@@ -237,10 +243,6 @@ class LocalWebBridge:
         app.router.add_post("/api/jobs/{job_id}/test/stop", self._stop_test)
         app.router.add_get("/api/jobs/{job_id}/test/state", self._test_state)
 
-        app.router.add_get("/api/providers", self._providers)
-        app.router.add_get("/api/readiness", self._readiness)
-        app.router.add_get("/api/tools", self._tools)
-        app.router.add_get("/api/storage", self._storage)
         app.router.add_get("/api/settings", self._sync_handler(self.core.settings))
         app.router.add_patch("/api/settings", self._update_settings)
         app.router.add_get("/api/settings/models", self._sync_handler(self.core.model_catalog))
@@ -260,7 +262,9 @@ class LocalWebBridge:
         app.router.add_get("/{tail:.*}", self._static)
 
     async def _session(self, _request: web.Request) -> web.Response:
-        return self._json({"token": self.token})
+        response = self._json({"token": self.token})
+        response.set_cookie(SESSION_COOKIE, self.token, httponly=True, samesite="Strict", path="/")
+        return response
 
     async def _readiness(self, request: web.Request) -> web.Response:
         return self._json(self.core.readiness(refresh=request.query.get("refresh") == "1"))
@@ -470,22 +474,6 @@ class LocalWebBridge:
 
     async def _test_state(self, request: web.Request) -> web.Response:
         return self._json(self.core.test_state(request.match_info["job_id"]))
-
-    async def _providers(self, _request: web.Request) -> web.Response:
-        return self._json(self.core.agents())
-
-    async def _readiness(self, _request: web.Request) -> web.Response:
-        return self._json(self.core.bootstrap())
-
-    async def _tools(self, _request: web.Request) -> web.Response:
-        return self._json([
-            {"id": "studio_mcp", "name": "Studio MCP", "status": "INSTALLED", "category": "MCP"},
-            {"id": "play_test", "name": "Play Test", "status": "INSTALLED", "category": "BUILT_IN"},
-            {"id": "managed_browser", "name": "Managed Browser", "status": "INSTALLED", "category": "BUILT_IN"},
-        ])
-
-    async def _storage(self, _request: web.Request) -> web.Response:
-        return self._json({"used": 1024 * 1024, "budget": 10 * 1024 * 1024 * 1024, "categories": []})
 
     async def _update_settings(self, request: web.Request) -> web.Response:
         return self._json(self.core.update_settings(await self._json_body(request)))

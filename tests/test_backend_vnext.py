@@ -123,7 +123,7 @@ class _ResearchTransport:
 
 
 class BackendVNextTests(unittest.TestCase):
-    def test_email_login_field_is_not_an_authenticated_composer(self) -> None:
+    def test_login_signals_take_priority_over_composer_signals(self) -> None:
         spec = ProviderSpec(
             "hunyuan",
             "https://example.invalid/",
@@ -143,11 +143,32 @@ class BackendVNextTests(unittest.TestCase):
         self.assertEqual(state, AuthState.LOGIN_REQUIRED)
         self.assertEqual(
             evaluate_auth(spec, AuthSignals("https://example.invalid/create", composer=True, send=True)),
+            AuthState.AUTHENTICATED,
+        )
+
+    def test_chatgpt_public_composer_does_not_impersonate_an_authenticated_session(self) -> None:
+        spec = ProviderSpec(
+            "chatgpt",
+            "https://example.invalid/",
+            ("textarea",),
+            ("button[type='submit']",),
+            (),
+            (),
+            composer_markers=("textarea",),
+            account_markers=("[data-testid='profile-button']",),
+        )
+
+        self.assertEqual(
+            evaluate_auth(spec, AuthSignals("https://example.invalid/", composer=True, send=True)),
             AuthState.UNKNOWN,
+        )
+        self.assertEqual(
+            evaluate_auth(spec, AuthSignals("https://example.invalid/", composer=True, account=True, send=True)),
+            AuthState.AUTHENTICATED,
         )
 
     def test_provider_catalog_and_mode_capabilities_are_explicit(self) -> None:
-        self.assertGreaterEqual(len(BUILTIN_MANIFESTS), 15)
+        self.assertEqual({manifest.id for manifest in BUILTIN_MANIFESTS}, {"chatgpt", "deepseek", "hunyuan"})
         self.assertFalse(EXPERT_HINT.supports_files)
         normalized = normalize_capabilities(
             {"get_models": True, "max_image_inputs": 6, "file_types": ["image/png", ".lua"]}
@@ -313,7 +334,7 @@ class BackendVNextTests(unittest.TestCase):
             )
             core._connections_lock = threading.Lock()
             core._connections = {
-                "chatgpt": "LOGIN",
+                "chatgpt": "READY",
                 "deepseek": "READY",
                 "hunyuan": "LOGIN",
                 "studio": "OFF",

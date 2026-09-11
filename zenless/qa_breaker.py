@@ -13,6 +13,7 @@ from typing import Any
 from .event_bus import EventBus
 from .orchestrator import AgentTransport, OrchestratorError, TaskCancelled
 from .protocol import ProtocolError, extract_json_object
+from .provider_registry import resolve_provider_roles
 from .scenario_qa import ScenarioCompiler, ScenarioExecutor
 from .store import SQLiteStore
 from .studio_mcp import MCPError, MCPToolResult, StudioMCPClient, validate_json_schema
@@ -218,7 +219,7 @@ class QABreaker:
         effort = str((task.get("options") or {}).get("effort", "AUTO")).upper()
         tools = {str(item.get("tool", "")).casefold() for item in evidence}
         deep_terms = ("datastore", "persist", "currency", "remoteevent", "multiplayer", "ragdoll", "physics")
-        smoke_terms = ("textlabel", "texto", "cor ", "label", "tooltip")
+        smoke_terms = ("textlabel", "text", "color ", "label", "tooltip")
         if (
             effort == "MAXIMUM"
             or risk == "high"
@@ -297,14 +298,14 @@ class QABreaker:
         with self._run_lock:
             run_id = uuid.uuid4().hex
             seed = int.from_bytes(hashlib.sha256(f"{job_id}:{run_id}".encode()).digest()[:4], "big")
-            plan = self._make_plan(job_id, profile, evidence, seed, rerun)
             self.store.create_test_run(run_id, job_id, profile.name, seed)
-            self.events.publish("TEST_STARTED", {"jobId": job_id})
+            self.events.publish("TEST_STARTED", {"jobId": job_id, "runId": run_id})
             started_at = time.monotonic()
             failures: list[TestFailure] = []
             logs: list[str] = []
             outcomes: list[str] = []
             try:
+                plan = self._make_plan(job_id, profile, evidence, seed, rerun)
                 self._check_cancel(cancel_event)
                 outcomes.append(
                     self._run_case(
@@ -431,40 +432,65 @@ class QABreaker:
                 review = self._review_results(job_id, plan, failures, output, rerun)
                 if review:
                     logs.append(review)
-                passed = not failures
+                    self._log(job_id, "ZEN", review, run_id=run_id)
+                status = self._outcome_status(outcomes)
+                counts = self._outcome_counts(outcomes)
                 summary = {
                     "profile": profile.name,
                     "seed": seed,
                     "planned": len(plan.scenarios),
-                    "completed": len(outcomes),
-                    "passedCases": outcomes.count("PASSED"),
-                    "skippedCases": outcomes.count("SKIPPED"),
-                    "failedCases": outcomes.count("FAILED"),
+                    "completed": counts["total"],
+                    "passedCases": counts["passed"],
+                    "skippedCases": counts["skipped"],
+                    "failedCases": counts["failed"],
                     "failures": len(failures),
                     "durationMs": int((time.monotonic() - started_at) * 1000),
                     "plan": asdict(plan),
                     "review": review,
                 }
-                self.store.finish_test_run(run_id, "PASSED" if passed else "FAILED", summary)
-                self.events.publish("TEST_FINISHED", {"passed": passed, "jobId": job_id})
+                self.store.finish_test_run(run_id, status, summary)
+                self._publish_finished(job_id, run_id, status, counts)
                 joined = "\n".join(logs)[-20_000:]
-                if failures:
+                if status == "FAILED":
                     return "ERROR: QA found failures.\n" + joined
+                if status == "SKIPPED":
+                    return joined or "QA skipped because the required capabilities were unavailable."
+                if status == "NOT_RUN":
+                    return "QA did not execute any test cases."
                 return joined or "QA completed without detected errors."
             except TaskCancelled:
-                self.store.finish_test_run(run_id, "CANCELLED", {"profile": profile.name, "seed": seed})
-                self.events.publish("TEST_FINISHED", {"passed": False, "jobId": job_id})
+                counts = self._outcome_counts(outcomes)
+                self.store.finish_test_run(
+                    run_id,
+                    "CANCELLED",
+                    {
+                        "profile": profile.name,
+                        "seed": seed,
+                        "durationMs": int((time.monotonic() - started_at) * 1000),
+                        **counts,
+                    },
+                )
+                self._publish_finished(job_id, run_id, "CANCELLED", counts)
                 raise
             except Exception as exc:
+                self._log(job_id, "ERR", f"QA run failed: {exc}", run_id=run_id)
+                counts = self._outcome_counts(outcomes)
                 self.store.finish_test_run(
                     run_id,
                     "FAILED",
-                    {"profile": profile.name, "seed": seed, "error": str(exc)},
+                    {
+                        "profile": profile.name,
+                        "seed": seed,
+                        "error": str(exc),
+                        "durationMs": int((time.monotonic() - started_at) * 1000),
+                        **counts,
+                    },
                 )
-                self.events.publish("TEST_FINISHED", {"passed": False, "jobId": job_id})
+                self._publish_finished(job_id, run_id, "FAILED", counts)
                 raise
 
     def _manual_worker(self, job_id: str, profile: str, cancel: threading.Event) -> None:
+        invoked = False
         try:
             if not self.studio.running:
                 self.studio.start()
@@ -478,6 +504,7 @@ class QABreaker:
                 target = studios[0]
             if target is None:
                 raise MCPError("Multiple Studio projects are available; select the job target before manual QA.")
+            invoked = True
             self.run(
                 job_id,
                 studio_id=target.studio_id,
@@ -487,7 +514,8 @@ class QABreaker:
             )
         except Exception as exc:
             self._log(job_id, "ERR", f"Manual QA failed: {exc}")
-            self.events.publish("TEST_FINISHED", {"passed": False, "jobId": job_id})
+            if not invoked:
+                self._publish_finished(job_id, "", "NOT_RUN", self._outcome_counts([]))
         finally:
             with self._manual_lock:
                 self._manual_threads.pop(job_id, None)
@@ -544,7 +572,8 @@ class QABreaker:
         changed_tools: list[str],
         risks: list[str],
     ) -> list[str]:
-        if not self.bridge.wait_for_provider("chatgpt", timeout=0.5):
+        provider = resolve_provider_roles(self.store.get_setting("provider.roles", {}))["BUILDER"]
+        if not self.bridge.wait_for_provider(provider, timeout=0.5):
             return []
         prompt = (
             "You are the QA planner for the user's Roblox project. "
@@ -553,7 +582,7 @@ class QABreaker:
             f"Objective: {feature}\nChanges: {changed_tools}\nRisks: {risks}"
         )
         try:
-            raw = self.bridge.send_prompt("chatgpt", prompt, task_id=job_id, timeout=120)
+            raw = self.bridge.send_prompt(provider, prompt, task_id=job_id, timeout=120)
             payload = extract_json_object(raw)
         except (MCPError, OrchestratorError, ProtocolError, RuntimeError, ValueError):
             return []
@@ -570,7 +599,8 @@ class QABreaker:
     ) -> str:
         task = self.store.load_task(job_id) or {}
         independent = bool((task.get("options") or {}).get("independent_review", True))
-        if rerun or not independent or not self.bridge.wait_for_provider("deepseek", timeout=0.5):
+        provider = resolve_provider_roles(self.store.get_setting("provider.roles", {}))["REVIEWER"]
+        if rerun or not independent or not self.bridge.wait_for_provider(provider, timeout=0.5):
             return ""
         payload = {
             "plan": asdict(plan),
@@ -583,7 +613,7 @@ class QABreaker:
             "a verdict, risk assessment, and test gaps.\n" + json.dumps(payload, ensure_ascii=False)
         )
         try:
-            return self.bridge.send_prompt("deepseek", prompt, task_id=job_id, timeout=120).strip()[:3000]
+            return self.bridge.send_prompt(provider, prompt, task_id=job_id, timeout=120).strip()[:3000]
         except RuntimeError:
             return ""
 
@@ -664,6 +694,8 @@ class QABreaker:
                 "jobId": job_id,
                 "testCase": {
                     "id": case_id,
+                    "runId": run_id,
+                    "jobId": job_id,
                     "name": name,
                     "suite": suite,
                     "status": "RUNNING",
@@ -682,6 +714,8 @@ class QABreaker:
         finished_ms = int(time.time() * 1000)
         case = {
             "id": case_id,
+            "runId": run_id,
+            "jobId": job_id,
             "name": name,
             "suite": suite,
             "status": status,
@@ -696,14 +730,17 @@ class QABreaker:
             run_id=run_id,
             job_id=job_id,
             name=name,
+            suite=suite,
             status=status,
             severity=severity,
             details=details,
             duration_ms=duration_ms,
+            started_at=started_ms,
+            finished_at=finished_ms,
         )
         self.events.publish("TEST_CASE_FINISHED", {"jobId": job_id, "testCase": case})
         level = "ERR" if status == "FAILED" else ("WARN" if status == "SKIPPED" else "ZEN")
-        self._log(job_id, level, f"{name}: {status} — {actual or expected}", case_id=case_id)
+        self._log(job_id, level, f"{name}: {status} — {actual or expected}", run_id=run_id, case_id=case_id)
         logs.append(f"{level} {name}: {status} — {actual or expected}")
         if status == "FAILED":
             failure = TestFailure(
@@ -720,22 +757,56 @@ class QABreaker:
                 probable_area=suite,
             )
             failures.append(failure)
+            failure_payload = {
+                "id": failure.id,
+                "runId": run_id,
+                "jobId": job_id,
+                "testCaseId": case_id,
+                "name": name,
+                "suite": suite,
+                "severity": failure.severity,
+                "message": actual[:4000] or "Failure without details",
+                "timestamp": finished_ms,
+                "file": failure.script,
+                "line": failure.line,
+                "stack": failure.stack,
+                "expected": expected,
+                "actual": actual,
+                "cause": failure.probable_area,
+                "recovery": "Use the reviewed repair flow, then rerun this case.",
+            }
+            self.store.append_test_failure(
+                failure.id,
+                run_id=run_id,
+                job_id=job_id,
+                test_case_id=case_id,
+                name=name,
+                suite=suite,
+                severity=failure.severity,
+                message=str(failure_payload["message"]),
+                details={
+                    "file": failure.script,
+                    "line": failure.line,
+                    "stack": failure.stack,
+                    "expected": expected,
+                    "actual": actual,
+                    "cause": failure.probable_area,
+                    "recovery": failure_payload["recovery"],
+                    "studioMode": failure.studio_mode,
+                    "players": failure.players,
+                    "seed": failure.seed,
+                    "relatedMutation": failure.related_mutation,
+                    "reproduction": failure.reproduction,
+                    "evidence": failure.evidence,
+                    "status": failure.status,
+                },
+                timestamp=finished_ms,
+            )
             self.events.publish(
                 "TEST_FAILURE",
                 {
                     "jobId": job_id,
-                    "failure": {
-                        "id": failure.id,
-                        "testCaseId": case_id,
-                        "name": name,
-                        "suite": suite,
-                        "message": actual[:4000] or "Failure without details",
-                        "timestamp": finished_ms,
-                        "expected": expected,
-                        "actual": actual,
-                        "cause": failure.probable_area,
-                        "recovery": "Use the reviewed repair flow, then rerun this case.",
-                    },
+                    "failure": failure_payload,
                 },
             )
         return status
@@ -1200,17 +1271,87 @@ return HttpService:JSONEncode({{
 }})
 '''
 
-    def _log(self, job_id: str, level: str, message: str, *, case_id: str = "") -> None:
+    def _log(
+        self,
+        job_id: str,
+        level: str,
+        message: str,
+        *,
+        run_id: str = "",
+        case_id: str = "",
+    ) -> None:
+        log_id = uuid.uuid4().hex
+        timestamp = int(time.time() * 1000)
+        payload = {
+            "id": log_id,
+            "jobId": job_id,
+            "timestamp": timestamp,
+            "level": level,
+            "message": message[:6000],
+            "testCaseId": case_id or None,
+        }
+        if run_id:
+            payload["runId"] = run_id
+            self.store.append_test_log(
+                log_id,
+                run_id=run_id,
+                job_id=job_id,
+                level=level,
+                message=message,
+                timestamp=timestamp,
+                test_case_id=case_id,
+            )
         self.events.publish(
             "TEST_LOG",
             {
-                "log": {
-                    "id": uuid.uuid4().hex,
-                    "timestamp": int(time.time() * 1000),
-                    "level": level,
-                    "message": message[:6000],
-                    "testCaseId": case_id or None,
-                }
+                "jobId": job_id,
+                "log": payload,
+            },
+        )
+
+    @staticmethod
+    def _outcome_counts(outcomes: list[str]) -> dict[str, int]:
+        normalized = [str(status).upper() for status in outcomes]
+        return {
+            "total": len(normalized),
+            "passed": normalized.count("PASSED"),
+            "failed": normalized.count("FAILED"),
+            "skipped": normalized.count("SKIPPED"),
+            "notRun": normalized.count("NOT_RUN"),
+            "cancelled": normalized.count("CANCELLED"),
+        }
+
+    @staticmethod
+    def _outcome_status(outcomes: list[str]) -> str:
+        normalized = [str(status).upper() for status in outcomes]
+        if not normalized:
+            return "NOT_RUN"
+        if "FAILED" in normalized:
+            return "FAILED"
+        if "CANCELLED" in normalized:
+            return "CANCELLED"
+        if "PASSED" in normalized:
+            return "PASSED"
+        if "SKIPPED" in normalized:
+            return "SKIPPED"
+        return "NOT_RUN"
+
+    def _publish_finished(
+        self,
+        job_id: str,
+        run_id: str,
+        status: str,
+        counts: dict[str, int],
+    ) -> None:
+        public_counts = {key: int(counts.get(key, 0)) for key in ("total", "passed", "failed", "skipped")}
+        self.events.publish(
+            "TEST_FINISHED",
+            {
+                "jobId": job_id,
+                "runId": run_id,
+                "status": status,
+                "counts": public_counts,
+                "passed": status == "PASSED",
             },
         )
 

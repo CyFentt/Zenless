@@ -132,7 +132,7 @@ export class MockZenlessSocket implements ZenlessSocket {
       const msg = messages[Math.floor(Math.random() * messages.length)];
       const log = { id: logId, timestamp: Date.now(), level, message: msg };
       this.mockApi.addMockLog(log);
-      this.emit({ type: "TEST_LOG", data: { log } });
+      this.emit({ type: "TEST_LOG", data: { jobId: this.mockApi.getMockCurrentJobId(), log } });
     }, 2000);
     this.timers.add(testInterval);
   }

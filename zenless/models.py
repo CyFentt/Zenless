@@ -275,15 +275,15 @@ class TaskOptions:
             (
                 r"\b3d\b",
                 r"\b(glb|gltf|fbx)\b",
-                r"\b(modelo 3d|malha 3d|objeto 3d|ativo 3d)\b",
-                r"\b(generate|create|criar|gerar|import)\b.{0,28}\b(3d model|modelo 3d|mesh|malha|texture|textura|geometry)\b",
+                r"\b(3d model|3d mesh|3d object|3d asset)\b",
+                r"\b(generate|create|import)\b.{0,28}\b(3d model|mesh|texture|geometry)\b",
             ),
         )
         visual_intent = three_d_intent or self._matches(
             normalized,
             (
                 r"\b(concept art|visual concept|reference image|six views|orthographic)\b",
-                r"\b(criar|gerar|generate|create)\b.{0,24}\b(image|imagem|logo|icon|icone|sprite|texture)\b",
+                r"\b(generate|create)\b.{0,24}\b(image|logo|icon|sprite|texture)\b",
             ),
         )
         create_mode = self._coerce_feature_mode(self.create_3d_mode)
@@ -299,9 +299,6 @@ class TaskOptions:
             or (visual_mode == FeatureMode.AUTO and visual_intent)
             or create_3d
         )
-        if self._coerce_chat_mode(self.chat_mode) == ChatMode.TEMP:
-            create_3d = False
-            visual_first = False
         return replace(self, visual_first=visual_first, create_3d_asset=create_3d)
 
     @property

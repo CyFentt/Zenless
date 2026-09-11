@@ -58,7 +58,7 @@ Multiplayer and device tests are capability-dependent. Transport availability do
 
 ## Visual and 3D evidence
 
-Each visual version contains separate `FRONT`, `BACK`, `LEFT`, `RIGHT`, `TOP`, and `BOTTOM` PNG assets. Deterministic checks record dimensions, MIME, hash, direction, duplicates, version, and authorization. Approval publishes the six legacy per-view events plus one aggregate approval event.
+Each visual version contains separate `FRONT`, `BACK`, `LEFT`, `RIGHT`, `TOP`, and `BOTTOM` PNG assets. Deterministic checks record dimensions, MIME, hash, direction, duplicates, version, and authorization. Generation publishes per-view lifecycle and ready events; approval updates the stored artifact and publishes one aggregate approval event.
 
 3D evidence is separated into upload acceptance, geometry, texture, authorized download, local structural validation, and approval. A provider message or URL alone cannot establish model readiness.
 

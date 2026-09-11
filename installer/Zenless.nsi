@@ -7,8 +7,10 @@ SetCompressor /SOLID lzma
 Name "Zenless"
 OutFile "..\dist\ZenlessSetup.exe"
 InstallDir "$LOCALAPPDATA\Programs\Zenless"
+!if /FileExists "..\assets\zenless.ico"
 Icon "..\assets\zenless.ico"
 UninstallIcon "..\assets\zenless.ico"
+!endif
 VIProductVersion "2.1.0.0"
 VIAddVersionKey "ProductName" "Zenless"
 VIAddVersionKey "FileDescription" "Zenless Setup"

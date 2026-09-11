@@ -131,7 +131,7 @@ Exactly six canonical directions are used: `FRONT`, `BACK`, `LEFT`, `RIGHT`, `TO
 | POST | `/api/jobs/:jobId/model/geometry/regenerate` | `{ ok }` |
 | POST | `/api/jobs/:jobId/model/texture/regenerate` | `{ ok }` |
 
-`ModelInfo` may expose `modelUrl` and `filename`; production must not fabricate a model when none exists.
+`ModelInfo.state` is exactly `IDLE`, `GENERATING`, `READY`, or `FAILED`. A ready model may separately expose `approvalState: PENDING_APPROVAL|APPROVED`, plus `modelUrl` and `filename`; production must not fabricate a model when none exists.
 
 ### Assets
 
@@ -202,32 +202,49 @@ Canonical event names and payloads are defined by `ZenlessEventMap` in `src/type
 | `CONNECTION_CHANGED` | `Partial<ConnectionInfo>` |
 | `AGENT_STATUS_CHANGED` | `{ agent, status }` |
 | `PIPELINE_STATE_CHANGED` | `{ jobId, stage }` |
-| `JOB_CREATED` | `{ job }` |
-| `JOB_UPDATED` | `{ job: Partial<Job> & { id } }` |
+| `JOB_CREATED` | `{ jobId, job }` |
+| `JOB_UPDATED` | `{ jobId, job: Partial<Job> & { id } }` |
 | `JOB_COMPLETE` | `{ jobId }` |
 | `JOB_FAILED` | `{ jobId, reason }` |
-| `CHAT_STREAM_STARTED` | `{ messageId, jobId? }` |
-| `CHAT_STREAM_DELTA` | `{ messageId, delta }` |
-| `CHAT_STREAM_FINISHED` | `{ messageId }` |
-| `CHAT_MESSAGE` | `{ message }` |
-| `CONTEXT_UPDATED` | `{ items }` |
-| `CHANGES_UPDATED` | `{ files }` |
-| `REVIEW_READY` | `{ review }` |
-| `VISUAL_GENERATION_CHANGED` | `{ view?, state }` |
-| `VISUAL_READY` | `{ view, imageUrl }` |
-| `VISUAL_APPROVED` | `{ view }` |
-| `MODEL_GENERATION_CHANGED` | `{ target: geometry|texture, state }` |
-| `MODEL_READY` | `{ modelUrl, filename? }` |
-| `MODEL_APPROVED` | `{}` |
+| `CHAT_STREAM_STARTED` | `{ jobId, messageId, provider? }` |
+| `CHAT_STREAM_DELTA` | `{ jobId, messageId, delta }` |
+| `CHAT_STREAM_FINISHED` | `{ jobId, messageId }` |
+| `CHAT_MESSAGE` | `{ jobId, message }` |
+| `CHAT_ACTIVITY` | `{ jobId, activity }` |
+| `CHAT_ARTIFACT` | `{ jobId, artifact }` |
+| `CHAT_SYSTEM_EVENT` | `{ severity, title, message, recovery?, jobId?, diagnosticId? }` |
+| `LOGIN_REQUIRED` | `{ providerId }` |
+| `LOGIN_WINDOW_WILL_OPEN` | `{ providerId }` |
+| `LOGIN_WINDOW_OPENED` | `{ providerId, route }` |
+| `LOGIN_DETECTED` | `{ providerId }` |
+| `LOGIN_PERSISTENCE_VERIFYING` | `{ providerId }` |
+| `LOGIN_READY` | `{ providerId, route, persistent }` |
+| `LOGIN_FAILED` | `{ providerId, message, recovery }` |
+| `PROVIDER_CAPABILITIES_CHANGED` | `{ provider }` |
+| `PROVIDER_MODEL_CHANGED` | `{ providerId, selection }` |
+| `READINESS_CHANGED` | `{ readiness }` |
+| `CONTEXT_UPDATED` | `{ jobId, items }` |
+| `CHANGES_UPDATED` | `{ jobId, files }` |
+| `REVIEW_READY` | `{ jobId, review }` |
+| `VISUAL_GENERATION_CHANGED` | `{ jobId, view, state, assetId?, conceptVersion }` |
+| `VISUAL_READY` | `{ jobId, view, imageUrl, assetId, conceptVersion }` |
+| `VISUAL_APPROVED` | `{ jobId, views, conceptVersion? }` |
+| `MODEL_GENERATION_CHANGED` | `{ jobId, target: geometry|texture, state }` |
+| `MODEL_READY` | `{ jobId, assetId, version, modelUrl, filename?, geometryStatus, textureStatus }` |
+| `MODEL_APPROVED` | `{ jobId }` |
 | `ASSETS_UPDATED` | `{ assets }` |
 | `STUDIO_STATE_CHANGED` | `{ state }` |
+| `STUDIO_DISCOVERY_CHANGED` | `StudioDiscoverySnapshot` |
+| `STUDIO_SELECTION_REQUIRED` | `StudioDiscoverySnapshot` |
 | `STUDIO_TREE_UPDATED` | `{ tree }` |
-| `TEST_STARTED` | `{ jobId? }` |
-| `TEST_CASE_STARTED` | `{ jobId?, testCase: TestCaseResult }` |
-| `TEST_CASE_FINISHED` | `{ jobId?, testCase: TestCaseResult }` |
-| `TEST_FAILURE` | `{ jobId?, failure: TestFailure }` |
-| `TEST_LOG` | `{ log }` |
-| `TEST_FINISHED` | `{ passed, jobId? }` |
+| `TEST_STARTED` | `{ jobId, runId }` |
+| `TEST_CASE_STARTED` | `{ jobId, testCase }` |
+| `TEST_CASE_FINISHED` | `{ jobId, testCase }` |
+| `TEST_FAILURE` | `{ jobId, failure }` |
+| `TEST_LOG` | `{ jobId, log }` |
+| `TEST_FINISHED` | `{ jobId, runId, status, counts, passed? }` |
+| `TOOL_STATUS_CHANGED` | `{ tool }` |
+| `STORAGE_CLEANUP_COMPLETED` | `{ bytesBefore, bytesAfter, bytesRemoved, categories, itemsRemoved, storage }` |
 | `SETTINGS_CHANGED` | `{ settings }` |
 | `DIAGNOSTIC_EVENT` | `{ diagnostic }` |
 
@@ -246,7 +263,7 @@ The development fixtures import compatible types. A generated/shared protocol pa
 
 1. Mock Mode is compile-time disabled for the release and cannot report production readiness.
 2. A mutation is `READ CURRENT → SNAPSHOT → EXPECTED SHA-256 → CLAIM OPERATION → APPLY → READ BACK → VERIFY`; an existing pending operation is never replayed after a crash.
-3. ChatGPT builds; DeepSeek performs the independent proposal review and a second real final review after mutation and QA. `REVISE` has a bounded repair loop; `BLOCK` prevents completion.
+3. Role bindings are explicit and configurable. The default Builder and Reviewer bindings use separate providers; the bound Reviewer performs the independent proposal review and a second real final review after mutation and QA. `REVISE` has a bounded repair loop; `BLOCK` prevents completion.
 4. Visual First stores six separate, versioned PNG assets and visual-QA evidence. Approval/regeneration commands act on a gate; no placeholder image is treated as generated output.
 5. Hunyuan capabilities are discovered from the live provider UI. Approved views are uploaded only up to the discovered limit; geometry and texture are separate operations and unavailable capabilities return a stable error.
 6. Provider deltas, QA cases, diagnostics and pipeline stages travel through the Core Event Bus to one authenticated WebSocket connection.

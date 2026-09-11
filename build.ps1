@@ -6,8 +6,47 @@ param(
 $ErrorActionPreference = "Stop"
 
 $projectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$buildRoot = Join-Path $projectRoot "build"
 $distRoot = Join-Path $projectRoot "dist"
 $previousMockMode = [Environment]::GetEnvironmentVariable("VITE_ZENLESS_MOCK", "Process")
+
+function Remove-ProjectDirectory {
+    param([string]$Path)
+    $projectPath = [IO.Path]::GetFullPath($projectRoot).TrimEnd([IO.Path]::DirectorySeparatorChar)
+    $targetPath = [IO.Path]::GetFullPath($Path).TrimEnd([IO.Path]::DirectorySeparatorChar)
+    $targetParent = [IO.Path]::GetDirectoryName($targetPath)
+    if (-not [string]::Equals($targetParent, $projectPath, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Build cleanup target escaped the project root."
+    }
+    if (Test-Path -LiteralPath $targetPath) {
+        Remove-Item -LiteralPath $targetPath -Recurse -Force
+    }
+}
+
+function Reset-CurrentUserAuthentication {
+    if ([string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) { return }
+    $dataRoot = [IO.Path]::GetFullPath((Join-Path $env:LOCALAPPDATA "Zenless")).TrimEnd([IO.Path]::DirectorySeparatorChar)
+    $targets = @(
+        "browser-profile",
+        "webview-profile",
+        "tmp",
+        "temp",
+        "uploads",
+        "provisioning",
+        "provider-sessions.json",
+        "provider-routes.json",
+        "webview-provider-config.json"
+    )
+    foreach ($name in $targets) {
+        $targetPath = [IO.Path]::GetFullPath((Join-Path $dataRoot $name))
+        if (-not [string]::Equals([IO.Path]::GetDirectoryName($targetPath), $dataRoot, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "Authentication cleanup target escaped the data root."
+        }
+        if (Test-Path -LiteralPath $targetPath) {
+            Remove-Item -LiteralPath $targetPath -Recurse -Force
+        }
+    }
+}
 
 Push-Location -LiteralPath $projectRoot
 try {
@@ -50,6 +89,8 @@ try {
         throw "Compiled frontend is missing. Merge the frontend branch or run build.ps1 -FrontendIntegration."
     }
 
+    Remove-ProjectDirectory $buildRoot
+    Remove-ProjectDirectory $distRoot
     python -m PyInstaller --clean --noconfirm Zenless.spec
     if ($LASTEXITCODE -ne 0) {
         throw "PyInstaller failed with exit code $LASTEXITCODE."
@@ -87,6 +128,8 @@ try {
         }
     }
 
+    Reset-CurrentUserAuthentication
+    Remove-ProjectDirectory $buildRoot
     Write-Host "Build complete:"
     Write-Host (Join-Path $distRoot "Zenless.exe")
     if (-not $SkipInstaller) {

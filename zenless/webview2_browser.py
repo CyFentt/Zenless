@@ -4,6 +4,7 @@ import json
 import subprocess
 import sys
 import threading
+import time
 import uuid
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
@@ -141,10 +142,11 @@ class WebView2BrowserController:
             self._set_state(provider, "Unavailable", str(exc))
             return False
         ready = bool(result.get("ready"))
+        state = str(result.get("state") or ("AUTHENTICATED" if ready else "UNKNOWN"))
         self._set_state(
             provider,
-            "Ready" if ready else "Login Required",
-            "Authenticated WebView2 session" if ready else "Use Login to authenticate in the embedded window",
+            "Ready" if ready else state.replace("_", " ").title(),
+            "Authenticated WebView2 session" if ready else self._login_detail(state),
         )
         return ready
 
@@ -158,15 +160,37 @@ class WebView2BrowserController:
         if not self.running:
             self.start()
         self._set_state(provider, "Login Required", "Complete login in the Zenless WebView2 window")
-        result = self._request(
+        self._request(
             "login",
             provider,
             {"timeout": timeout},
-            timeout=timeout + 5,
+            timeout=min(60.0, max(20.0, timeout)),
             window_opened_callback=on_window_opened,
         )
-        self._set_state(provider, "Ready", "Authenticated WebView2 session")
-        return result
+        deadline = time.monotonic() + max(30.0, min(900.0, timeout))
+        ready_checks = 0
+        while time.monotonic() < deadline:
+            if not self.running:
+                raise BridgeError("WebView2 helper stopped during provider login.")
+            remaining = deadline - time.monotonic()
+            result = self._request("health", provider, {}, timeout=min(20.0, max(1.0, remaining)))
+            ready = bool(result.get("ready"))
+            state = str(result.get("state") or ("AUTHENTICATED" if ready else "UNKNOWN"))
+            if ready:
+                ready_checks += 1
+                self._set_state(provider, "Authenticated", "Login detected; verifying the persistent session")
+            else:
+                ready_checks = 0
+                self._set_state(provider, state.replace("_", " ").title(), self._login_detail(state))
+            if ready_checks >= 3:
+                try:
+                    self._request("hide", provider, {}, timeout=5)
+                except BridgeError:
+                    pass
+                self._set_state(provider, "Ready", "Authenticated WebView2 session")
+                return {"state": "ready", "url": str(result.get("url") or "")}
+            time.sleep(min(0.75, max(0.0, deadline - time.monotonic())))
+        raise BridgeError(f"Login timeout for {provider}.")
 
     def send_prompt(
         self,
@@ -372,6 +396,14 @@ class WebView2BrowserController:
             self._states[provider] = {"state": state, "detail": detail, "transport": "webview2"}
         if self.status_callback is not None:
             self.status_callback(provider, state, detail)
+
+    @staticmethod
+    def _login_detail(state: str) -> str:
+        if state == "CHALLENGE":
+            return "Complete the provider verification in the WebView2 window"
+        if state == "LOGIN_REQUIRED":
+            return "Use Login to authenticate in the WebView2 window"
+        return "Waiting for the provider page to expose an authenticated composer"
 
     def _report(self, exc: BaseException, component: str) -> None:
         if self.diagnostics is not None:

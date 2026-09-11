@@ -12,13 +12,17 @@ import type {
   Job,
   ModelCatalog,
   ModelInfo,
+  ProviderDescriptor,
   ProviderId,
+  ReadinessStateInfo,
   Review,
   Settings,
   StudioNode,
-  StudioState,
+  StudioStateSnapshot,
+  StorageInfo,
   TaskOptions,
   TestState,
+  ToolDescriptor,
   ViewTile,
 } from '@/types';
 
@@ -56,7 +60,8 @@ function withTimeout(ms: number): { signal: AbortSignal; cancel: () => void } {
 async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
   const timeout = opts.timeout ?? DEFAULT_TIMEOUT;
   const { signal: timeoutSignal, cancel } = withTimeout(timeout);
-  const signal = opts.signal ? mergeSignals(opts.signal, timeoutSignal) : timeoutSignal;
+  const merged = opts.signal ? mergeSignals(opts.signal, timeoutSignal) : null;
+  const signal = merged?.signal ?? timeoutSignal;
 
   const headers: Record<string, string> = {};
   if (opts.rawBody === undefined) headers['Content-Type'] = 'application/json';
@@ -76,11 +81,16 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
     });
   } catch (err) {
     cancel();
+    merged?.cancel();
+    if (err instanceof DOMException && err.name === 'AbortError' && opts.signal?.aborted) {
+      throw new ApiError(0, 'Request cancelled', requestId, 'ABORTED');
+    }
     const message = err instanceof DOMException && err.name === 'AbortError' ? 'Request timeout' : 'Bridge unreachable';
     frontendDiagnostics.report('error', 'api', message, undefined, undefined, { requestId, stack: err instanceof Error ? err.stack : undefined });
     throw new ApiError(0, message, requestId, err instanceof DOMException && err.name === 'AbortError' ? 'TIMEOUT' : 'UNREACHABLE');
   }
   cancel();
+  merged?.cancel();
 
   const responseRequestId = res.headers.get('X-Request-Id') ?? requestId;
   if (!res.ok) {
@@ -105,12 +115,19 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-function mergeSignals(a: AbortSignal, b: AbortSignal): AbortSignal {
+function mergeSignals(a: AbortSignal, b: AbortSignal): { signal: AbortSignal; cancel: () => void } {
   const controller = new AbortController();
   const onAbort = () => controller.abort();
   a.addEventListener('abort', onAbort, { once: true });
   b.addEventListener('abort', onAbort, { once: true });
-  return controller.signal;
+  if (a.aborted || b.aborted) controller.abort();
+  return {
+    signal: controller.signal,
+    cancel: () => {
+      a.removeEventListener('abort', onAbort);
+      b.removeEventListener('abort', onAbort);
+    },
+  };
 }
 
 const TOKEN_KEY = 'zenless_token';
@@ -161,6 +178,8 @@ export class RealZenlessAPI implements ZenlessAPI {
   getStatus(): Promise<{ ready: boolean }> { return request('/api/status'); }
   getConnections(): Promise<ConnectionInfo> { return request('/api/connections'); }
   getAgents(): Promise<AgentInfo[]> { return request('/api/agents'); }
+  getProviders(): Promise<ProviderDescriptor[]> { return request('/api/providers'); }
+  getReadiness(): Promise<ReadinessStateInfo> { return request('/api/readiness'); }
   loginProvider(provider: ProviderId): Promise<{ ok: boolean }> {
     return request(`/api/providers/${encodeURIComponent(provider)}/login`, { method: 'POST', timeout: 30000 });
   }
@@ -174,7 +193,7 @@ export class RealZenlessAPI implements ZenlessAPI {
   resumeJob(id: string): Promise<Job> { return request(`/api/jobs/${encodeURIComponent(id)}/resume`, { method: 'POST' }); }
   cancelJob(id: string): Promise<{ ok: boolean }> { return request(`/api/jobs/${encodeURIComponent(id)}`, { method: 'DELETE' }); }
   getMessages(jobId: string): Promise<ChatMessage[]> { return request(`/api/jobs/${encodeURIComponent(jobId)}/messages`); }
-  getTimeline(jobId: string): Promise<import('./types').JobTimelineSnapshot> { return request(`/api/jobs/${encodeURIComponent(jobId)}/timeline`); }
+  getTimeline(jobId: string, signal?: AbortSignal): Promise<import('./types').JobTimelineSnapshot> { return request(`/api/jobs/${encodeURIComponent(jobId)}/timeline`, { signal }); }
 
   sendMessage(content: string, jobId?: string, attachments: File[] = [], options?: TaskOptions): Promise<{ messageId: string; jobId?: string }> {
     const idempotencyKey = operationKey('send-chat');
@@ -188,7 +207,7 @@ export class RealZenlessAPI implements ZenlessAPI {
   }
   cancelGeneration(jobId: string): Promise<{ ok: boolean }> { return request(`/api/chat/${encodeURIComponent(jobId)}/cancel`, { method: 'POST' }); }
 
-  getContext(jobId: string): Promise<ContextItem[]> { return request(`/api/jobs/${encodeURIComponent(jobId)}/context`); }
+  getContext(jobId: string, signal?: AbortSignal): Promise<ContextItem[]> { return request(`/api/jobs/${encodeURIComponent(jobId)}/context`, { signal }); }
   refreshContext(jobId: string): Promise<ContextItem[]> { return request(`/api/jobs/${encodeURIComponent(jobId)}/context/refresh`, { method: 'POST' }); }
   includeContext(itemId: string): Promise<{ ok: boolean }> { return request(`/api/context/${encodeURIComponent(itemId)}/include`, { method: 'POST' }); }
   excludeContext(itemId: string): Promise<{ ok: boolean }> { return request(`/api/context/${encodeURIComponent(itemId)}/exclude`, { method: 'POST' }); }
@@ -196,28 +215,28 @@ export class RealZenlessAPI implements ZenlessAPI {
   unlockContext(itemId: string): Promise<{ ok: boolean }> { return request(`/api/context/${encodeURIComponent(itemId)}/unlock`, { method: 'POST' }); }
   inspectContext(itemId: string): Promise<ContextItem> { return request(`/api/context/${encodeURIComponent(itemId)}`); }
 
-  getChanges(jobId: string): Promise<ChangedFile[]> { return request(`/api/jobs/${encodeURIComponent(jobId)}/changes`); }
-  getReview(jobId: string): Promise<Review> { return request(`/api/jobs/${encodeURIComponent(jobId)}/review`); }
+  getChanges(jobId: string, signal?: AbortSignal): Promise<ChangedFile[]> { return request(`/api/jobs/${encodeURIComponent(jobId)}/changes`, { signal }); }
+  getReview(jobId: string, signal?: AbortSignal): Promise<Review> { return request(`/api/jobs/${encodeURIComponent(jobId)}/review`, { signal }); }
   approveChanges(jobId: string): Promise<{ ok: boolean }> { return request(`/api/jobs/${encodeURIComponent(jobId)}/changes/approve`, { method: 'POST' }); }
   rejectChanges(jobId: string): Promise<{ ok: boolean }> { return request(`/api/jobs/${encodeURIComponent(jobId)}/changes/reject`, { method: 'POST' }); }
   editChanges(jobId: string, fileId: string, content: string): Promise<{ ok: boolean }> {
     return request(`/api/jobs/${encodeURIComponent(jobId)}/changes/${encodeURIComponent(fileId)}`, { method: 'PUT', body: { content } });
   }
 
-  getVisual(jobId: string): Promise<{ views: ViewTile[]; concept: { version: number; status: string; prompt?: string } }> { return request(`/api/jobs/${encodeURIComponent(jobId)}/visual`); }
+  getVisual(jobId: string, signal?: AbortSignal): Promise<{ views: ViewTile[]; concept: { version: number; status: string; prompt?: string } }> { return request(`/api/jobs/${encodeURIComponent(jobId)}/visual`, { signal }); }
   approveVisual(jobId: string): Promise<{ ok: boolean }> { return request(`/api/jobs/${encodeURIComponent(jobId)}/visual/approve`, { method: 'POST' }); }
   editConcept(jobId: string, prompt: string): Promise<{ ok: boolean }> { return request(`/api/jobs/${encodeURIComponent(jobId)}/visual/concept`, { method: 'PUT', body: { prompt } }); }
   regenerateVisual(jobId: string): Promise<{ ok: boolean }> { return request(`/api/jobs/${encodeURIComponent(jobId)}/visual/regenerate`, { method: 'POST' }); }
   regenerateView(jobId: string, view: string): Promise<{ ok: boolean }> { return request(`/api/jobs/${encodeURIComponent(jobId)}/visual/views/${encodeURIComponent(view)}/regenerate`, { method: 'POST' }); }
 
-  getModel(jobId: string): Promise<ModelInfo> { return request(`/api/jobs/${encodeURIComponent(jobId)}/model`); }
+  getModel(jobId: string, signal?: AbortSignal): Promise<ModelInfo> { return request(`/api/jobs/${encodeURIComponent(jobId)}/model`, { signal }); }
   approveModel(jobId: string): Promise<{ ok: boolean }> { return request(`/api/jobs/${encodeURIComponent(jobId)}/model/approve`, { method: 'POST' }); }
   regenerateGeometry(jobId: string): Promise<{ ok: boolean }> { return request(`/api/jobs/${encodeURIComponent(jobId)}/model/geometry/regenerate`, { method: 'POST' }); }
   regenerateTexture(jobId: string): Promise<{ ok: boolean }> { return request(`/api/jobs/${encodeURIComponent(jobId)}/model/texture/regenerate`, { method: 'POST' }); }
 
   getAssets(): Promise<Asset[]> { return request('/api/assets'); }
 
-  getStudioState(): Promise<{ state: StudioState }> { return request('/api/studio/state'); }
+  getStudioState(): Promise<StudioStateSnapshot> { return request('/api/studio/state'); }
   getStudioTree(): Promise<StudioNode[]> { return request('/api/studio/tree'); }
   searchStudio(query: string): Promise<StudioNode[]> { return request(`/api/studio/search?q=${encodeURIComponent(query)}`); }
   refreshStudio(): Promise<{ ok: boolean }> { return request('/api/studio/refresh', { method: 'POST' }); }
@@ -237,4 +256,6 @@ export class RealZenlessAPI implements ZenlessAPI {
   setSmartRouting(enabled: boolean): Promise<{ ok: boolean }> { return request('/api/settings/smart-routing', { method: 'PUT', body: { enabled } }); }
 
   getDiagnostics(): Promise<Diagnostic[]> { return request('/api/diagnostics'); }
+  getTools(): Promise<ToolDescriptor[]> { return request('/api/tools'); }
+  getStorage(): Promise<StorageInfo> { return request('/api/storage'); }
 }

@@ -19,7 +19,7 @@ def main() -> int:
         environment["ZENLESS_DATA_ROOT"] = folder
         started = time.perf_counter()
         child = subprocess.Popen(
-            [sys.executable, str(PROJECT_ROOT / "main.py"), "--smoke-test"],
+            [sys.executable, str(PROJECT_ROOT / "main.py"), "--smoke-test", "--no-provision"],
             cwd=PROJECT_ROOT,
             env=environment,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
@@ -28,19 +28,32 @@ def main() -> int:
         peak_rss = 0
         peak_tree_rss = 0
         cpu_samples: list[float] = []
-        while child.poll() is None:
-            if time.perf_counter() - started > 30:
-                raise TimeoutError("Zenless smoke test did not close cooperatively within 30 seconds")
-            try:
-                current_rss = process.memory_info().rss
-                peak_rss = max(peak_rss, current_rss)
-                descendants = process.children(recursive=True)
-                tree_rss = current_rss + sum(item.memory_info().rss for item in descendants if item.is_running())
-                peak_tree_rss = max(peak_tree_rss, tree_rss)
-                cpu_samples.append(process.cpu_percent(interval=0.15))
-            except psutil.NoSuchProcess, psutil.AccessDenied:
-                break
-        return_code = child.wait(timeout=5)
+        try:
+            while child.poll() is None:
+                if time.perf_counter() - started > 30:
+                    raise TimeoutError("Zenless smoke test did not close cooperatively within 30 seconds")
+                try:
+                    current_rss = process.memory_info().rss
+                    peak_rss = max(peak_rss, current_rss)
+                    descendants = process.children(recursive=True)
+                    tree_rss = current_rss + sum(item.memory_info().rss for item in descendants if item.is_running())
+                    peak_tree_rss = max(peak_tree_rss, tree_rss)
+                    cpu_samples.append(process.cpu_percent(interval=0.15))
+                except psutil.NoSuchProcess, psutil.AccessDenied:
+                    break
+            return_code = child.wait(timeout=5)
+        finally:
+            if child.poll() is None:
+                owned = [*process.children(recursive=True), process]
+                for item in owned:
+                    try:
+                        item.terminate()
+                    except psutil.NoSuchProcess:
+                        pass
+                _, alive = psutil.wait_procs(owned, timeout=5)
+                for item in alive:
+                    item.kill()
+                child.wait(timeout=5)
         elapsed = time.perf_counter() - started
         if return_code != 0:
             raise RuntimeError(f"Zenless smoke process exited with {return_code}")

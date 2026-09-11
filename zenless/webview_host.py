@@ -170,10 +170,13 @@ class WebViewHost:
         spec = self.provider_specs[provider]
         if action == "health":
             state = self._composer_state(window, spec)
+            ready = bool(state.get("ready"))
             return {
-                "ready": bool(state.get("ready")),
+                "ready": ready,
+                "state": str(state.get("state") or "UNKNOWN"),
+                "signals": dict(state.get("signals") or {}),
                 "url": str(window.get_current_url() or spec.url),
-                "capabilities": self._capabilities(window, spec),
+                "capabilities": self._capabilities(window, spec) if ready else {},
             }
         if action == "login":
             window.show()
@@ -187,20 +190,10 @@ class WebViewHost:
                         "url": str(window.get_current_url() or spec.url),
                     },
                 )
-            deadline = time.monotonic() + max(30.0, min(900.0, float(payload.get("timeout", 600))))
-            detected_at = 0.0
-            while time.monotonic() < deadline and not self._stop.wait(0.75):
-                state = self._composer_state(window, spec)
-                if state.get("state") == "AUTHENTICATED":
-                    detected_at = detected_at or time.monotonic()
-                else:
-                    detected_at = 0.0
-                if detected_at and time.monotonic() - detected_at >= 2.0:
-                    window.hide()
-                    return {"state": "ready", "url": str(window.get_current_url() or spec.url)}
-            if self._stop.is_set():
-                raise RuntimeError("Login cancelled because Zenless is closing")
-            raise TimeoutError(f"Login timeout for {provider}")
+            return {"state": "login_window_open", "url": str(window.get_current_url() or spec.url)}
+        if action == "hide":
+            window.hide()
+            return {"state": "hidden"}
         if action == "request":
             provider_action = str(payload.get("provider_action") or "send_prompt")
             if provider_action == "upload_files":
@@ -271,6 +264,7 @@ class WebViewHost:
           const challenges = {json.dumps(spec.challenges)};
           const loginPaths = {json.dumps(spec.login_paths)};
           const authenticatedPaths = {json.dumps(spec.authenticated_paths)};
+          const relaxedAuth = {json.dumps(spec.code != "chatgpt")};
           const visible = (node) => {{
             if (!node) return false;
             const style = getComputedStyle(node);
@@ -285,16 +279,14 @@ class WebViewHost:
             send: any(sends),
             unauthenticated: any(unauthenticated) || loginPaths.some(path => url.includes(path.toLocaleLowerCase())),
             challenge: any(challenges),
-            authenticatedUrl: authenticatedPaths.some(path => url.includes(path.toLocaleLowerCase())),
-            legacy: accounts.length === 0 && unauthenticated.length === 0 &&
-              challenges.length === 0 && loginPaths.length === 0 && authenticatedPaths.length === 0
+            authenticatedUrl: authenticatedPaths.some(path => url.includes(path.toLocaleLowerCase()))
           }};
           let state = 'UNKNOWN';
           if (signals.challenge) state = 'CHALLENGE';
           else if (signals.unauthenticated) state = 'LOGIN_REQUIRED';
           else if ((signals.account && signals.composer) ||
             (signals.authenticatedUrl && signals.composer && signals.send) ||
-            (signals.legacy && signals.composer && signals.send)) state = 'AUTHENTICATED';
+            (relaxedAuth && signals.composer && signals.send)) state = 'AUTHENTICATED';
           return {{state, ready: state === 'AUTHENTICATED', signals}};
         }})()
         """
@@ -310,7 +302,7 @@ class WebViewHost:
           const file = [...document.querySelectorAll('input[type="file"]')].find(visible);
           const accept = (file?.getAttribute('accept') || '').split(',').map(value => value.trim()).filter(Boolean);
           const body = (document.body?.innerText || '').slice(0, 200000);
-          const countMatch = body.match(/(?:up to|max(?:imum)?|最多|至多)\\s*(\\d+)\\s*(?:images?|views?|photos?|图片|图)/i);
+          const countMatch = body.match(/(?:up to|max(?:imum)?)\\s*(\\d+)\\s*(?:images?|views?|photos?)/i);
           const explicitCount = countMatch ? Math.max(1, Math.min(6, Number(countMatch[1]))) : 0;
           const selected = node => node.getAttribute('aria-pressed') === 'true' ||
             node.getAttribute('aria-selected') === 'true' ||
@@ -338,12 +330,12 @@ class WebViewHost:
             select_model: !!document.querySelector('[role="option"], [role="menuitem"], [data-model]'),
             select_mode: !!modeControl,
             responses: any({json.dumps(spec.responses)}),
-            search: /(web search|search the web|pesquisar na web|联网搜索|搜索)/i.test(labels),
-            reasoning: /(reasoning|thinking|expert|reasoner|raciocinio|deepthink|deep think|深度思考|思考)/i.test(labels),
+            search: /(web search|search the web)/i.test(labels),
+            reasoning: /(reasoning|thinking|expert|reasoner|deepthink|deep think)/i.test(labels),
             mode: activeMode,
-            image_generation: /(create image|generate image|image generation|criar imagem|gerar imagem|生成图像|生成图片)/i.test(labels),
-            geometry: /(geometry|shape|mesh|几何|形状)/i.test(labels),
-            texture: /(texture|pbr|material|纹理|贴图|材质)/i.test(labels),
+            image_generation: /(create image|generate image|image generation)/i.test(labels),
+            geometry: /(geometry|shape|mesh)/i.test(labels),
+            texture: /(texture|pbr|material)/i.test(labels),
             download_artifact: [...document.querySelectorAll('a[href]')].some(a => /\\.(glb|gltf|fbx|obj)(\\?|$)/i.test(a.href))
           }};
         }})()
@@ -497,9 +489,9 @@ class WebViewHost:
     @staticmethod
     def _select_generation_mode(window: Any, action: str) -> None:
         patterns = (
-            ("geometry", "shape", "mesh", "几何", "形状")
+            ("geometry", "shape", "mesh")
             if action == "generate_geometry"
-            else ("texture", "pbr", "material", "纹理", "贴图", "材质")
+            else ("texture", "pbr", "material")
         )
         result = window.evaluate_js(
             f"""

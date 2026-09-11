@@ -18,7 +18,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         body = b"""<!doctype html><html><body>
         <textarea id="prompt"></textarea><input id="files" type="file">
-        <button id="send">Send</button><main></main>
+        <button data-testid="profile-button">Profile</button><button id="send">Send</button><main></main>
         <script>document.querySelector('#send').onclick=()=>{const x=document.createElement('article');x.className='reply';x.textContent='frozen:'+document.querySelector('#prompt').value;document.querySelector('main').append(x)}</script>
         </body></html>"""
         self.send_response(200)
@@ -45,6 +45,7 @@ def main() -> int:
         ("#send",),
         ("#stop",),
         (".reply",),
+        accounts=("[data-testid='profile-button']",),
     )
     try:
         with tempfile.TemporaryDirectory(prefix="zenless-frozen-webview-") as folder:

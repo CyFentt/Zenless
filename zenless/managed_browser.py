@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import queue
+import shutil
 import subprocess
 import threading
 import time
@@ -37,7 +38,7 @@ PROVIDERS: dict[str, ProviderSpec] = {
     "chatgpt": ProviderSpec(
         "chatgpt",
         "https://chatgpt.com/",
-        ("#prompt-textarea", "div[contenteditable='true'][data-lexical-editor='true']"),
+        ("textarea", "#prompt-textarea", "div[contenteditable='true'][data-lexical-editor='true']"),
         (
             "#composer-submit-button",
             "button[data-testid='send-button']",
@@ -46,12 +47,21 @@ PROVIDERS: dict[str, ProviderSpec] = {
         ),
         ("button[data-testid='stop-button']", "button[aria-label*='Stop']", "button[aria-label*='Parar']"),
         ("[data-message-author-role='assistant']", "article[data-testid*='conversation-turn'] .markdown"),
-        composers=("#prompt-textarea", "div[contenteditable='true'][data-lexical-editor='true']"),
-        accounts=("[data-testid='profile-button']", "button[aria-label*='profile']", "button[aria-label*='account']"),
+        composers=("textarea", "#prompt-textarea", "div[contenteditable='true'][data-lexical-editor='true']"),
+        accounts=(
+            "[data-testid='profile-button']",
+            "[data-testid='accounts-profile-button']",
+            "button[data-testid*='profile']",
+            "[data-testid*='user-menu']",
+            "button[aria-label*='profile' i]",
+            "button[aria-label*='account' i]",
+            "button[aria-label*='perfil' i]",
+            "button[aria-label*='conta' i]",
+        ),
         unauthenticated=("a[href*='/auth/login']", "button[data-testid*='login']", "input[name='email']"),
         challenges=("iframe[src*='captcha']", "[id*='challenge']", "[data-testid*='challenge']"),
         login_paths=("/auth/login", "/auth/", "/login"),
-        authenticated_paths=("chatgpt.com/", "chatgpt.com/c/"),
+        authenticated_paths=("chatgpt.com/c/",),
     ),
     "deepseek": ProviderSpec(
         "deepseek",
@@ -60,17 +70,16 @@ PROVIDERS: dict[str, ProviderSpec] = {
         (
             ".ds-button--primary",
             "button[aria-label*='Send']",
-            "button[aria-label*='发送']",
             "button[class*='send']",
         ),
-        (".ds-loading", "button[aria-label*='Stop']", "button[aria-label*='停止']", "button[class*='stop']"),
+        (".ds-loading", "button[aria-label*='Stop']", "button[class*='stop']"),
         (".ds-markdown", "[class*='markdown']", "[class*='message'][class*='assistant']"),
         composers=("textarea", "div[contenteditable='true']"),
         accounts=("[class*='avatar']", "[class*='user-info']", "button[aria-label*='account']"),
         unauthenticated=("input[type='password']", "input[name='email']", "[class*='login'] input"),
         challenges=("iframe[src*='captcha']", "[class*='captcha']", "[class*='verify']"),
         login_paths=("/sign_in", "/login"),
-        authenticated_paths=("chat.deepseek.com/a/chat", "chat.deepseek.com/chat"),
+        authenticated_paths=("chat.deepseek.com/", "chat.deepseek.com/a/chat", "chat.deepseek.com/chat"),
         mode_options=(("instant", ("instant",)), ("expert", ("expert",))),
     ),
     "hunyuan": ProviderSpec(
@@ -94,6 +103,7 @@ class BrowserRuntimeManager:
     def __init__(self, runtime_root: Path) -> None:
         self.runtime_root = runtime_root
         self.runtime_root.mkdir(parents=True, exist_ok=True)
+        self._launchability: dict[tuple[str, int, int], bool] = {}
 
     def environment(self) -> dict[str, str]:
         environment = dict(os.environ)
@@ -101,22 +111,14 @@ class BrowserRuntimeManager:
         return environment
 
     def chromium_executable(self) -> Path | None:
-        candidates = sorted(
-            (
-                path
-                for pattern in ("chromium-*/chrome-win64/chrome.exe", "chromium-*/chrome-win/chrome.exe")
-                for path in self.runtime_root.glob(pattern)
-                if path.is_file()
-            ),
-            reverse=True,
-        )
-        return candidates[0] if candidates else None
+        return next((candidate for candidate in self._candidates() if self._is_launchable(candidate)), None)
 
     @property
     def installed(self) -> bool:
         return self.chromium_executable() is not None
 
     def install(self, cancel: threading.Event | None = None) -> Path:
+        self._remove_invalid_runtimes()
         existing = self.chromium_executable()
         if existing is not None:
             return existing
@@ -150,8 +152,58 @@ class BrowserRuntimeManager:
             raise BridgeError("Managed Chromium preparation failed: " + output_text[-3000:])
         installed = self.chromium_executable()
         if installed is None:
-            raise BridgeError("Playwright completed, but managed Chromium was not found.")
+            self._remove_invalid_runtimes()
+            raise BridgeError("Managed browser setup completed, but its runtime could not start on this Windows installation.")
         return installed
+
+    def _candidates(self) -> list[Path]:
+        return sorted(
+            (
+                path
+                for pattern in ("chromium-*/chrome-win64/chrome.exe", "chromium-*/chrome-win/chrome.exe")
+                for path in self.runtime_root.glob(pattern)
+                if path.is_file()
+            ),
+            reverse=True,
+        )
+
+    def _is_launchable(self, executable: Path) -> bool:
+        try:
+            stat = executable.stat()
+        except OSError:
+            return False
+        key = (str(executable.resolve()), stat.st_size, stat.st_mtime_ns)
+        cached = self._launchability.get(key)
+        if cached is not None:
+            return cached
+        try:
+            result = subprocess.run(
+                [str(executable), "--version"],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=10,
+                check=False,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            ready = result.returncode == 0
+        except (OSError, subprocess.SubprocessError):
+            ready = False
+        self._launchability[key] = ready
+        return ready
+
+    def _remove_invalid_runtimes(self) -> None:
+        root = self.runtime_root.resolve()
+        invalid = {candidate.parent.parent for candidate in self._candidates() if not self._is_launchable(candidate)}
+        for target in invalid:
+            if target.parent.resolve() != root:
+                raise BridgeError("Managed browser cleanup target escaped the runtime root.")
+            if target.is_symlink():
+                target.unlink()
+            elif target.is_junction():
+                target.rmdir()
+            else:
+                shutil.rmtree(target)
 
 
 @dataclass(slots=True)
@@ -416,7 +468,11 @@ class ManagedBrowserController:
                 if not command.payload.get("install_if_missing", True):
                     raise BridgeError("Managed Chromium has not been prepared.")
                 self._set_state(command.provider, "Installing", "Preparing managed Chromium once")
-                self.runtime.install(self._stop)
+                try:
+                    self.runtime.install(self._stop)
+                except BridgeError:
+                    self._runtime_blocked = True
+                    raise
             self._ensure_context(headed=True)
             page = self._ensure_page(command.provider, navigate=True)
             page.bring_to_front()
@@ -681,7 +737,7 @@ class ManagedBrowserController:
               const file = [...document.querySelectorAll('input[type="file"]')].find(visible);
               const accept = (file?.getAttribute('accept') || '').split(',').map(value => value.trim()).filter(Boolean);
               const body = (document.body?.innerText || '').slice(0, 200000);
-              const countMatch = body.match(/(?:up to|max(?:imum)?|最多|至多)\s*(\d+)\s*(?:images?|views?|photos?|图片|图)/i);
+              const countMatch = body.match(/(?:up to|max(?:imum)?)\s*(\d+)\s*(?:images?|views?|photos?)/i);
               const explicitCount = countMatch ? Math.max(1, Math.min(6, Number(countMatch[1]))) : 0;
               const selected = node => node.getAttribute('aria-pressed') === 'true' ||
                 node.getAttribute('aria-selected') === 'true' ||
@@ -708,12 +764,12 @@ class ManagedBrowserController:
                 select_model: !!document.querySelector('[role="option"], [role="menuitem"], [data-model]'),
                 select_mode: !!modeControl,
                 responses: any(responses),
-                search: /(web search|search the web|pesquisar na web|联网搜索|搜索)/i.test(labels),
-                reasoning: /(reasoning|thinking|expert|reasoner|raciocinio|deepthink|deep think|深度思考|思考)/i.test(labels),
+                search: /(web search|search the web)/i.test(labels),
+                reasoning: /(reasoning|thinking|expert|reasoner|deepthink|deep think)/i.test(labels),
                 mode: activeMode,
-                image_generation: /(create image|generate image|image generation|criar imagem|gerar imagem|生成图像|生成图片)/i.test(labels),
-                geometry: /(geometry|shape|mesh|几何|形状)/i.test(labels),
-                texture: /(texture|pbr|material|纹理|贴图|材质)/i.test(labels),
+                image_generation: /(create image|generate image|image generation)/i.test(labels),
+                geometry: /(geometry|shape|mesh)/i.test(labels),
+                texture: /(texture|pbr|material)/i.test(labels),
                 download_artifact: [...document.querySelectorAll('a[href]')]
                   .some(a => /\.(glb|gltf|fbx|obj)(\?|$)/i.test(a.href))
               };
@@ -732,9 +788,9 @@ class ManagedBrowserController:
     @staticmethod
     def _select_generation_mode(page: Any, action: str) -> None:
         patterns = (
-            ("geometry", "shape", "mesh", "几何", "形状")
+            ("geometry", "shape", "mesh")
             if action == "generate_geometry"
-            else ("texture", "pbr", "material", "纹理", "贴图", "材质")
+            else ("texture", "pbr", "material")
         )
         nodes = page.locator('button, [role="tab"], [role="option"]')
         for index in range(min(nodes.count(), 400)):
@@ -876,9 +932,7 @@ class ManagedBrowserController:
                 send: any(sends),
                 unauthenticated: any(unauthenticated) || loginPaths.some(path => url.includes(path.toLocaleLowerCase())),
                 challenge: any(challenges),
-                authenticatedUrl: authenticatedPaths.some(path => url.includes(path.toLocaleLowerCase())),
-                legacy: accounts.length === 0 && unauthenticated.length === 0 &&
-                  challenges.length === 0 && loginPaths.length === 0 && authenticatedPaths.length === 0
+                authenticatedUrl: authenticatedPaths.some(path => url.includes(path.toLocaleLowerCase()))
               };
             }
             """,
@@ -902,7 +956,7 @@ class ManagedBrowserController:
             return "AUTHENTICATED"
         if signals.get("authenticatedUrl") and signals.get("composer") and signals.get("send"):
             return "AUTHENTICATED"
-        if signals.get("legacy") and signals.get("composer") and signals.get("send"):
+        if spec.code != "chatgpt" and signals.get("composer") and signals.get("send"):
             return "AUTHENTICATED"
         return "UNKNOWN"
 

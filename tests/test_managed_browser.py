@@ -19,6 +19,7 @@ class ProviderHandler(BaseHTTPRequestHandler):
         body = b"""<!doctype html>
 <html><body>
   <p>Upload up to 6 images</p>
+  <button data-testid="profile-button">Profile</button>
   <textarea id="prompt-textarea"></textarea>
   <input id="upload" type="file" accept="image/png,image/jpeg" multiple>
   <button data-model="sol">GPT Sol</button>
@@ -64,6 +65,7 @@ class WebView2BrowserIntegrationTests(unittest.TestCase):
             ("#send",),
             ("#stop",),
             ("[data-message-author-role='assistant']",),
+            accounts=("[data-testid='profile-button']",),
         )
         try:
             with tempfile.TemporaryDirectory() as folder:

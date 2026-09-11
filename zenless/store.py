@@ -19,6 +19,13 @@ def now_iso() -> str:
 class SQLiteStore:
     MAX_MESSAGE_CHARS = 32_000
     MAX_MESSAGES_PER_TASK = 48
+    MAX_TEST_RUNS_PER_JOB = 64
+    MAX_TEST_CASES_PER_RUN = 256
+    MAX_TEST_FAILURES_PER_RUN = 128
+    MAX_TEST_LOGS_PER_RUN = 512
+    MAX_TEST_TEXT_CHARS = 6_000
+    FINAL_TEST_STATUSES = frozenset({"PASSED", "FAILED", "SKIPPED", "NOT_RUN", "CANCELLED"})
+    CASE_TEST_STATUSES = frozenset({"PASSED", "FAILED", "SKIPPED", "NOT_RUN", "CANCELLED"})
     _TASK_COLUMNS = {
         "stage",
         "status",
@@ -155,10 +162,43 @@ class SQLiteStore:
                     run_id TEXT NOT NULL,
                     job_id TEXT NOT NULL,
                     name TEXT NOT NULL,
+                    suite TEXT NOT NULL DEFAULT '',
                     status TEXT NOT NULL,
                     severity TEXT NOT NULL,
                     details_json TEXT NOT NULL DEFAULT '{}',
+                    started_at_ms INTEGER NOT NULL DEFAULT 0,
+                    finished_at_ms INTEGER NOT NULL DEFAULT 0,
                     duration_ms INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY(run_id) REFERENCES test_runs(id) ON DELETE CASCADE,
+                    FOREIGN KEY(job_id) REFERENCES tasks(id) ON DELETE CASCADE
+                );
+
+                CREATE TABLE IF NOT EXISTS test_failures (
+                    id TEXT PRIMARY KEY,
+                    run_id TEXT NOT NULL,
+                    job_id TEXT NOT NULL,
+                    test_case_id TEXT NOT NULL DEFAULT '',
+                    name TEXT NOT NULL,
+                    suite TEXT NOT NULL DEFAULT '',
+                    severity TEXT NOT NULL,
+                    message TEXT NOT NULL,
+                    details_json TEXT NOT NULL DEFAULT '{}',
+                    timestamp INTEGER NOT NULL,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY(run_id) REFERENCES test_runs(id) ON DELETE CASCADE,
+                    FOREIGN KEY(job_id) REFERENCES tasks(id) ON DELETE CASCADE
+                );
+
+                CREATE TABLE IF NOT EXISTS test_logs (
+                    id TEXT PRIMARY KEY,
+                    run_id TEXT NOT NULL,
+                    job_id TEXT NOT NULL,
+                    test_case_id TEXT NOT NULL DEFAULT '',
+                    level TEXT NOT NULL,
+                    message TEXT NOT NULL,
+                    details_json TEXT NOT NULL DEFAULT '{}',
+                    timestamp INTEGER NOT NULL,
                     created_at TEXT NOT NULL,
                     FOREIGN KEY(run_id) REFERENCES test_runs(id) ON DELETE CASCADE,
                     FOREIGN KEY(job_id) REFERENCES tasks(id) ON DELETE CASCADE
@@ -178,7 +218,11 @@ class SQLiteStore:
                     detail TEXT NOT NULL DEFAULT '',
                     provider TEXT NOT NULL DEFAULT '',
                     role TEXT NOT NULL DEFAULT '',
+                    cycle INTEGER NOT NULL DEFAULT 1,
+                    attempt INTEGER NOT NULL DEFAULT 1,
                     timestamp INTEGER NOT NULL,
+                    started_at INTEGER NOT NULL DEFAULT 0,
+                    finished_at INTEGER NOT NULL DEFAULT 0,
                     updated_at TEXT NOT NULL,
                     FOREIGN KEY(job_id) REFERENCES tasks(id) ON DELETE CASCADE
                 );
@@ -193,6 +237,8 @@ class SQLiteStore:
                     content_url TEXT NOT NULL DEFAULT '',
                     model_url TEXT NOT NULL DEFAULT '',
                     metadata_json TEXT NOT NULL DEFAULT '{}',
+                    version INTEGER NOT NULL DEFAULT 1,
+                    revision INTEGER NOT NULL DEFAULT 1,
                     created_at INTEGER NOT NULL,
                     updated_at TEXT NOT NULL,
                     FOREIGN KEY(job_id) REFERENCES tasks(id) ON DELETE CASCADE
@@ -200,6 +246,8 @@ class SQLiteStore:
 
                 CREATE INDEX IF NOT EXISTS idx_test_runs_job ON test_runs(job_id, started_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_test_cases_run ON test_cases(run_id, created_at);
+                CREATE INDEX IF NOT EXISTS idx_test_failures_run ON test_failures(run_id, timestamp);
+                CREATE INDEX IF NOT EXISTS idx_test_logs_run ON test_logs(run_id, timestamp);
                 CREATE INDEX IF NOT EXISTS idx_activities_job ON chat_activities(job_id, timestamp);
                 CREATE INDEX IF NOT EXISTS idx_artifacts_job ON chat_artifacts(job_id, created_at);
                 """
@@ -207,6 +255,32 @@ class SQLiteStore:
             columns = {str(row["name"]) for row in connection.execute("PRAGMA table_info(tasks)")}
             if "final_review_json" not in columns:
                 connection.execute("ALTER TABLE tasks ADD COLUMN final_review_json TEXT NOT NULL DEFAULT '{}'")
+            case_columns = {str(row["name"]) for row in connection.execute("PRAGMA table_info(test_cases)")}
+            if "suite" not in case_columns:
+                connection.execute("ALTER TABLE test_cases ADD COLUMN suite TEXT NOT NULL DEFAULT ''")
+            if "started_at_ms" not in case_columns:
+                connection.execute("ALTER TABLE test_cases ADD COLUMN started_at_ms INTEGER NOT NULL DEFAULT 0")
+            if "finished_at_ms" not in case_columns:
+                connection.execute("ALTER TABLE test_cases ADD COLUMN finished_at_ms INTEGER NOT NULL DEFAULT 0")
+            activity_columns = {
+                str(row["name"]) for row in connection.execute("PRAGMA table_info(chat_activities)")
+            }
+            for name, definition in (
+                ("cycle", "INTEGER NOT NULL DEFAULT 1"),
+                ("attempt", "INTEGER NOT NULL DEFAULT 1"),
+                ("started_at", "INTEGER NOT NULL DEFAULT 0"),
+                ("finished_at", "INTEGER NOT NULL DEFAULT 0"),
+            ):
+                if name not in activity_columns:
+                    connection.execute(f"ALTER TABLE chat_activities ADD COLUMN {name} {definition}")
+            artifact_columns = {
+                str(row["name"]) for row in connection.execute("PRAGMA table_info(chat_artifacts)")
+            }
+            for name in ("version", "revision"):
+                if name not in artifact_columns:
+                    connection.execute(
+                        f"ALTER TABLE chat_artifacts ADD COLUMN {name} INTEGER NOT NULL DEFAULT 1"
+                    )
 
     def create_task(self, task_id: str, prompt: str, options: TaskOptions) -> None:
         timestamp = now_iso()
@@ -566,6 +640,7 @@ class SQLiteStore:
 
     def create_test_run(self, run_id: str, job_id: str, profile: str, seed: int) -> None:
         with closing(self._connect()) as connection:
+            connection.execute("BEGIN IMMEDIATE")
             connection.execute(
                 """
                 INSERT INTO test_runs(id, job_id, profile, status, seed, started_at)
@@ -573,15 +648,30 @@ class SQLiteStore:
                 """,
                 (run_id, job_id, profile, int(seed), now_iso()),
             )
+            connection.execute(
+                """
+                DELETE FROM test_runs
+                WHERE job_id = ? AND id NOT IN (
+                    SELECT id FROM test_runs WHERE job_id = ? ORDER BY started_at DESC, id DESC LIMIT ?
+                )
+                """,
+                (job_id, job_id, self.MAX_TEST_RUNS_PER_JOB),
+            )
+            connection.execute("COMMIT")
 
     def finish_test_run(self, run_id: str, status: str, summary: dict[str, Any]) -> None:
+        normalized = str(status).upper()
+        if normalized not in self.FINAL_TEST_STATUSES:
+            raise ValueError("Invalid final test status.")
         with closing(self._connect()) as connection:
-            connection.execute(
+            cursor = connection.execute(
                 """
                 UPDATE test_runs SET status = ?, summary_json = ?, finished_at = ? WHERE id = ?
                 """,
-                (status, json.dumps(summary, ensure_ascii=False), now_iso(), run_id),
+                (normalized, json.dumps(summary, ensure_ascii=False), now_iso(), run_id),
             )
+            if cursor.rowcount != 1:
+                raise KeyError(f"Test run not found: {run_id}")
 
     def invalidate_test_runs(self, job_id: str) -> int:
         with closing(self._connect()) as connection:
@@ -598,30 +688,145 @@ class SQLiteStore:
         run_id: str,
         job_id: str,
         name: str,
+        suite: str,
         status: str,
         severity: str,
         details: dict[str, Any],
         duration_ms: int,
+        started_at: int,
+        finished_at: int,
     ) -> None:
+        normalized = str(status).upper()
+        if normalized not in self.CASE_TEST_STATUSES:
+            raise ValueError("Invalid test case status.")
         with closing(self._connect()) as connection:
+            connection.execute("BEGIN IMMEDIATE")
             connection.execute(
                 """
                 INSERT INTO test_cases(
-                    id, run_id, job_id, name, status, severity, details_json, duration_ms, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    id, run_id, job_id, name, suite, status, severity, details_json,
+                    started_at_ms, finished_at_ms, duration_ms, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     case_id,
                     run_id,
                     job_id,
-                    name,
-                    status,
-                    severity,
+                    self._bounded_test_text(name),
+                    self._bounded_test_text(suite),
+                    normalized,
+                    self._bounded_test_text(severity),
                     json.dumps(details, ensure_ascii=False),
+                    max(0, int(started_at)),
+                    max(0, int(finished_at)),
                     max(0, int(duration_ms)),
                     now_iso(),
                 ),
             )
+            connection.execute(
+                """
+                DELETE FROM test_cases
+                WHERE run_id = ? AND id NOT IN (
+                    SELECT id FROM test_cases WHERE run_id = ?
+                    ORDER BY started_at_ms DESC, created_at DESC, id DESC LIMIT ?
+                )
+                """,
+                (run_id, run_id, self.MAX_TEST_CASES_PER_RUN),
+            )
+            connection.execute("COMMIT")
+
+    def append_test_failure(
+        self,
+        failure_id: str,
+        *,
+        run_id: str,
+        job_id: str,
+        test_case_id: str,
+        name: str,
+        suite: str,
+        severity: str,
+        message: str,
+        details: dict[str, Any],
+        timestamp: int,
+    ) -> None:
+        with closing(self._connect()) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                """
+                INSERT INTO test_failures(
+                    id, run_id, job_id, test_case_id, name, suite, severity, message,
+                    details_json, timestamp, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    failure_id,
+                    run_id,
+                    job_id,
+                    test_case_id,
+                    self._bounded_test_text(name),
+                    self._bounded_test_text(suite),
+                    self._bounded_test_text(severity),
+                    self._bounded_test_text(message),
+                    json.dumps(details, ensure_ascii=False),
+                    max(0, int(timestamp)),
+                    now_iso(),
+                ),
+            )
+            connection.execute(
+                """
+                DELETE FROM test_failures
+                WHERE run_id = ? AND id NOT IN (
+                    SELECT id FROM test_failures WHERE run_id = ?
+                    ORDER BY timestamp DESC, id DESC LIMIT ?
+                )
+                """,
+                (run_id, run_id, self.MAX_TEST_FAILURES_PER_RUN),
+            )
+            connection.execute("COMMIT")
+
+    def append_test_log(
+        self,
+        log_id: str,
+        *,
+        run_id: str,
+        job_id: str,
+        level: str,
+        message: str,
+        timestamp: int,
+        test_case_id: str = "",
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        with closing(self._connect()) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                """
+                INSERT INTO test_logs(
+                    id, run_id, job_id, test_case_id, level, message, details_json, timestamp, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    log_id,
+                    run_id,
+                    job_id,
+                    test_case_id,
+                    self._bounded_test_text(level),
+                    self._bounded_test_text(message),
+                    json.dumps(details or {}, ensure_ascii=False),
+                    max(0, int(timestamp)),
+                    now_iso(),
+                ),
+            )
+            connection.execute(
+                """
+                DELETE FROM test_logs
+                WHERE run_id = ? AND id NOT IN (
+                    SELECT id FROM test_logs WHERE run_id = ?
+                    ORDER BY timestamp DESC, id DESC LIMIT ?
+                )
+                """,
+                (run_id, run_id, self.MAX_TEST_LOGS_PER_RUN),
+            )
+            connection.execute("COMMIT")
 
     def upsert_activity(
         self,
@@ -633,16 +838,20 @@ class SQLiteStore:
         detail: str = "",
         provider: str = "",
         role: str = "",
+        cycle: int = 1,
+        attempt: int = 1,
         timestamp: int | None = None,
     ) -> dict[str, Any]:
         ts = timestamp if timestamp is not None else int(datetime.now(UTC).timestamp() * 1000)
         updated = now_iso()
+        finished_at = ts if status in {"DONE", "WARNING", "FAILED"} else 0
         with closing(self._connect()) as connection:
             connection.execute(
                 """
                 INSERT INTO chat_activities(
-                    id, job_id, phase, status, title, detail, provider, role, timestamp, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    id, job_id, phase, status, title, detail, provider, role, cycle, attempt,
+                    timestamp, started_at, finished_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     phase = excluded.phase,
                     status = excluded.status,
@@ -650,21 +859,46 @@ class SQLiteStore:
                     detail = excluded.detail,
                     provider = excluded.provider,
                     role = excluded.role,
-                    timestamp = excluded.timestamp,
+                    cycle = excluded.cycle,
+                    attempt = excluded.attempt,
+                    finished_at = excluded.finished_at,
                     updated_at = excluded.updated_at
                 """,
-                (activity_id, job_id, phase, status, title, detail, provider, role, ts, updated),
+                (
+                    activity_id,
+                    job_id,
+                    phase,
+                    status,
+                    title,
+                    detail,
+                    provider,
+                    role,
+                    max(1, int(cycle)),
+                    max(1, int(attempt)),
+                    ts,
+                    ts,
+                    finished_at,
+                    updated,
+                ),
             )
+            row = connection.execute("SELECT * FROM chat_activities WHERE id = ?", (activity_id,)).fetchone()
+        if row is None:
+            raise RuntimeError("Activity persistence failed.")
         return {
             "id": activity_id,
             "jobId": job_id,
+            "providerId": provider or None,
             "phase": phase,
             "status": status,
             "title": title,
             "detail": detail,
-            "provider": provider,
             "role": role,
-            "timestamp": ts,
+            "cycle": max(1, int(row["cycle"])),
+            "attempt": max(1, int(row["attempt"])),
+            "timestamp": int(row["timestamp"]),
+            "startedAt": int(row["started_at"] or row["timestamp"]),
+            "updatedAt": self._timestamp_milliseconds(row["updated_at"]),
+            "finishedAt": int(row["finished_at"]),
         }
 
     def list_activities(self, job_id: str) -> list[dict[str, Any]]:
@@ -676,13 +910,18 @@ class SQLiteStore:
             {
                 "id": str(row["id"]),
                 "jobId": str(row["job_id"]),
+                "providerId": str(row["provider"]) or None,
                 "phase": str(row["phase"]),
                 "status": str(row["status"]),
                 "title": str(row["title"]),
                 "detail": str(row["detail"]),
-                "provider": str(row["provider"]),
                 "role": str(row["role"]),
+                "cycle": max(1, int(row["cycle"])),
+                "attempt": max(1, int(row["attempt"])),
                 "timestamp": int(row["timestamp"]),
+                "startedAt": int(row["started_at"] or row["timestamp"]),
+                "updatedAt": self._timestamp_milliseconds(row["updated_at"]),
+                "finishedAt": int(row["finished_at"]),
             }
             for row in rows
         ]
@@ -698,6 +937,8 @@ class SQLiteStore:
         content_url: str = "",
         model_url: str = "",
         metadata: dict[str, Any] | None = None,
+        version: int = 1,
+        revision: int = 1,
         created_at: int | None = None,
     ) -> dict[str, Any]:
         ts = created_at if created_at is not None else int(datetime.now(UTC).timestamp() * 1000)
@@ -707,8 +948,9 @@ class SQLiteStore:
             connection.execute(
                 """
                 INSERT INTO chat_artifacts(
-                    id, job_id, type, name, state, preview_url, content_url, model_url, metadata_json, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    id, job_id, type, name, state, preview_url, content_url, model_url,
+                    metadata_json, version, revision, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     type = excluded.type,
                     name = excluded.name,
@@ -717,10 +959,29 @@ class SQLiteStore:
                     content_url = excluded.content_url,
                     model_url = excluded.model_url,
                     metadata_json = excluded.metadata_json,
+                    version = excluded.version,
+                    revision = excluded.revision,
                     updated_at = excluded.updated_at
                 """,
-                (artifact_id, job_id, artifact_type, name, state, preview_url, content_url, model_url, meta_json, ts, updated),
+                (
+                    artifact_id,
+                    job_id,
+                    artifact_type,
+                    name,
+                    state,
+                    preview_url,
+                    content_url,
+                    model_url,
+                    meta_json,
+                    max(1, int(version)),
+                    max(1, int(revision)),
+                    ts,
+                    updated,
+                ),
             )
+            row = connection.execute("SELECT * FROM chat_artifacts WHERE id = ?", (artifact_id,)).fetchone()
+        if row is None:
+            raise RuntimeError("Artifact persistence failed.")
         return {
             "id": artifact_id,
             "jobId": job_id,
@@ -731,7 +992,10 @@ class SQLiteStore:
             "contentUrl": content_url,
             "modelUrl": model_url,
             "metadata": metadata or {},
-            "createdAt": ts,
+            "version": max(1, int(row["version"])),
+            "revision": max(1, int(row["revision"])),
+            "createdAt": int(row["created_at"]),
+            "updatedAt": self._timestamp_milliseconds(row["updated_at"]),
         }
 
     def list_artifacts(self, job_id: str) -> list[dict[str, Any]]:
@@ -743,37 +1007,89 @@ class SQLiteStore:
         for row in rows:
             raw = dict(row)
             item = self._decode_json_column(raw, "metadata_json", "metadata")
-            result.append(
-                {
-                    "id": str(item["id"]),
-                    "jobId": str(item["job_id"]),
-                    "type": str(item["type"]),
-                    "name": str(item["name"]),
-                    "state": str(item["state"]),
-                    "previewUrl": str(item["preview_url"]),
-                    "contentUrl": str(item["content_url"]),
-                    "modelUrl": str(item["model_url"]),
-                    "metadata": item["metadata"],
-                    "createdAt": int(item["created_at"]),
-                }
-            )
+            artifact = {
+                "id": str(item["id"]),
+                "jobId": str(item["job_id"]),
+                "type": str(item["type"]),
+                "name": str(item["name"]),
+                "state": str(item["state"]),
+                "previewUrl": str(item["preview_url"]),
+                "contentUrl": str(item["content_url"]),
+                "modelUrl": str(item["model_url"]),
+                "metadata": item["metadata"],
+                "version": max(1, int(item["version"])),
+                "revision": max(1, int(item["revision"])),
+                "createdAt": int(item["created_at"]),
+                "updatedAt": self._timestamp_milliseconds(item["updated_at"]),
+            }
+            for key in ("messageId", "mime", "size", "actions"):
+                if key in item["metadata"]:
+                    artifact[key] = item["metadata"][key]
+            result.append(artifact)
         return result
 
     def test_cases(self, run_id: str) -> list[dict[str, Any]]:
         with closing(self._connect()) as connection:
             rows = connection.execute(
-                "SELECT * FROM test_cases WHERE run_id = ? ORDER BY created_at", (run_id,)
+                "SELECT * FROM test_cases WHERE run_id = ? ORDER BY started_at_ms, created_at, id", (run_id,)
             ).fetchall()
-        return [self._decode_json_column(dict(row), "details_json", "details") for row in rows]
+        return [self._test_case_dto(row) for row in rows]
+
+    def test_failures(self, run_id: str) -> list[dict[str, Any]]:
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                "SELECT * FROM test_failures WHERE run_id = ? ORDER BY timestamp, id", (run_id,)
+            ).fetchall()
+        return [self._test_failure_dto(row) for row in rows]
+
+    def test_logs(self, run_id: str) -> list[dict[str, Any]]:
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                "SELECT * FROM test_logs WHERE run_id = ? ORDER BY timestamp, id", (run_id,)
+            ).fetchall()
+        return [self._test_log_dto(row) for row in rows]
+
+    def test_case_counts(self, run_id: str) -> dict[str, int]:
+        counts = {"total": 0, "passed": 0, "failed": 0, "skipped": 0, "notRun": 0, "cancelled": 0}
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                "SELECT status, COUNT(*) AS count FROM test_cases WHERE run_id = ? GROUP BY status", (run_id,)
+            ).fetchall()
+        keys = {
+            "PASSED": "passed",
+            "FAILED": "failed",
+            "SKIPPED": "skipped",
+            "NOT_RUN": "notRun",
+            "CANCELLED": "cancelled",
+        }
+        for row in rows:
+            count = max(0, int(row["count"]))
+            counts["total"] += count
+            key = keys.get(str(row["status"]).upper())
+            if key:
+                counts[key] += count
+        return counts
 
     def latest_test_run(self, job_id: str) -> dict[str, Any] | None:
         with closing(self._connect()) as connection:
             row = connection.execute(
-                "SELECT * FROM test_runs WHERE job_id = ? ORDER BY started_at DESC LIMIT 1", (job_id,)
+                "SELECT * FROM test_runs WHERE job_id = ? ORDER BY started_at DESC, id DESC LIMIT 1", (job_id,)
             ).fetchone()
         if row is None:
             return None
-        return self._decode_json_column(dict(row), "summary_json", "summary")
+        return self._test_run_dto(row)
+
+    def test_snapshot(self, job_id: str) -> dict[str, Any]:
+        run = self.latest_test_run(job_id)
+        if run is None:
+            return {"run": None, "cases": [], "failures": [], "logs": []}
+        run_id = str(run["id"])
+        return {
+            "run": run,
+            "cases": self.test_cases(run_id),
+            "failures": self.test_failures(run_id),
+            "logs": self.test_logs(run_id),
+        }
 
     @classmethod
     def _compact_message(cls, content: str) -> str:
@@ -785,6 +1101,101 @@ class SQLiteStore:
         tail_size = cls.MAX_MESSAGE_CHARS - head_size - 160
         marker = f"\n\n[ZENLESS COMPACTED original_chars={len(text)} sha256={digest}]\n\n"
         return text[:head_size] + marker + text[-max(1000, tail_size) :]
+
+    @classmethod
+    def _bounded_test_text(cls, value: Any) -> str:
+        return str(value)[: cls.MAX_TEST_TEXT_CHARS]
+
+    @staticmethod
+    def _timestamp_milliseconds(value: Any) -> int:
+        try:
+            parsed = datetime.fromisoformat(str(value))
+        except (TypeError, ValueError):
+            return 0
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=UTC)
+        return max(0, int(parsed.timestamp() * 1000))
+
+    @staticmethod
+    def _json_object(value: Any) -> dict[str, Any]:
+        try:
+            decoded = json.loads(str(value))
+        except (TypeError, json.JSONDecodeError):
+            return {}
+        return decoded if isinstance(decoded, dict) else {}
+
+    @classmethod
+    def _test_run_dto(cls, row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "id": str(row["id"]),
+            "jobId": str(row["job_id"]),
+            "profile": str(row["profile"]),
+            "status": str(row["status"]),
+            "seed": int(row["seed"]),
+            "summary": cls._json_object(row["summary_json"]),
+            "startedAt": cls._timestamp_milliseconds(row["started_at"]),
+            "finishedAt": cls._timestamp_milliseconds(row["finished_at"]),
+        }
+
+    @classmethod
+    def _test_case_dto(cls, row: sqlite3.Row) -> dict[str, Any]:
+        started_at = max(0, int(row["started_at_ms"]))
+        if started_at == 0:
+            started_at = cls._timestamp_milliseconds(row["created_at"])
+        duration_ms = max(0, int(row["duration_ms"]))
+        finished_at = max(0, int(row["finished_at_ms"])) or started_at + duration_ms
+        return {
+            "id": str(row["id"]),
+            "runId": str(row["run_id"]),
+            "jobId": str(row["job_id"]),
+            "name": str(row["name"]),
+            "suite": str(row["suite"]),
+            "status": str(row["status"]),
+            "startedAt": started_at,
+            "finishedAt": finished_at,
+            "durationMs": duration_ms,
+        }
+
+    @classmethod
+    def _test_failure_dto(cls, row: sqlite3.Row) -> dict[str, Any]:
+        details = cls._json_object(row["details_json"])
+        return {
+            "id": str(row["id"]),
+            "runId": str(row["run_id"]),
+            "jobId": str(row["job_id"]),
+            "testCaseId": str(row["test_case_id"]),
+            "name": str(row["name"]),
+            "suite": str(row["suite"]),
+            "severity": str(row["severity"]),
+            "message": str(row["message"]),
+            "timestamp": max(0, int(row["timestamp"])),
+            "file": str(details.get("file", "")),
+            "line": max(0, int(details.get("line", 0) or 0)),
+            "stack": str(details.get("stack", "")),
+            "expected": details.get("expected"),
+            "actual": details.get("actual"),
+            "cause": str(details.get("cause", "")),
+            "recovery": str(details.get("recovery", "")),
+        }
+
+    @classmethod
+    def _test_log_dto(cls, row: sqlite3.Row) -> dict[str, Any]:
+        details = cls._json_object(row["details_json"])
+        result: dict[str, Any] = {
+            "id": str(row["id"]),
+            "runId": str(row["run_id"]),
+            "jobId": str(row["job_id"]),
+            "timestamp": max(0, int(row["timestamp"])),
+            "level": str(row["level"]),
+            "message": str(row["message"]),
+        }
+        test_case_id = str(row["test_case_id"])
+        if test_case_id:
+            result["testCaseId"] = test_case_id
+        for key in ("file", "line", "stack", "cause", "recovery", "suite", "expected", "actual"):
+            if key in details:
+                result[key] = details[key]
+        return result
 
     @staticmethod
     def _decode_task(row: sqlite3.Row) -> dict[str, Any]:

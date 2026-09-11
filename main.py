@@ -20,8 +20,8 @@ def _data_root() -> Path:
     return path
 
 
-def _enable_crash_log() -> TextIO:
-    stream = (_data_root() / "crash.log").open("a", encoding="utf-8")
+def _enable_crash_log(data_root: Path) -> TextIO:
+    stream = (data_root / "crash.log").open("a", encoding="utf-8")
     faulthandler.enable(stream)
     return stream
 
@@ -32,10 +32,15 @@ def _resource_root() -> Path:
 
 
 def main() -> int:
-    crash_stream = _enable_crash_log()
+    data_root = _data_root()
+    resource_root = _resource_root()
+    from zenless.auth_profiles import prepare_auth_profiles
+
+    prepare_auth_profiles(data_root, resource_root)
+    crash_stream = _enable_crash_log(data_root)
     from zenless.diagnostics import ErrorBus
 
-    diagnostics = ErrorBus(_data_root() / "logs")
+    diagnostics = ErrorBus(data_root / "logs")
     diagnostics.install_global_hooks()
     splash = None
     try:
@@ -52,8 +57,8 @@ def main() -> int:
 
         try:
             return run_web_app(
-                data_root=_data_root(),
-                resource_root=_resource_root(),
+                data_root=data_root,
+                resource_root=resource_root,
                 diagnostics=diagnostics,
                 smoke_test="--smoke-test" in sys.argv,
                 provision="--no-provision" not in sys.argv,
@@ -70,7 +75,7 @@ def main() -> int:
                 impact="Zenless could not open the WebView2 interface.",
                 recovery_action="Review startup-error.log; automatic provisioning can be retried.",
             )
-            (_data_root() / "startup-error.log").write_text(traceback.format_exc(), encoding="utf-8")
+            (data_root / "startup-error.log").write_text(traceback.format_exc(), encoding="utf-8")
             try:
                 import ctypes
 

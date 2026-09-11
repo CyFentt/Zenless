@@ -1,12 +1,23 @@
 import os
+import re
+import uuid
+from pathlib import Path
+
+build_id = os.environ.get("ZENLESS_BUILD_ID", "").strip().casefold() or uuid.uuid4().hex
+if not re.fullmatch(r"[0-9a-f]{32}", build_id):
+    raise ValueError("ZENLESS_BUILD_ID must contain 32 hexadecimal characters.")
+build_id_path = Path("build/generated/zenless-build-id")
+build_id_path.parent.mkdir(parents=True, exist_ok=True)
+build_id_path.write_text(build_id, encoding="ascii")
 
 datas = [
     ("frontend/dist", "frontend/dist"),
+    (str(build_id_path), "."),
 ]
 documents = (
     "README.md",
     "ARCHITECTURE.md",
-    "BOLT_BACKEND_REQUIREMENTS.md",
+    "BACKEND_REQUIREMENTS.md",
     "INSTALLATION_ARCHITECTURE.md",
     "PROVIDER_ARCHITECTURE.md",
     "QA_ARCHITECTURE.md",

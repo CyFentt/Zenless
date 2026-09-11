@@ -5,10 +5,10 @@ import { Tooltip } from "@/components/Tooltip";
 import type { AgentId } from "@/types";
 
 const AGENT_LABELS: Record<AgentId, string> = {
-  chatgpt: "Builder",
-  deepseek: "Reviewer",
-  hunyuan: "3D Generator",
-  studio: "Editor",
+  chatgpt: "ChatGPT",
+  deepseek: "DeepSeek",
+  hunyuan: "Hunyuan",
+  studio: "Roblox Studio",
 };
 
 function displaySource(source: string): string {
@@ -60,7 +60,7 @@ export function HomePage() {
                 key={agent.id}
                 className="flex items-center justify-between border-b border-ink-700 pb-1"
               >
-                <span className="text-xs text-ink-100">{displaySource(agent.id)}</span>
+                <span className="text-xs text-ink-100">{agent.name || displaySource(agent.id)}</span>
                 <div className="flex items-center gap-2">
                   <StatusDot status={agent.status} />
                   <span className="text-2xs uppercase tracking-wider text-ink-300">

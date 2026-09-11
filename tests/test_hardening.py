@@ -6,6 +6,7 @@ import time
 import unittest
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 from hypothesis import given, settings
 from hypothesis import strategies as st
@@ -192,7 +193,22 @@ class HardeningTests(unittest.TestCase):
             executable = Path(folder) / "chromium-123" / "chrome-win64" / "chrome.exe"
             executable.parent.mkdir(parents=True)
             executable.write_bytes(b"test")
-            self.assertEqual(manager.chromium_executable(), executable)
+            with patch.object(manager, "_is_launchable", return_value=True):
+                self.assertEqual(manager.chromium_executable(), executable)
+
+    def test_runtime_manager_rejects_and_removes_an_unlaunchable_runtime(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            manager = BrowserRuntimeManager(Path(folder))
+            runtime = Path(folder) / "chromium-123"
+            executable = runtime / "chrome-win64" / "chrome.exe"
+            executable.parent.mkdir(parents=True)
+            executable.write_bytes(b"invalid")
+
+            with patch.object(manager, "_is_launchable", return_value=False):
+                self.assertIsNone(manager.chromium_executable())
+                manager._remove_invalid_runtimes()
+
+            self.assertFalse(runtime.exists())
 
 
 if __name__ == "__main__":

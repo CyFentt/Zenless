@@ -12,16 +12,20 @@ import type {
   Job,
   ModelCatalog,
   ModelInfo,
+  ProviderDescriptor,
   ProviderId,
+  ReadinessStateInfo,
   Review,
   Settings,
   StudioNode,
-  StudioState,
+  StudioStateSnapshot,
+  StorageInfo,
   TaskOptions,
   TestCaseResult,
   TestFailure,
   TestLog,
   TestState,
+  ToolDescriptor,
   ViewTile,
 } from '@/types';
 
@@ -44,6 +48,8 @@ export interface ZenlessAPI {
 
   getConnections(): Promise<ConnectionInfo>;
   getAgents(): Promise<AgentInfo[]>;
+  getProviders(): Promise<ProviderDescriptor[]>;
+  getReadiness(): Promise<ReadinessStateInfo>;
   loginProvider(provider: ProviderId): Promise<{ ok: boolean }>;
 
   getJobs(): Promise<Job[]>;
@@ -53,12 +59,12 @@ export interface ZenlessAPI {
   resumeJob(id: string): Promise<Job>;
   cancelJob(id: string): Promise<{ ok: boolean }>;
   getMessages(jobId: string): Promise<ChatMessage[]>;
-  getTimeline(jobId: string): Promise<JobTimelineSnapshot>;
+  getTimeline(jobId: string, signal?: AbortSignal): Promise<JobTimelineSnapshot>;
 
   sendMessage(content: string, jobId?: string, attachments?: File[], options?: TaskOptions): Promise<{ messageId: string; jobId?: string }>;
   cancelGeneration(jobId: string): Promise<{ ok: boolean }>;
 
-  getContext(jobId: string): Promise<ContextItem[]>;
+  getContext(jobId: string, signal?: AbortSignal): Promise<ContextItem[]>;
   refreshContext(jobId: string): Promise<ContextItem[]>;
   includeContext(itemId: string): Promise<{ ok: boolean }>;
   excludeContext(itemId: string): Promise<{ ok: boolean }>;
@@ -66,26 +72,26 @@ export interface ZenlessAPI {
   unlockContext(itemId: string): Promise<{ ok: boolean }>;
   inspectContext(itemId: string): Promise<ContextItem>;
 
-  getChanges(jobId: string): Promise<ChangedFile[]>;
-  getReview(jobId: string): Promise<Review>;
+  getChanges(jobId: string, signal?: AbortSignal): Promise<ChangedFile[]>;
+  getReview(jobId: string, signal?: AbortSignal): Promise<Review>;
   approveChanges(jobId: string): Promise<{ ok: boolean }>;
   rejectChanges(jobId: string): Promise<{ ok: boolean }>;
   editChanges(jobId: string, fileId: string, content: string): Promise<{ ok: boolean }>;
 
-  getVisual(jobId: string): Promise<{ views: ViewTile[]; concept: { version: number; status: string; prompt?: string } }>;
+  getVisual(jobId: string, signal?: AbortSignal): Promise<{ views: ViewTile[]; concept: { version: number; status: string; prompt?: string } }>;
   approveVisual(jobId: string): Promise<{ ok: boolean }>;
   editConcept(jobId: string, prompt: string): Promise<{ ok: boolean }>;
   regenerateVisual(jobId: string): Promise<{ ok: boolean }>;
   regenerateView(jobId: string, view: string): Promise<{ ok: boolean }>;
 
-  getModel(jobId: string): Promise<ModelInfo>;
+  getModel(jobId: string, signal?: AbortSignal): Promise<ModelInfo>;
   approveModel(jobId: string): Promise<{ ok: boolean }>;
   regenerateGeometry(jobId: string): Promise<{ ok: boolean }>;
   regenerateTexture(jobId: string): Promise<{ ok: boolean }>;
 
   getAssets(): Promise<Asset[]>;
 
-  getStudioState(): Promise<{ state: StudioState }>;
+  getStudioState(): Promise<StudioStateSnapshot>;
   getStudioTree(): Promise<StudioNode[]>;
   searchStudio(query: string): Promise<StudioNode[]>;
   refreshStudio(): Promise<{ ok: boolean }>;
@@ -105,4 +111,6 @@ export interface ZenlessAPI {
   setSmartRouting(enabled: boolean): Promise<{ ok: boolean }>;
 
   getDiagnostics(): Promise<Diagnostic[]>;
+  getTools(): Promise<ToolDescriptor[]>;
+  getStorage(): Promise<StorageInfo>;
 }

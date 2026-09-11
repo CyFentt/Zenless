@@ -4,7 +4,7 @@ export type SocketStatus = "CONNECTING" | "CONNECTED" | "RECONNECTING" | "DISCON
 export type AgentId = "chatgpt" | "deepseek" | "hunyuan" | "studio";
 export type ProviderId = Extract<AgentId, "chatgpt" | "deepseek" | "hunyuan">;
 
-export type ProviderRole = "BUILDER" | "REVIEWER" | "VISUAL" | "THREED";
+export type ProviderRole = "BUILDER" | "REVIEWER" | "VISUAL" | "RESEARCH" | "THREED";
 
 export interface AgentInfo {
   id: AgentId;
@@ -194,6 +194,9 @@ export interface ChatArtifact {
   };
   actions?: string[];
   createdAt: number;
+  updatedAt?: number;
+  version?: number;
+  revision?: number;
 }
 
 export type ChatActivityStatus = "QUEUED" | "RUNNING" | "DONE" | "WARNING" | "FAILED";
@@ -212,6 +215,11 @@ export interface ChatActivity {
   totalSteps?: number;
   detail?: string;
   timestamp: number;
+  cycle?: number;
+  attempt?: number;
+  startedAt?: number;
+  updatedAt?: number;
+  finishedAt?: number;
 }
 
 export interface ChatError {
@@ -269,12 +277,30 @@ export interface Review {
   ready: boolean;
 }
 
+export interface JobProjection {
+  jobId: string;
+  messages: ChatMessage[];
+  activities: ChatActivity[];
+  artifacts: ChatArtifact[];
+  contextItems: ContextItem[];
+  changedFiles: ChangedFile[];
+  review: Review | null;
+  views: ViewTile[];
+  concept: { version: number; status: string; prompt?: string };
+  modelInfo: ModelInfo;
+  testState: TestState;
+  testCases: TestCaseResult[];
+  testFailures: TestFailure[];
+  testLogs: TestLog[];
+}
+
 export type ViewName = "FRONT" | "BACK" | "LEFT" | "RIGHT" | "TOP" | "BOTTOM";
 export type ViewState = "EMPTY" | "GENERATING" | "READY" | "FAILED" | "APPROVED";
 
 export interface ViewTile {
   name: ViewName;
   state: ViewState;
+  assetId?: string;
   imageUrl?: string;
   version?: number;
   error?: string;
@@ -286,10 +312,11 @@ export interface ConceptInfo {
   prompt?: string;
 }
 
-export type ModelGenState = "EMPTY" | "GENERATING" | "READY" | "APPROVED" | "FAILED";
+export type ModelGenState = "IDLE" | "GENERATING" | "READY" | "FAILED";
 
 export interface ModelInfo {
   state: ModelGenState;
+  approvalState?: "PENDING_APPROVAL" | "APPROVED";
   geometryStatus: "IDLE" | "GENERATING" | "READY" | "FAILED";
   textureStatus: "IDLE" | "GENERATING" | "READY" | "FAILED";
   modelUrl?: string;
@@ -313,6 +340,57 @@ export interface Asset {
 
 export type StudioState = "ONLINE" | "OFFLINE" | "CONNECTING" | "SEARCHING" | "SETUP_REQUIRED" | "SELECT_REQUIRED" | "ERROR";
 
+export type StudioReadiness =
+  | "MCP_RUNTIME_AVAILABLE"
+  | "MCP_CONNECTED"
+  | "STUDIO_NOT_RUNNING"
+  | "STUDIO_INSTANCE_FOUND"
+  | "MULTIPLE_STUDIOS"
+  | "PROJECT_SELECTED"
+  | "PROJECT_READY"
+  | "MCP_SETUP_REQUIRED"
+  | "MCP_RUNTIME_ERROR"
+  | "NO_PROJECT";
+
+export interface StudioStateSnapshot {
+  state: StudioState;
+  readiness?: StudioReadiness;
+  selectedStudioId?: string | null;
+  studioId?: string | null;
+  projectName?: string | null;
+  placeId?: string | number | null;
+  universeId?: string | number | null;
+}
+
+export interface StudioInstance {
+  id: string;
+  label: string;
+  placeId?: string | number | null;
+  universeId?: string | number | null;
+  project?: string | null;
+  raw: Record<string, unknown>;
+}
+
+export interface StudioDiscoverySnapshot {
+  state: StudioReadiness;
+  selectedStudioId: string | null;
+  detail: string;
+  studios: StudioInstance[];
+  capabilities?: {
+    name: string;
+    category: string;
+    description: string;
+    inputSchema: Record<string, unknown>;
+  }[];
+}
+
+export interface ProjectIdentity {
+  name: string;
+  studioId: string | null;
+  placeId: string | number | null;
+  universeId: string | number | null;
+}
+
 export interface StudioNode {
   id: string;
   name: string;
@@ -323,11 +401,13 @@ export interface StudioNode {
   usedAsContext?: boolean;
 }
 
-export type TestStatus = "IDLE" | "STARTING" | "RUNNING" | "STOPPING" | "STOPPED" | "FAILED";
+export type TestStatus = "IDLE" | "STARTING" | "RUNNING" | "STOPPING" | "STOPPED" | "FAILED" | "STALE";
 export type LogLevel = "ERR" | "WARN" | "ZEN" | "SRV" | "CLI";
 
 export interface TestLog {
   id: string;
+  runId?: string;
+  jobId?: string;
   timestamp: number;
   level: LogLevel;
   message: string;
@@ -346,6 +426,8 @@ export type TestCaseStatus = "RUNNING" | "PASSED" | "FAILED" | "SKIPPED";
 
 export interface TestCaseResult {
   id: string;
+  runId?: string;
+  jobId?: string;
   name: string;
   suite?: string;
   status: TestCaseStatus;
@@ -358,6 +440,8 @@ export interface TestCaseResult {
 
 export interface TestFailure {
   id: string;
+  runId?: string;
+  jobId?: string;
   testCaseId?: string;
   name?: string;
   suite?: string;
@@ -377,6 +461,8 @@ export interface TestState {
   elapsedMs: number;
   fixAttempt: number;
   maxFixAttempts: number;
+  resultStatus?: "PASSED" | "FAILED" | "SKIPPED" | "NOT_RUN" | "CANCELLED";
+  counts?: { total: number; passed: number; failed: number; skipped: number };
 }
 
 export interface ModelOption {
@@ -451,6 +537,14 @@ export type ReadinessStepState =
   | "NOT_FOUND"
   | "SETUP_REQUIRED"
   | "SELECT_REQUIRED"
+  | "PROJECT_READY"
+  | "CAPABILITY_MISSING"
+  | "CLEANUP_REQUIRED"
+  | "AUTHENTICATED"
+  | "EXPIRED"
+  | "CHALLENGE"
+  | "OFF"
+  | "CONNECTING"
   | "ERROR"
   | "OPTIONAL";
 
@@ -468,18 +562,51 @@ export type ReadinessState = "CHECKING" | "READY" | "ACTION_REQUIRED" | "DEGRADE
 export interface ReadinessStateInfo {
   state: ReadinessState;
   steps: ReadinessStep[];
+  canRunProjectTasks?: boolean;
+  checkedAt?: number;
+  checks?: ReadinessStep[];
+  providers?: ProviderReadiness[];
+  studio?: Record<string, unknown>;
+  storage?: {
+    bytesUsed: number;
+    budgetBytes: number;
+    withinBudget: boolean;
+  };
+  system?: Record<string, unknown>;
 }
 
 export interface ProviderCapabilities {
-  reasoning?: { supported: boolean; levels?: string[] };
-  search?: { supported: boolean };
-  files?: { supported: boolean; accepted?: string[]; maxCount?: number };
+  supportsText: boolean;
+  supportsReasoning: boolean;
+  reasoningLevels: string[];
+  supportsSearch: boolean;
+  supportsFiles: boolean;
+  acceptedMimeTypes: string[];
+  acceptedExtensions: string[];
+  maxFiles: number;
+  maxBytesPerFile: number;
+  supportsImages: boolean;
+  supportsVision: boolean;
+  supportsAudio: boolean;
+  supportsArchives: boolean;
+  supportsCodeExecution: boolean;
+  supportsTools: boolean;
+  supportsImageGeneration: boolean;
+  supports3DGeneration: boolean;
+  supportsGeometry: boolean;
+  supportsTexture: boolean;
+  supportsDownload: boolean;
+  supportsCancel: boolean;
+  supportsStreaming: boolean;
+  source?: string;
+  detectedAt?: number;
 }
 
 export interface ProviderMode {
   id: string;
   label: string;
   capabilities: ProviderCapabilities;
+  source?: string;
 }
 
 export interface ProviderModel {
@@ -489,34 +616,71 @@ export interface ProviderModel {
 }
 
 export interface ProviderDescriptor {
-  id: ProviderId;
-  name: string;
-  role: ProviderRole;
-  status: ConnectionStatus;
-  model?: string;
-  mode?: string;
-  modes?: ProviderMode[];
-  models?: ProviderModel[];
-  capabilities?: ProviderCapabilities;
-  verified?: "VERIFIED" | "BETA" | "EXPERIMENTAL" | "UNVERIFIED";
-  loginState?: "IDLE" | "OPENING" | "WAITING" | "VERIFYING" | "READY";
+  providerId: string;
+  displayName: string;
+  webUrl: string;
+  support: "VERIFIED" | "BETA" | "EXPERIMENTAL" | "UNSUPPORTED";
+  adapter: string;
+  roles: ProviderRole[];
+  modes: ProviderMode[];
+  enabled: boolean;
+  authState: ProviderAuthState;
+  route: string;
+  detail?: string;
+  selection?: Record<string, unknown>;
+  session?: Record<string, unknown> | null;
+  liveCapabilities?: ProviderCapabilities | null;
+  status?: ConnectionStatus;
+  loginState?: ProviderLoginState;
+}
+
+export type ProviderLoginState = "IDLE" | "OPENING" | "WAITING" | "VERIFYING" | "READY" | "FAILED";
+
+export type ProviderAuthState =
+  | "UNKNOWN"
+  | "CHECKING"
+  | "LOGIN_REQUIRED"
+  | "LOGIN_WINDOW_OPEN"
+  | "AUTHENTICATING"
+  | "CHALLENGE"
+  | "AUTHENTICATED"
+  | "VERIFYING_PERSISTENCE"
+  | "READY"
+  | "EXPIRED"
+  | "ERROR";
+
+export interface ProviderReadiness {
+  providerId: string;
+  displayName: string;
+  authState: ProviderAuthState;
+  route: string;
+  required: boolean;
+  detail: string;
 }
 
 export interface ToolDescriptor {
   id: string;
   name: string;
-  description?: string;
-  status: "INSTALLED" | "NOT_INSTALLED" | "OPTIONAL";
-  category: "BUILT_IN" | "MCP" | "EXTERNAL";
-  downloadSize?: string;
-  installedSize?: string;
-  reason?: string;
+  purpose: string;
+  version: string;
+  source: string;
+  license: string;
+  downloadSize: number;
+  installedSize: number;
+  checksum: string;
+  trustLevel: string;
+  updatePolicy: string;
+  archive: boolean;
+  status: "INSTALLED" | "AVAILABLE" | "ON_DEMAND";
+  lastUsed?: number | null;
+  installedAt?: number | null;
 }
 
 export interface StorageInfo {
-  used: number;
-  budget: number;
-  categories: { name: string; size: number }[];
+  bytesUsed: number;
+  budgetBytes: number;
+  withinBudget: boolean;
+  categories: { id: string; bytes: number; protected: boolean }[];
 }
 
 export interface ZenlessEventMap {
@@ -525,8 +689,8 @@ export interface ZenlessEventMap {
   CONNECTION_CHANGED: Partial<ConnectionInfo>;
   AGENT_STATUS_CHANGED: { agent: AgentId; status: ConnectionStatus };
   PIPELINE_STATE_CHANGED: { jobId: string; stage: PipelineStage };
-  JOB_CREATED: { job: Job };
-  JOB_UPDATED: { job: Partial<Job> & { id: string } };
+  JOB_CREATED: { jobId: string; job: Job };
+  JOB_UPDATED: { jobId: string; job: Partial<Job> & { id: string } };
   JOB_COMPLETE: { jobId: string };
   JOB_FAILED: { jobId: string; reason: string };
   CHAT_STREAM_STARTED: { jobId: string; messageId: string; provider?: string };
@@ -535,26 +699,79 @@ export interface ZenlessEventMap {
   CHAT_MESSAGE: { jobId: string; message: ChatMessage };
   CHAT_ACTIVITY: { jobId: string; activity: ChatActivity };
   CHAT_ARTIFACT: { jobId: string; artifact: ChatArtifact };
-  PROVIDER_LOGIN_STATE: { provider: ProviderId; state: "IDLE" | "OPENING" | "WAITING" | "VERIFYING" | "READY" };
+  CHAT_SYSTEM_EVENT: {
+    severity: "CRITICAL" | "ERROR" | "WARNING" | "INFO";
+    title: string;
+    message: string;
+    recovery?: string;
+    jobId?: string;
+    diagnosticId?: string;
+  };
+  LOGIN_REQUIRED: { providerId: ProviderId };
+  LOGIN_WINDOW_WILL_OPEN: { providerId: ProviderId };
+  LOGIN_WINDOW_OPENED: { providerId: ProviderId; route: string };
+  LOGIN_DETECTED: { providerId: ProviderId };
+  LOGIN_PERSISTENCE_VERIFYING: { providerId: ProviderId };
+  LOGIN_READY: { providerId: ProviderId; route: string; persistent: boolean };
+  LOGIN_FAILED: { providerId: ProviderId; message: string; recovery: string };
+  PROVIDER_CAPABILITIES_CHANGED: { provider: ProviderDescriptor };
+  PROVIDER_MODEL_CHANGED: { providerId: string; selection: Record<string, string> };
   READINESS_CHANGED: { readiness: ReadinessStateInfo };
   CONTEXT_UPDATED: { jobId: string; items: ContextItem[] };
   CHANGES_UPDATED: { jobId: string; files: ChangedFile[] };
   REVIEW_READY: { jobId: string; review: Review };
-  VISUAL_GENERATION_CHANGED: { jobId: string; view?: ViewName; state: ViewState };
-  VISUAL_READY: { jobId: string; view: ViewName; imageUrl: string };
+  VISUAL_GENERATION_CHANGED: {
+    jobId: string;
+    view: ViewName;
+    state: ViewState;
+    assetId?: string | null;
+    conceptVersion: number;
+  };
+  VISUAL_READY: {
+    jobId: string;
+    view: ViewName;
+    imageUrl: string;
+    assetId: string;
+    conceptVersion: number;
+  };
   VISUAL_APPROVED: { jobId: string; views: ViewName[]; conceptVersion?: number };
   MODEL_GENERATION_CHANGED: { jobId: string; target: "geometry" | "texture"; state: ModelGenState };
-  MODEL_READY: { jobId: string; modelUrl: string; filename?: string };
+  MODEL_READY: {
+    jobId: string;
+    assetId: string;
+    version: number;
+    modelUrl: string;
+    filename?: string;
+    geometryStatus: "READY";
+    textureStatus: "READY";
+  };
   MODEL_APPROVED: { jobId: string };
   ASSETS_UPDATED: { assets: Asset[] };
-  STUDIO_STATE_CHANGED: { state: StudioState };
+  STUDIO_STATE_CHANGED: StudioStateSnapshot;
+  STUDIO_DISCOVERY_CHANGED: StudioDiscoverySnapshot;
+  STUDIO_SELECTION_REQUIRED: StudioDiscoverySnapshot;
   STUDIO_TREE_UPDATED: { tree: StudioNode[] };
-  TEST_STARTED: { jobId: string };
+  TEST_STARTED: { jobId: string; runId: string };
   TEST_CASE_STARTED: { jobId: string; testCase: TestCaseResult };
   TEST_CASE_FINISHED: { jobId: string; testCase: TestCaseResult };
   TEST_FAILURE: { jobId: string; failure: TestFailure };
-  TEST_LOG: { jobId?: string; log: TestLog };
-  TEST_FINISHED: { jobId: string; passed: boolean };
+  TEST_LOG: { jobId: string; log: TestLog };
+  TEST_FINISHED: {
+    jobId: string;
+    runId: string;
+    status: "PASSED" | "FAILED" | "SKIPPED" | "NOT_RUN" | "CANCELLED";
+    counts: { total: number; passed: number; failed: number; skipped: number };
+    passed?: boolean;
+  };
+  TOOL_STATUS_CHANGED: { tool: ToolDescriptor };
+  STORAGE_CLEANUP_COMPLETED: {
+    bytesBefore: number;
+    bytesAfter: number;
+    bytesRemoved: number;
+    categories: string[];
+    itemsRemoved: number;
+    storage: StorageInfo;
+  };
   SETTINGS_CHANGED: { settings: Partial<Settings> };
   DIAGNOSTIC_EVENT: { diagnostic: Diagnostic };
 }

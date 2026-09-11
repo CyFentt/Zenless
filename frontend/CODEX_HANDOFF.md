@@ -11,7 +11,7 @@ Do not restore a second frontend tree and do not edit generated `frontend/dist` 
 - `ZenlessAPI` is the UI command boundary; `ZenlessEventMap` is the event boundary.
 - `zenless/web_bridge.py` owns local REST/WebSocket transport, token/origin/host checks, request correlation, multipart limits and authorized asset delivery.
 - `zenless/core.py` owns state exposed to the UI and maps Event Bus updates into the frontend contract.
-- `zenless/orchestrator.py` owns provider sequencing, approval gates, Studio mutation safety, QA/repair and final DeepSeek review.
+- `zenless/orchestrator.py` owns provider sequencing, approval gates, Studio mutation safety, QA/repair and the final review performed by the provider bound to the Reviewer role.
 - `zenless/store.py` owns SQLite tasks/events/messages/approvals/assets/tests and idempotent operations.
 - `zenless/agent_gateway.py` selects embedded WebView2 first and internal Playwright when the required capability is unavailable.
 - `zenless/studio_mcp.py` is the only Studio command transport.
@@ -23,7 +23,7 @@ Do not restore a second frontend tree and do not edit generated `frontend/dist` 
 2. Never move AI policy or Studio writes into the frontend/Bridge.
 3. Preserve `READ CURRENT → SNAPSHOT → EXPECTED SHA-256 → CLAIM OPERATION → APPLY → READ BACK → VERIFY`.
 4. A crash with a pending/unsafe write blocks recovery; it must not replay the mutation automatically.
-5. ChatGPT is the builder. DeepSeek independently reviews before approval and again after mutation/QA. A final `BLOCK` cannot become `COMPLETE`.
+5. Builder and Reviewer are independent role bindings. When independent review is enabled, the bound Reviewer checks the proposal and the final mutation/QA evidence. A final `BLOCK` cannot become `COMPLETE`.
 6. Stream events are provisional display data. Persist only the completed provider response.
 7. Six View means six separate versioned PNGs: `FRONT`, `BACK`, `LEFT`, `RIGHT`, `TOP`, `BOTTOM`. Regeneration creates a new version and never overwrites approved evidence in place.
 8. Hunyuan image count, upload, geometry, texture and download support come from live capability discovery. Never fabricate a stage, percentage, model or texture.
@@ -32,7 +32,7 @@ Do not restore a second frontend tree and do not edit generated `frontend/dist` 
 
 ## Verification before release
 
-Run `build.ps1`; it gates PyInstaller behind Ruff, Pyright, pytest, `npm ci`, ESLint, TypeScript, Vitest and the production Vite build. Report the exact counts from that run.
+Run `build.ps1 -FrontendIntegration`; it gates PyInstaller behind Ruff, Pyright, pytest, `npm ci`, ESLint, TypeScript, Vitest and the production Vite build. A default `build.ps1` run reuses the existing compiled frontend. Report the exact counts from the release run.
 
 Static/unit tests do not prove these external integrations:
 

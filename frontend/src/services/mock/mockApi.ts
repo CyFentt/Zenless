@@ -10,14 +10,20 @@ import type {
   Job,
   ModelCatalog,
   ModelInfo,
+  ProviderCapabilities,
+  ProviderDescriptor,
   ProviderId,
+  ReadinessStateInfo,
   Review,
   Settings,
   StudioNode,
   StudioState,
+  StudioStateSnapshot,
+  StorageInfo,
   TaskOptions,
   TestLog,
   TestState,
+  ToolDescriptor,
   ViewTile,
 } from "@/types";
 import { DEFAULT_TASK_OPTIONS } from "@/types";
@@ -42,6 +48,30 @@ import {
 const delay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 const uid = (prefix: string) => `${prefix}_${Math.random().toString(36).slice(2, 9)}`;
 const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v));
+const mockCapabilities: ProviderCapabilities = {
+  supportsText: true,
+  supportsReasoning: true,
+  reasoningLevels: ["standard"],
+  supportsSearch: true,
+  supportsFiles: true,
+  acceptedMimeTypes: ["text/plain"],
+  acceptedExtensions: [".txt"],
+  maxFiles: 5,
+  maxBytesPerFile: 33554432,
+  supportsImages: true,
+  supportsVision: true,
+  supportsAudio: false,
+  supportsArchives: false,
+  supportsCodeExecution: false,
+  supportsTools: true,
+  supportsImageGeneration: true,
+  supports3DGeneration: false,
+  supportsGeometry: false,
+  supportsTexture: false,
+  supportsDownload: true,
+  supportsCancel: true,
+  supportsStreaming: true,
+};
 
 export class MockZenlessAPI implements ZenlessAPI {
   private jobs: Job[] = clone(mockJobs);
@@ -60,6 +90,34 @@ export class MockZenlessAPI implements ZenlessAPI {
   private testState: TestState = { status: "IDLE", elapsedMs: 0, fixAttempt: 0, maxFixAttempts: 3 };
   private studioState: StudioState = "ONLINE";
   private conceptPrompt = "Industrial bomb device, dark metal, sci-fi";
+  private providers: ProviderDescriptor[] = [
+    {
+      providerId: "chatgpt",
+      displayName: "ChatGPT",
+      webUrl: "https://chatgpt.com",
+      support: "BETA",
+      adapter: "managed-browser",
+      roles: ["BUILDER", "VISUAL", "RESEARCH"],
+      modes: [{ id: "standard", label: "Standard", capabilities: mockCapabilities }],
+      enabled: true,
+      authState: "READY",
+      route: "managed",
+      selection: {},
+      liveCapabilities: mockCapabilities,
+    },
+  ];
+  private readiness: ReadinessStateInfo = {
+    state: "READY",
+    canRunProjectTasks: true,
+    steps: [{ id: "core", label: "Core", required: true, state: "READY" }],
+  };
+  private tools: ToolDescriptor[] = [];
+  private storage: StorageInfo = {
+    bytesUsed: 0,
+    budgetBytes: 10737418240,
+    withinBudget: true,
+    categories: [],
+  };
 
   async bootstrap() {
     await delay(400);
@@ -76,6 +134,14 @@ export class MockZenlessAPI implements ZenlessAPI {
   async getAgents() {
     await delay(80);
     return clone(this.agents);
+  }
+  async getProviders() {
+    await delay(50);
+    return clone(this.providers);
+  }
+  async getReadiness() {
+    await delay(50);
+    return clone(this.readiness);
   }
   async loginProvider(provider: ProviderId) {
     await delay(50);
@@ -124,7 +190,7 @@ export class MockZenlessAPI implements ZenlessAPI {
     await delay(60);
     return clone(this.messages.filter((message) => message.jobId === jobId));
   }
-  async getTimeline(jobId: string) {
+  async getTimeline(jobId: string, _signal?: AbortSignal) {
     await delay(60);
     return {
       jobId,
@@ -162,7 +228,7 @@ export class MockZenlessAPI implements ZenlessAPI {
     await delay(80);
     return { ok: true };
   }
-  async getContext(_jobId: string) {
+  async getContext(_jobId: string, _signal?: AbortSignal) {
     await delay(80);
     return clone(this.context);
   }
@@ -204,11 +270,11 @@ export class MockZenlessAPI implements ZenlessAPI {
     if (!item) throw new Error("Context item not found");
     return clone(item);
   }
-  async getChanges(_jobId: string) {
+  async getChanges(_jobId: string, _signal?: AbortSignal) {
     await delay(80);
     return clone(this.changes);
   }
-  async getReview(_jobId: string): Promise<Review> {
+  async getReview(_jobId: string, _signal?: AbortSignal): Promise<Review> {
     await delay(80);
     return {
       decision: "APPROVE",
@@ -235,7 +301,7 @@ export class MockZenlessAPI implements ZenlessAPI {
     await delay(100);
     return { ok: true };
   }
-  async getVisual(_jobId: string) {
+  async getVisual(_jobId: string, _signal?: AbortSignal) {
     await delay(80);
     return {
       views: clone(this.views),
@@ -264,13 +330,13 @@ export class MockZenlessAPI implements ZenlessAPI {
     );
     return { ok: true };
   }
-  async getModel(_jobId: string) {
+  async getModel(_jobId: string, _signal?: AbortSignal) {
     await delay(80);
     return clone(this.model);
   }
   async approveModel(_jobId: string) {
     await delay(80);
-    this.model = { ...this.model, state: "APPROVED" as const };
+    this.model = { ...this.model, approvalState: "APPROVED" as const };
     return { ok: true };
   }
   async regenerateGeometry(_jobId: string) {
@@ -287,9 +353,17 @@ export class MockZenlessAPI implements ZenlessAPI {
     await delay(80);
     return clone(this.assets);
   }
-  async getStudioState() {
+  async getStudioState(): Promise<StudioStateSnapshot> {
     await delay(50);
-    return { state: this.studioState };
+    return {
+      state: this.studioState,
+      readiness: this.studioState === "ONLINE" ? "PROJECT_READY" : "STUDIO_NOT_RUNNING",
+      selectedStudioId: this.studioState === "ONLINE" ? "mock-studio" : null,
+      studioId: this.studioState === "ONLINE" ? "mock-studio" : null,
+      projectName: this.studioState === "ONLINE" ? "Development Project" : null,
+      placeId: null,
+      universeId: null,
+    };
   }
   async getStudioTree() {
     await delay(80);
@@ -393,6 +467,14 @@ export class MockZenlessAPI implements ZenlessAPI {
     await delay(50);
     return clone(this.diagnostics);
   }
+  async getTools() {
+    await delay(50);
+    return clone(this.tools);
+  }
+  async getStorage() {
+    await delay(50);
+    return clone(this.storage);
+  }
 
   getMockMessages() {
     return this.messages;
@@ -402,6 +484,9 @@ export class MockZenlessAPI implements ZenlessAPI {
   }
   getMockTestState() {
     return this.testState;
+  }
+  getMockCurrentJobId() {
+    return this.jobs[0]?.id ?? "mock_job";
   }
   setMockTestState(s: TestState) {
     this.testState = s;

@@ -28,7 +28,7 @@ Readiness distinguishes core, bridge, browser, provider, storage, and Studio sta
 
 - `visualFirst` and `create3D`: `AUTO`, `ON`, or `OFF`; legacy booleans remain accepted.
 - `effort`: `AUTO`, `MINIMUM`, `MEDIUM`, or `MAXIMUM`.
-- `chatMode`: `PROJECT` or `TEMP`; temporary chat cannot enable Studio mutation or asset generation.
+- `chatMode`: `PROJECT` or `TEMP`; temporary chat starts without conversation handoff while retaining the same requested project workflow and safety gates.
 - Independent review is optional. Deterministic final verification remains required when it is disabled.
 
 ## Safety and privacy
@@ -84,6 +84,6 @@ Ruff, Pyright, pytest, frozen startup, installer execution, live providers, live
 - `zenless/storage.py`, `zenless/tool_manager.py`, and `zenless/uninstall.py`: local lifecycle controls.
 - `zenless/web_bridge.py`: authenticated REST, upload, asset, and WebSocket transport.
 
-See [ARCHITECTURE.md](ARCHITECTURE.md), [PROVIDER_ARCHITECTURE.md](PROVIDER_ARCHITECTURE.md), [QA_ARCHITECTURE.md](QA_ARCHITECTURE.md), [TOOLS_ARCHITECTURE.md](TOOLS_ARCHITECTURE.md), [INSTALLATION_ARCHITECTURE.md](INSTALLATION_ARCHITECTURE.md), and [BOLT_BACKEND_REQUIREMENTS.md](BOLT_BACKEND_REQUIREMENTS.md).
+See [ARCHITECTURE.md](ARCHITECTURE.md), [PROVIDER_ARCHITECTURE.md](PROVIDER_ARCHITECTURE.md), [QA_ARCHITECTURE.md](QA_ARCHITECTURE.md), [TOOLS_ARCHITECTURE.md](TOOLS_ARCHITECTURE.md), [INSTALLATION_ARCHITECTURE.md](INSTALLATION_ARCHITECTURE.md), and [BACKEND_REQUIREMENTS.md](BACKEND_REQUIREMENTS.md).
 
 Licensed under GPL-3.0.

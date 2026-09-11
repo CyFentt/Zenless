@@ -8,18 +8,19 @@ export function TopBar() {
   const agents = useStore((s) => s.agents);
   const socketStatus = useStore((s) => s.socketStatus);
   const studioState = useStore((s) => s.studioState);
-  const studioTree = useStore((s) => s.studioTree);
+  const projectIdentity = useStore((s) => s.projectIdentity);
 
   const currentJob = jobs.find((j) => j.id === currentJobId);
   const chatgpt = agents.find((a) => a.id === 'chatgpt');
 
-  // Resolve project name from root studio tree node if present
-  const rootNode = studioTree.length > 0 ? studioTree[0] : null;
-  const projectName = rootNode ? rootNode.name : null;
-  const displayProject =
-    studioState === 'ONLINE'
-      ? (projectName ? projectName.toUpperCase() : 'DETECTING PROJECT')
-      : 'NO PROJECT';
+  const projectName = projectIdentity?.name.trim();
+  const displayProject = projectName
+    ? projectName.toUpperCase()
+    : studioState === 'SELECT_REQUIRED'
+      ? 'SELECT PROJECT'
+      : studioState === 'CONNECTING' || studioState === 'SEARCHING' || studioState === 'ONLINE'
+        ? 'DETECTING PROJECT'
+        : 'NO PROJECT';
 
   const stageLabels: Record<string, string> = {
     COLLECTING_CONTEXT: 'CONTEXT',
@@ -56,7 +57,7 @@ export function TopBar() {
           </span>
         )}
         <span className="flex items-center gap-1.5">
-          <span className="text-ink-300">Studio</span>
+          <span className="text-ink-300">Roblox Studio</span>
           <StatusDot status={connections.studio} />
         </span>
         <span className="flex items-center gap-1.5">

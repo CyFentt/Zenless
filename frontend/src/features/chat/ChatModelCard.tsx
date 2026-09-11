@@ -1,5 +1,5 @@
 import { useState, lazy, Suspense } from 'react';
-import { Box, Check, RefreshCw, Eye } from 'lucide-react';
+import { Box, Check, RefreshCw, Eye, AlertTriangle } from 'lucide-react';
 import type { ChatArtifact, ModelInfo } from '@/types';
 
 const ModelViewer = lazy(() =>
@@ -9,52 +9,69 @@ const ModelViewer = lazy(() =>
 interface Props {
   artifact: ChatArtifact;
   modelInfo?: ModelInfo;
+  actionable?: boolean;
   onApproveModel: (jobId: string) => Promise<void>;
   onRegenerateGeometry: (jobId: string) => Promise<void>;
   onRegenerateTexture: (jobId: string) => Promise<void>;
   onOpenModelViewer: (jobId: string) => void;
 }
 
-export function ChatModelCard({ artifact, modelInfo, onApproveModel, onRegenerateGeometry, onRegenerateTexture, onOpenModelViewer }: Props) {
+export function ChatModelCard({ artifact, modelInfo, actionable = true, onApproveModel, onRegenerateGeometry, onRegenerateTexture, onOpenModelViewer }: Props) {
   const [acting, setActing] = useState(false);
   const [interactive3D, setInteractive3D] = useState(false);
+  const [actionError, setActionError] = useState('');
 
   const jobId = artifact.jobId ?? '';
   const modelUrl = artifact.modelUrl || modelInfo?.modelUrl;
 
   const handleApprove = async () => {
-    if (!jobId || acting) return;
+    if (!jobId || acting || !actionable) return;
     setActing(true);
+    setActionError('');
     try {
       await onApproveModel(jobId);
+    } catch (error) {
+      setActionError(error instanceof Error && error.message ? error.message : 'The model could not be approved.');
     } finally {
       setActing(false);
     }
   };
 
   const handleRegenGeo = async () => {
-    if (!jobId || acting) return;
+    if (!jobId || acting || !actionable) return;
     setActing(true);
+    setActionError('');
     try {
       await onRegenerateGeometry(jobId);
+    } catch (error) {
+      setActionError(error instanceof Error && error.message ? error.message : 'The model shape could not be regenerated.');
     } finally {
       setActing(false);
     }
   };
 
   const handleRegenTex = async () => {
-    if (!jobId || acting) return;
+    if (!jobId || acting || !actionable) return;
     setActing(true);
+    setActionError('');
     try {
       await onRegenerateTexture(jobId);
+    } catch (error) {
+      setActionError(error instanceof Error && error.message ? error.message : 'The model texture could not be regenerated.');
     } finally {
       setActing(false);
     }
   };
 
+  const statusDot = (status: ModelInfo['geometryStatus'] | undefined) => {
+    if (status === 'READY') return 'bg-zen-okBright';
+    if (status === 'FAILED') return 'bg-zen-errBright';
+    if (status === 'GENERATING') return 'bg-zen-warnBright animate-pulse';
+    return 'bg-ink-600';
+  };
+
   return (
     <div className="my-3 p-4 bg-ink-900/90 border border-ink-700 rounded font-mono text-2xs space-y-3 shadow-lg">
-      {/* Header */}
       <div className="flex items-center justify-between border-b border-ink-800 pb-2">
         <div className="flex items-center gap-2">
           <Box size={14} className="text-ink-200" />
@@ -73,23 +90,18 @@ export function ChatModelCard({ artifact, modelInfo, onApproveModel, onRegenerat
         </span>
       </div>
 
-      {/* Geometry & Texture Status */}
       <div className="flex items-center justify-between px-3 py-2 bg-ink-950 rounded border border-ink-800">
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-1.5">
             <span className="text-ink-400">SHAPE</span>
             <span
-              className={`w-2 h-2 rounded-full ${
-                modelInfo?.geometryStatus === 'READY' ? 'bg-zen-okBright' : 'bg-zen-warnBright animate-pulse'
-              }`}
+              className={`w-2 h-2 rounded-full ${statusDot(modelInfo?.geometryStatus)}`}
             />
           </div>
           <div className="flex items-center gap-1.5">
             <span className="text-ink-400">TEXTURE</span>
             <span
-              className={`w-2 h-2 rounded-full ${
-                modelInfo?.textureStatus === 'READY' ? 'bg-zen-okBright' : 'bg-zen-warnBright animate-pulse'
-              }`}
+              className={`w-2 h-2 rounded-full ${statusDot(modelInfo?.textureStatus)}`}
             />
           </div>
         </div>
@@ -103,7 +115,6 @@ export function ChatModelCard({ artifact, modelInfo, onApproveModel, onRegenerat
         </button>
       </div>
 
-      {/* Lazy Interactive 3D Preview */}
       {interactive3D && (
         <div className="h-56 bg-ink-950 rounded border border-ink-800 relative overflow-hidden">
           {modelUrl ? (
@@ -118,10 +129,16 @@ export function ChatModelCard({ artifact, modelInfo, onApproveModel, onRegenerat
         </div>
       )}
 
-      {/* Action Bar */}
+      {actionError && (
+        <div role="alert" className="flex items-center gap-2 px-2.5 py-2 bg-zen-err/10 border border-zen-err/30 rounded text-zen-errBright">
+          <AlertTriangle size={12} />
+          <span>{actionError}</span>
+        </div>
+      )}
+
       <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
         <div className="flex items-center gap-2">
-          {artifact.state !== 'APPROVED' && (
+          {actionable && artifact.state !== 'APPROVED' && (
             <button
               onClick={handleApprove}
               disabled={acting || !jobId}
@@ -132,23 +149,26 @@ export function ChatModelCard({ artifact, modelInfo, onApproveModel, onRegenerat
             </button>
           )}
 
-          <button
-            onClick={handleRegenGeo}
-            disabled={acting || !jobId}
-            className="flex items-center gap-1 px-2.5 py-1.5 bg-ink-800 text-ink-100 border border-ink-700 rounded uppercase hover:bg-ink-700 transition-colors disabled:opacity-50"
-          >
-            <RefreshCw size={11} />
-            SHAPE
-          </button>
-
-          <button
-            onClick={handleRegenTex}
-            disabled={acting || !jobId}
-            className="flex items-center gap-1 px-2.5 py-1.5 bg-ink-800 text-ink-100 border border-ink-700 rounded uppercase hover:bg-ink-700 transition-colors disabled:opacity-50"
-          >
-            <RefreshCw size={11} />
-            TEXTURE
-          </button>
+          {actionable && (
+            <>
+              <button
+                onClick={handleRegenGeo}
+                disabled={acting || !jobId}
+                className="flex items-center gap-1 px-2.5 py-1.5 bg-ink-800 text-ink-100 border border-ink-700 rounded uppercase hover:bg-ink-700 transition-colors disabled:opacity-50"
+              >
+                <RefreshCw size={11} />
+                SHAPE
+              </button>
+              <button
+                onClick={handleRegenTex}
+                disabled={acting || !jobId}
+                className="flex items-center gap-1 px-2.5 py-1.5 bg-ink-800 text-ink-100 border border-ink-700 rounded uppercase hover:bg-ink-700 transition-colors disabled:opacity-50"
+              >
+                <RefreshCw size={11} />
+                TEXTURE
+              </button>
+            </>
+          )}
         </div>
 
         <button

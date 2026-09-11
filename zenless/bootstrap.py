@@ -103,22 +103,25 @@ class NativeSplash:
         with self._lock:
             self._stage = text[:180]
             hwnd = self._hwnd
-        if hwnd and hasattr(ctypes, "windll"):
-            ctypes.windll.user32.PostMessageW(hwnd, self._WM_REDRAW, 0, 0) # type: ignore[attr-defined]
+        windll = getattr(ctypes, "windll", None)
+        if hwnd and windll is not None:
+            windll.user32.PostMessageW(hwnd, self._WM_REDRAW, 0, 0)
 
     def close(self) -> None:
         with self._lock:
             hwnd = self._hwnd
-        if hwnd and hasattr(ctypes, "windll"):
-            ctypes.windll.user32.PostMessageW(hwnd, self._WM_CLOSE_SPLASH, 0, 0) # type: ignore[attr-defined]
+        windll = getattr(ctypes, "windll", None)
+        if hwnd and windll is not None:
+            windll.user32.PostMessageW(hwnd, self._WM_CLOSE_SPLASH, 0, 0)
         self._closed.wait(2.0)
 
     def _run(self) -> None:
-        if not hasattr(ctypes, "windll"):
+        windll = getattr(ctypes, "windll", None)
+        if windll is None:
             return
-        user32 = ctypes.windll.user32 # type: ignore[attr-defined]
-        gdi32 = ctypes.windll.gdi32 # type: ignore[attr-defined]
-        kernel32 = ctypes.windll.kernel32 # type: ignore[attr-defined]
+        user32 = windll.user32
+        gdi32 = windll.gdi32
+        kernel32 = windll.kernel32
         lresult = ctypes.c_ssize_t
         user32.CreateWindowExW.argtypes = [
             wintypes.DWORD,

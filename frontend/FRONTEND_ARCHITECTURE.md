@@ -11,7 +11,7 @@ React UI ↔ ZenlessAPI / ZenlessSocket ↔ Python LocalWebBridge ↔ Zenless Co
 ## Stack
 
 - React 18 + TypeScript strict
-- Vite 5
+- Vite 8
 - Tailwind CSS
 - Zustand
 - Three.js / React Three Fiber / Drei (lazy 3D)
@@ -121,6 +121,8 @@ Event-to-store mapping lives in `src/store/eventHandler.ts`.
 Zustand stores UI-relevant current state only: boot, navigation, socket, connections, agents, jobs/current job, chat/stream, context, changes, visual/model/assets, Studio, tests, settings and diagnostics.
 
 No production `job_004` fallback exists in feature components. Mock IDs belong only to mock/test data.
+
+`ApplicationRuntime` owns the application-lifetime socket and authoritative hydration. Selecting a job aborts stale requests, hydrates every job-scoped projection, and commits results only when the selection generation still matches. WebSocket deltas are filtered by `jobId`, and reconnect performs a fresh authoritative hydration without duplicating listeners.
 
 ## Six View
 

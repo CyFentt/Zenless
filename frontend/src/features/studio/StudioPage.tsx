@@ -18,7 +18,8 @@ export function StudioPage() {
   const setStudioQuery = useStore((s) => s.setStudioQuery);
   const currentJobId = useStore((s) => s.currentJobId);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const [searchResults, setSearchResults] = useState<StudioNode[] | null>(null);
+  const [searchResult, setSearchResult] = useState<{ query: string; nodes: StudioNode[] } | null>(null);
+  const normalizedQuery = studioQuery.trim();
 
   useEffect(() => {
     Promise.all([getApi().getStudioState(), getApi().getStudioTree()])
@@ -27,14 +28,17 @@ export function StudioPage() {
   }, [setStudioTree, setStudioState]);
 
   useEffect(() => {
-    if (!studioQuery.trim()) { setSearchResults(null); return; }
+    if (!normalizedQuery) return;
+    const query = normalizedQuery;
     const timer = window.setTimeout(() => {
-      getApi().searchStudio(studioQuery)
-        .then(setSearchResults)
+      getApi().searchStudio(query)
+        .then((nodes) => setSearchResult({ query, nodes }))
         .catch((error) => frontendDiagnostics.capture(error, 'studio', 'Studio search failed'));
     }, 200);
     return () => window.clearTimeout(timer);
-  }, [studioQuery]);
+  }, [normalizedQuery]);
+
+  const searchResults = searchResult?.query === normalizedQuery ? searchResult.nodes : null;
 
   const toggleNode = (id: string) => {
     setExpanded((prev) => {
@@ -124,7 +128,8 @@ export function StudioPage() {
           </div>
         </div>
         <div className="flex-1 overflow-y-auto scrollbar-zen">
-          {searchResults ? (
+          {normalizedQuery ? (
+            searchResults ? (
             searchResults.length === 0 ? <div className="px-3 py-4 text-center text-2xs text-ink-400 uppercase">No results</div> : searchResults.map((node) => (
               <button key={node.id} onClick={() => void handleInspect(node)} className="flex items-center w-full h-7 px-2 hover:bg-ink-850 transition-colors text-left">
                 <FileCode2 size={12} className="text-ink-100 shrink-0" />
@@ -132,6 +137,7 @@ export function StudioPage() {
                 <span className="text-2xs text-ink-400 ml-auto font-mono truncate">{node.path}</span>
               </button>
             ))
+            ) : <div className="px-3 py-4 text-center text-2xs text-ink-400 uppercase">Searching</div>
           ) : renderTree(studioTree)}
         </div>
       </div>

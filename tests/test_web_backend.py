@@ -35,6 +35,8 @@ class _FakeCore:
         self.created = 0
         self.chats = 0
         self.last_chat_options: dict[str, Any] | None = None
+        self.asset_path = root / "asset.png"
+        self.asset_path.write_bytes(b"image")
 
     def set_runtime_port(self, port: int) -> None:
         self.runtime_port = port
@@ -59,6 +61,11 @@ class _FakeCore:
         self.chats += 1
         self.last_chat_options = options
         return {"jobId": job_id or f"chat-{self.chats}", "content": content}
+
+    def asset_file(self, asset_id: str) -> tuple[Path, str, str]:
+        if asset_id != "test-asset":
+            raise AssertionError("Unexpected asset identifier")
+        return self.asset_path, "image/png", self.asset_path.name
 
     def __getattr__(self, _name: str) -> Any:
         return lambda *_args, **_kwargs: []
@@ -116,10 +123,24 @@ class WebBackendTests(unittest.TestCase):
             bridge = LocalWebBridge(core=core, frontend_root=frontend)
             base = bridge.start()
             try:
-                session = self._request(base + "/api/session")
+                with urlopen(Request(base + "/api/session"), timeout=5) as response:
+                    session = json.loads(response.read())
+                    cookie = str(response.headers.get("Set-Cookie")).split(";", 1)[0]
                 token = str(session["token"])
                 headers = {"X-Zenless-Token": token, "Origin": base}
                 self.assertTrue(self._request(base + "/api/status", headers=headers)["ready"])
+
+                asset_request = Request(
+                    base + "/api/assets/test-asset/content",
+                    headers={"Cookie": cookie, "Origin": base},
+                )
+                with urlopen(asset_request, timeout=5) as response:
+                    self.assertEqual(response.read(), b"image")
+                    self.assertEqual(response.headers.get_content_type(), "image/png")
+
+                with self.assertRaises(HTTPError) as asset_unauthorized:
+                    urlopen(Request(base + "/api/assets/test-asset/content"), timeout=5)
+                self.assertEqual(asset_unauthorized.exception.code, 401)
 
                 with self.assertRaises(HTTPError) as unauthorized:
                     self._request(base + "/api/status", headers={"X-Zenless-Token": "wrong"})

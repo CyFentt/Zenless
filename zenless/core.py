@@ -20,7 +20,13 @@ from .managed_browser import ManagedBrowserController
 from .models import PipelineEvent, Stage, TaskOptions
 from .orchestrator import OrchestratorError, ZenlessOrchestrator
 from .policy import is_read_only
-from .provider_registry import BUILTIN_MANIFESTS, AuthState, ProviderRegistry, normalize_capabilities
+from .provider_registry import (
+    BUILTIN_MANIFESTS,
+    AuthState,
+    ProviderRegistry,
+    normalize_capabilities,
+    resolve_provider_roles,
+)
 from .provisioning import ProvisioningError, ensure_webview2
 from .qa_breaker import QABreaker
 from .storage import StorageManager
@@ -35,12 +41,12 @@ from .webview2_browser import WebView2BrowserController
 PROVIDER_LABELS = {
     "chatgpt": "ChatGPT",
     "deepseek": "DeepSeek",
-    "hunyuan": "Hunyuan 3D",
+    "hunyuan": "Hunyuan",
 }
 PROVIDER_ROLES = {
     "chatgpt": ("BUILDER", "VISUAL", "RESEARCH"),
     "deepseek": ("REVIEWER",),
-    "hunyuan": ("3D",),
+    "hunyuan": ("THREED",),
 }
 
 
@@ -131,6 +137,7 @@ class ZenlessCore:
         self.system_diagnostics = SystemDiagnostics(self.data_root)
         self._closing = threading.Event()
         self._startup_thread: threading.Thread | None = None
+        self._provider_probe_thread: threading.Thread | None = None
         self._provider_threads: dict[str, threading.Thread] = {}
         self._provider_lock = threading.Lock()
         self._activities: dict[str, dict[str, Any]] = {}
@@ -228,6 +235,9 @@ class ZenlessCore:
         for thread in threads:
             if thread is not threading.current_thread():
                 thread.join(timeout=1.0)
+        provider_probe = self._provider_probe_thread
+        if provider_probe is not None and provider_probe is not threading.current_thread():
+            provider_probe.join(timeout=1.0)
         self.store.maintenance()
         self._diagnostic_unsubscribe()
         if self._owns_diagnostics:
@@ -371,7 +381,7 @@ class ZenlessCore:
             {key: value for key, value in previous.items() if key != "checkedAt"} if previous else None
         )
         if previous_comparable != comparable:
-            self.events.publish("READINESS_CHANGED", result)
+            self.events.publish("READINESS_CHANGED", {"readiness": result})
         return json.loads(json.dumps(result))
 
     def connections(self) -> dict[str, str]:
@@ -481,13 +491,19 @@ class ZenlessCore:
         except KeyError as exc:
             raise CoreError("PROVIDER_NOT_FOUND", "Provider not found.", status=404) from exc
         normalized = role.strip().upper()
-        if not manifest.enabled or normalized not in {"BUILDER", "REVIEWER", "VISUAL", "RESEARCH", "3D"}:
+        if normalized == "3D":
+            normalized = "THREED"
+        if not manifest.enabled or normalized not in {"BUILDER", "REVIEWER", "VISUAL", "RESEARCH", "THREED"}:
             raise CoreError("INVALID_PROVIDER_ROLE", "Invalid provider role assignment.")
         bindings = self.store.get_setting("provider.roles", {})
         bindings = dict(bindings) if isinstance(bindings, dict) else {}
         for key, roles in tuple(bindings.items()):
             values = roles if isinstance(roles, list) else []
-            bindings[key] = [item for item in values if str(item).upper() != normalized]
+            bindings[key] = [
+                item
+                for item in values
+                if ("THREED" if str(item).upper() == "3D" else str(item).upper()) != normalized
+            ]
         current = bindings.get(provider_id)
         values = current if isinstance(current, list) else []
         bindings[provider_id] = list(dict.fromkeys([*values, normalized]))
@@ -547,7 +563,7 @@ class ZenlessCore:
                 "version": models["hunyuan"]["version"],
                 "quality": models["hunyuan"]["quality"],
             },
-            {"id": "studio", "name": "Studio", "status": connections["studio"]},
+            {"id": "studio", "name": "Roblox Studio", "status": connections["studio"]},
         ]
 
     def login_provider(self, provider: str) -> bool:
@@ -665,11 +681,11 @@ class ZenlessCore:
     def _preflight_providers(self, options: TaskOptions) -> dict[str, str]:
         roles = self._resolved_role_providers()
         required = [roles["BUILDER"]]
-        if options.chat_mode != "TEMP" and options.independent_review:
+        if options.independent_review:
             required.append(roles["REVIEWER"])
-        if options.chat_mode != "TEMP" and (options.visual_first or options.create_3d_asset):
+        if options.visual_first or options.create_3d_asset:
             required.append(roles["VISUAL"])
-        if options.chat_mode != "TEMP" and options.create_3d_asset:
+        if options.create_3d_asset:
             required.append(roles["3D"])
         for provider in dict.fromkeys(required):
             if self.connections()[provider] == "READY":
@@ -698,38 +714,21 @@ class ZenlessCore:
         return roles
 
     def _resolved_role_providers(self) -> dict[str, str]:
-        resolved = {
-            "BUILDER": "chatgpt",
-            "REVIEWER": "deepseek",
-            "VISUAL": "chatgpt",
-            "RESEARCH": "chatgpt",
-            "3D": "hunyuan",
-        }
         store = getattr(self, "store", None)
-        if store is None:
-            return resolved
-        configured = store.get_setting("provider.roles", {})
-        if not isinstance(configured, dict):
-            return resolved
-        for provider, roles in configured.items():
-            if provider not in PROVIDER_ROLES or not isinstance(roles, list):
-                continue
-            for role in roles:
-                normalized = str(role).strip().upper()
-                if normalized in resolved:
-                    resolved[normalized] = provider
-        return resolved
+        return resolve_provider_roles(store.get_setting("provider.roles", {}) if store else None)
 
     def timeline(self, job_id: str) -> dict[str, Any]:
         self._require_task(job_id)
         messages = self.messages(job_id)
         activities = self.store.list_activities(job_id)
         artifacts = self.store.list_artifacts(job_id)
-        latest_run = self.store.latest_test_run(job_id)
-        test_data = {"testState": self.test_state(job_id), "cases": [], "failures": []}
-        if latest_run:
-            run_id = str(latest_run["id"])
-            test_data["cases"] = self.store.test_cases(run_id) if hasattr(self.store, "test_cases") else []
+        snapshot = self.store.test_snapshot(job_id)
+        test_data = {
+            "testState": self.test_state(job_id),
+            "cases": snapshot["cases"],
+            "failures": snapshot["failures"],
+            "logs": snapshot["logs"],
+        }
         return {
             "jobId": job_id,
             "messages": messages,
@@ -799,7 +798,8 @@ class ZenlessCore:
             raise CoreError("CONTEXT_NOT_FOUND", "Context item not found.", status=404)
         item = self.store.context_item(item_id)
         if item:
-            self.events.publish("CONTEXT_UPDATED", {"items": self.context(str(item["job_id"]))})
+            job_id = str(item["job_id"])
+            self.events.publish("CONTEXT_UPDATED", {"jobId": job_id, "items": self.context(job_id)})
         return True
 
     def changes(self, job_id: str) -> list[dict[str, Any]]:
@@ -861,6 +861,7 @@ class ZenlessCore:
         decision = "approve" if approved else "reject"
         if not self.orchestrator.approve_active(job_id, ("changes:", "repair:"), decision, note):
             raise CoreError("NO_CHANGE_GATE", "No change is waiting for a decision.", status=409)
+        self._transition_latest_artifact(job_id, "DIFF", "APPROVED" if approved else "REJECTED")
         return True
 
     def edit_changes(self, job_id: str, _file_id: str, content: str) -> bool:
@@ -868,6 +869,7 @@ class ZenlessCore:
             raise CoreError("EMPTY_EDIT", "The edit note is empty.")
         if not self.orchestrator.approve_active(job_id, ("changes:", "repair:"), "edit", content):
             raise CoreError("NO_CHANGE_GATE", "No change is waiting for an edit.", status=409)
+        self._transition_latest_artifact(job_id, "DIFF", "REJECTED")
         return True
 
     def visual(self, job_id: str) -> dict[str, Any]:
@@ -875,6 +877,8 @@ class ZenlessCore:
         context = task.get("context") or {}
         raw_visual = context.get("visual") if isinstance(context, dict) else None
         visual: dict[str, Any] = raw_visual if isinstance(raw_visual, dict) else {}
+        approved = str(visual.get("status") or "").upper() == "APPROVED"
+        failed = str(visual.get("status") or "").upper() == "FAILED"
         views = []
         for name in ("FRONT", "BACK", "LEFT", "RIGHT", "TOP", "BOTTOM"):
             entry = visual.get(name.casefold(), {}) if isinstance(visual, dict) else {}
@@ -882,7 +886,8 @@ class ZenlessCore:
             views.append(
                 {
                     "name": name,
-                    "state": "READY" if asset_id else "EMPTY",
+                    "state": "FAILED" if failed else (("APPROVED" if approved else "READY") if asset_id else "EMPTY"),
+                    **({"assetId": asset_id} if asset_id else {}),
                     **({"imageUrl": f"/api/assets/{asset_id}/content"} if asset_id else {}),
                 }
             )
@@ -913,11 +918,17 @@ class ZenlessCore:
     def approve_visual(self, job_id: str) -> bool:
         if not self.orchestrator.approve_active(job_id, ("visual",), "approve"):
             raise CoreError("NO_VISUAL_GATE", "No visual concept is waiting for approval.", status=409)
+        task = self._require_task(job_id)
+        raw_context = task.get("context")
+        context: dict[str, Any] = raw_context if isinstance(raw_context, dict) else {}
+        raw_visual = context.get("visual")
+        visual: dict[str, Any] = raw_visual if isinstance(raw_visual, dict) else {}
+        self.store.update_context_section(job_id, "visual", {**visual, "status": "APPROVED"})
         views = ["FRONT", "BACK", "LEFT", "RIGHT", "TOP", "BOTTOM"]
-        self.events.publish("VISUAL_APPROVED", {"jobId": job_id, "views": views})
+        concept_version = max(0, int(visual.get("version") or 0))
         self.events.publish(
-            "VISUAL_CONCEPT_APPROVED",
-            {"jobId": job_id, "views": views},
+            "VISUAL_APPROVED",
+            {"jobId": job_id, "views": views, "conceptVersion": concept_version},
         )
         self._publish_visual_artifact(job_id, state="APPROVED")
         return True
@@ -927,6 +938,7 @@ class ZenlessCore:
             raise CoreError("EMPTY_VISUAL_EDIT", "Describe the requested visual adjustment.")
         if not self.orchestrator.approve_active(job_id, ("visual",), "edit", prompt):
             raise CoreError("NO_VISUAL_GATE", "No visual concept is waiting for an edit.", status=409)
+        self._transition_latest_artifact(job_id, "IMAGE", "REJECTED")
         return True
 
     def regenerate_visual(self, job_id: str, view: str = "") -> bool:
@@ -936,6 +948,7 @@ class ZenlessCore:
         note = f"regen:view:{normalized}" if normalized else "regen:all"
         if not self.orchestrator.approve_active(job_id, ("visual",), "edit", note):
             raise CoreError("NO_VISUAL_GATE", "No visual concept is waiting for regeneration.", status=409)
+        self._transition_latest_artifact(job_id, "IMAGE", "REJECTED")
         return True
 
     def model(self, job_id: str) -> dict[str, Any]:
@@ -944,16 +957,22 @@ class ZenlessCore:
         raw_model = context.get("model") if isinstance(context, dict) else None
         model: dict[str, Any] = raw_model if isinstance(raw_model, dict) else {}
         stage = str(task.get("stage", ""))
+        artifacts = [item for item in self.store.list_artifacts(job_id) if item["type"] == "MODEL_3D"]
+        latest = artifacts[-1] if artifacts else {}
+        artifact_state = str(latest.get("state") or "")
         final_asset_id = str(model.get("asset_id") or "")
+        if not final_asset_id and artifact_state in {"READY", "APPROVED"}:
+            final_asset_id = str((latest.get("metadata") or {}).get("assetId") or "")
         asset = self.store.asset(final_asset_id) if final_asset_id else None
-        if asset is None:
-            assets = [candidate for candidate in self.store.assets(job_id) if candidate["kind"] in {"GLB", "GLTF"}]
-            asset = assets[0] if assets else None
-        if asset is None:
+        if asset is None or artifact_state in {"GENERATING", "FAILED"}:
             state = (
                 "GENERATING"
-                if stage == Stage.GENERATING_3D.value
-                else ("FAILED" if stage in {Stage.FAILED.value, Stage.BLOCKED.value} else "IDLE")
+                if artifact_state == "GENERATING" or stage == Stage.GENERATING_3D.value
+                else (
+                    "FAILED"
+                    if artifact_state == "FAILED" or stage in {Stage.FAILED.value, Stage.BLOCKED.value}
+                    else "IDLE"
+                )
             )
             return {
                 "state": state,
@@ -975,7 +994,17 @@ class ZenlessCore:
     def approve_model(self, job_id: str) -> bool:
         if not self.orchestrator.approve_active(job_id, ("3d",), "approve"):
             raise CoreError("NO_MODEL_GATE", "No 3D model is waiting for approval.", status=409)
-        self.events.publish("MODEL_APPROVED", {})
+        task = self._require_task(job_id)
+        raw_context = task.get("context")
+        context: dict[str, Any] = raw_context if isinstance(raw_context, dict) else {}
+        raw_model = context.get("model")
+        model: dict[str, Any] = raw_model if isinstance(raw_model, dict) else {}
+        self.store.update_context_section(job_id, "model", {**model, "status": "APPROVED"})
+        self.events.publish("MODEL_APPROVED", {"jobId": job_id})
+        artifacts = [item for item in self.store.list_artifacts(job_id) if item["type"] == "MODEL_3D"]
+        if artifacts:
+            latest = artifacts[-1]
+            self._publish_artifact({**latest, "state": "APPROVED"})
         return True
 
     def regenerate_model(self, job_id: str, target: str) -> bool:
@@ -984,10 +1013,14 @@ class ZenlessCore:
         provider = self._resolved_role_providers()["3D"]
         if not self.bridge.wait_for_provider(provider, timeout=0.5):
             raise CoreError(
-                "PROVIDER_LOGIN_REQUIRED", "3D Generator requires login.", status=409, details={"provider": provider}
+                "PROVIDER_LOGIN_REQUIRED",
+                f"{PROVIDER_LABELS[provider]} requires login for 3D generation.",
+                status=409,
+                details={"provider": provider},
             )
         if not self.orchestrator.approve_active(job_id, ("3d",), "edit", f"regen:{target}"):
             raise CoreError("NO_MODEL_GATE", "No 3D model is waiting for regeneration.", status=409)
+        self._transition_latest_artifact(job_id, "MODEL_3D", "REJECTED")
         return True
 
     def assets(self) -> list[dict[str, Any]]:
@@ -1018,12 +1051,22 @@ class ZenlessCore:
 
     def studio_state(self) -> dict[str, Any]:
         selection = self.studio_discovery.selection
+        selected = selection.selected if selection else None
+        raw = selected.raw if selected else {}
         return {
             "state": "ONLINE"
             if self.connections()["studio"] == "READY"
             else ("CONNECTING" if self.connections()["studio"] == "CONNECTING" else "OFFLINE"),
             "readiness": selection.state.value if selection else "STUDIO_NOT_RUNNING",
-            "selectedStudioId": selection.selected.studio_id if selection and selection.selected else None,
+            "selectedStudioId": selected.studio_id if selected else None,
+            "studioId": selected.studio_id if selected else None,
+            "projectName": (
+                raw.get("project") or raw.get("name") or raw.get("place_name") or raw.get("placeName")
+                if selected
+                else None
+            ),
+            "placeId": raw.get("place_id") or raw.get("placeId") if selected else None,
+            "universeId": raw.get("universe_id") or raw.get("universeId") if selected else None,
         }
 
     def studios(self, *, refresh: bool = False) -> dict[str, Any]:
@@ -1087,7 +1130,7 @@ class ZenlessCore:
                 self._studio_tree = tree
                 self._studio_nodes = nodes
             self._set_connection("studio", "READY")
-            self.events.publish("STUDIO_STATE_CHANGED", {"state": "ONLINE"})
+            self.events.publish("STUDIO_STATE_CHANGED", self.studio_state())
             if selection is None:
                 raise MCPError("Studio selection became unavailable during refresh.")
             self.events.publish("STUDIO_DISCOVERY_CHANGED", selection.public())
@@ -1157,12 +1200,19 @@ class ZenlessCore:
         else:
             status = "STOPPED"
         options = task.get("options") or {}
-        return {
+        result = {
             "status": status,
             "elapsedMs": int((latest or {}).get("summary", {}).get("durationMs", 0)),
             "fixAttempt": 0,
             "maxFixAttempts": int(options.get("max_test_fixes", 3)),
         }
+        if latest and str(latest["status"]) in self.store.FINAL_TEST_STATUSES:
+            counts = self.store.test_case_counts(str(latest["id"]))
+            result["resultStatus"] = str(latest["status"])
+            result["counts"] = {
+                key: counts[key] for key in ("total", "passed", "failed", "skipped")
+            }
+        return result
 
     def storage_status(self) -> dict[str, Any]:
         usage = self.storage.usage()
@@ -1202,8 +1252,9 @@ class ZenlessCore:
             protected.extend(Path(str(asset["path"])) for asset in self.store.assets(active))
         result = self.storage.cleanup_to_budget(protected_paths=tuple(protected))
         payload = result.public()
-        self.events.publish("STORAGE_CLEANUP_COMPLETED", payload)
-        return {**payload, "storage": self.storage_status()}
+        response = {**payload, "storage": self.storage_status()}
+        self.events.publish("STORAGE_CLEANUP_COMPLETED", response)
+        return response
 
     def update_storage_settings(self, patch: dict[str, Any]) -> dict[str, Any]:
         raw = patch.get("budgetBytes")
@@ -1362,7 +1413,8 @@ class ZenlessCore:
             recovered = self.store.recover_interrupted_tasks()
             self._set_boot("STATE", "READY")
             for item in recovered:
-                self.events.publish("JOB_UPDATED", {"job": self.job(str(item["id"]))})
+                job_id = str(item["id"])
+                self.events.publish("JOB_UPDATED", {"jobId": job_id, "job": self.job(job_id)})
                 self.diagnostics.report(
                     severity="WARNING",
                     source="state",
@@ -1388,6 +1440,13 @@ class ZenlessCore:
                 "The embedded browser remains available; the managed browser will be prepared during login if needed.",
             )
         self._refresh_provider_states()
+        if not self._closing.is_set():
+            self._provider_probe_thread = threading.Thread(
+                target=self._probe_provider_sessions,
+                name="Zenless-Provider-Probe",
+                daemon=True,
+            )
+            self._provider_probe_thread.start()
         try:
             self.refresh_studio()
             self._set_boot("STUDIO", "READY")
@@ -1444,6 +1503,30 @@ class ZenlessCore:
             any_ready = any_ready or normalized == "READY"
         self._set_boot("AI", "READY" if any_ready else "OFF")
 
+    def _probe_provider_sessions(self) -> None:
+        any_ready = False
+        for provider in ("chatgpt", "deepseek", "hunyuan"):
+            if self._closing.is_set():
+                return
+            try:
+                ready = self.bridge.wait_for_provider(provider, timeout=45)
+            except Exception as exc:
+                self._report("browser", f"session-probe:{provider}", exc, "Use Login to authenticate the provider.")
+                ready = False
+            if ready:
+                any_ready = True
+                self._set_connection(provider, "READY")
+                self.events.publish("AGENT_STATUS_CHANGED", {"agent": provider, "status": "READY"})
+                self.events.publish(
+                    "LOGIN_READY",
+                    {"providerId": provider, "route": self.bridge.selected_route(provider), "persistent": True},
+                )
+            else:
+                self._set_connection(provider, "LOGIN")
+                self.events.publish("AGENT_STATUS_CHANGED", {"agent": provider, "status": "LOGIN"})
+                self.events.publish("LOGIN_REQUIRED", {"providerId": provider})
+        self._set_boot("AI", "READY" if any_ready else "OFF")
+
     def _on_provider_status(self, provider: str, state: str, _detail: str) -> None:
         if provider in {"chatgpt", "deepseek", "hunyuan"}:
             normalized = self._normalize_connection(state)
@@ -1472,98 +1555,116 @@ class ZenlessCore:
             job = self.job(event.task_id)
         except CoreError:
             return
-        self._publish_activity(event, job)
         if event.stage == Stage.NEW:
-            self.events.publish("JOB_CREATED", {"job": job})
+            self.events.publish("JOB_CREATED", {"jobId": event.task_id, "job": job})
         else:
-            self.events.publish("JOB_UPDATED", {"job": job})
+            self.events.publish("JOB_UPDATED", {"jobId": event.task_id, "job": job})
         self.events.publish(
             "PIPELINE_STATE_CHANGED",
             {"jobId": event.task_id, "stage": event.stage.value},
         )
+        self._record_activity(event, job)
 
-        phase_map: dict[Stage, str] = {
-            Stage.COLLECTING_CONTEXT: "CONTEXT",
-            Stage.PLANNING: "PLAN",
-            Stage.GENERATING_CONCEPT: "CONCEPT",
-            Stage.WAITING_IMAGE_APPROVAL: "CONCEPT",
-            Stage.GENERATING_3D: "THREED",
-            Stage.WAITING_3D_APPROVAL: "THREED",
-            Stage.BUILDING: "BUILD",
-            Stage.REVIEWING: "REVIEW",
-            Stage.REVISING: "REVIEW",
-            Stage.WAITING_CHANGE_APPROVAL: "REVIEW",
-            Stage.APPLYING: "APPLY",
-            Stage.TESTING: "TEST",
-            Stage.FIXING: "BUILD",
-            Stage.FINAL_REVIEW: "FINAL",
-            Stage.COMPLETE: "FINAL",
-            Stage.FAILED: "FINAL",
-            Stage.BLOCKED: "FINAL",
-        }
-        phase = phase_map.get(event.stage, "PLAN")
-        act_status = "DONE" if event.stage in {Stage.COMPLETE, Stage.WAITING_CHANGE_APPROVAL, Stage.WAITING_IMAGE_APPROVAL, Stage.WAITING_3D_APPROVAL} else ("FAILED" if event.stage in {Stage.FAILED, Stage.BLOCKED} else "RUNNING")
-        activity_id = f"act_{event.task_id[:10]}_{phase.lower()}"
-        activity = self.store.upsert_activity(
-            activity_id=activity_id,
-            job_id=event.task_id,
-            phase=phase,
-            status=act_status,
-            title=event.message or f"Executing {phase}",
-            detail=event.detail,
-        )
-        self.events.publish("CHAT_ACTIVITY", {"activity": activity})
+        if event.kind == "visual_generation":
+            version = self._event_version(event, self._next_artifact_version(event.task_id, "IMAGE"))
+            self._publish_visual_generation(event.task_id, version)
+            return
+        if event.kind == "visual_ready":
+            self._publish_visual_ready(event)
+            return
+        if event.kind == "model_generation":
+            version = self._event_version(event, self._next_artifact_version(event.task_id, "MODEL_3D"))
+            self._publish_model_generation(event.task_id, version)
+            return
+        if event.kind == "model_geometry_ready":
+            self.events.publish(
+                "MODEL_GENERATION_CHANGED",
+                {"jobId": event.task_id, "target": "geometry", "state": "READY"},
+            )
+            self.events.publish(
+                "MODEL_GENERATION_CHANGED",
+                {"jobId": event.task_id, "target": "texture", "state": "GENERATING"},
+            )
+            return
+        if event.kind == "model_texture_generation":
+            self.events.publish(
+                "MODEL_GENERATION_CHANGED",
+                {"jobId": event.task_id, "target": "texture", "state": "GENERATING"},
+            )
+            return
+        if event.kind == "diff_generation":
+            revision = self._next_artifact_version(event.task_id, "DIFF")
+            self._publish_artifact(
+                {
+                    "id": f"artifact-diff-{event.task_id}-r{revision}",
+                    "jobId": event.task_id,
+                    "type": "DIFF",
+                    "name": "Code changes",
+                    "state": "GENERATING",
+                    "version": revision,
+                    "revision": revision,
+                }
+            )
+            return
 
         if event.stage == Stage.WAITING_CHANGE_APPROVAL:
-            self.events.publish("CHANGES_UPDATED", {"files": self.changes(event.task_id)})
+            files = self.changes(event.task_id)
+            self.events.publish("CHANGES_UPDATED", {"jobId": event.task_id, "files": files})
             rev = self.review(event.task_id)
-            self.events.publish("REVIEW_READY", {"review": rev})
-            diff_art = self.store.upsert_artifact(
-                artifact_id=f"art_diff_{event.task_id[:10]}",
-                job_id=event.task_id,
-                artifact_type="DIFF",
-                name="CODE CHANGES READY",
-                state="READY",
-                metadata={"risk": rev.get("risk"), "reviewer": rev.get("reviewer"), "decision": rev.get("decision"), "fileCount": len(rev.get("files", []))},
+            self.events.publish("REVIEW_READY", {"jobId": event.task_id, "review": rev})
+            artifacts = [item for item in self.store.list_artifacts(event.task_id) if item["type"] == "DIFF"]
+            generating = next((item for item in reversed(artifacts) if item["state"] == "GENERATING"), None)
+            revision = (
+                int(generating.get("revision") or generating.get("version") or 1)
+                if generating
+                else self._next_artifact_version(event.task_id, "DIFF")
             )
-            self.events.publish("CHAT_ARTIFACT", {"artifact": diff_art})
+            self._publish_artifact(
+                {
+                    "id": f"artifact-diff-{event.task_id}-r{revision}",
+                    "jobId": event.task_id,
+                    "type": "DIFF",
+                    "name": "Code changes ready",
+                    "state": "READY",
+                    "revision": revision,
+                    "version": revision,
+                    "metadata": {
+                        "risk": rev.get("risk"),
+                        "reviewer": rev.get("reviewer"),
+                        "reviewerRole": rev.get("role"),
+                        "providerId": rev.get("providerId"),
+                        "decision": rev.get("decision"),
+                        "fileCount": len(files),
+                    },
+                }
+            )
         elif event.stage == Stage.WAITING_IMAGE_APPROVAL:
-            self.events.publish("VISUAL_GENERATION_CHANGED", {"jobId": event.task_id, "state": "READY"})
-            img_art = self.store.upsert_artifact(
-                artifact_id=f"art_img_{event.task_id[:10]}",
-                job_id=event.task_id,
-                artifact_type="IMAGE",
-                name="CONCEPT VISUAL READY",
-                state="READY",
-            )
-            self.events.publish("CHAT_ARTIFACT", {"artifact": img_art})
+            self._publish_visual_state(event.task_id)
             self._publish_visual_artifact(event.task_id)
+        elif event.stage == Stage.GENERATING_CONCEPT:
+            self._publish_visual_state(event.task_id, fallback="GENERATING")
         elif event.stage == Stage.GENERATING_3D:
             self.events.publish("MODEL_GENERATION_CHANGED", {"jobId": event.task_id, "target": "geometry", "state": "GENERATING"})
         elif event.stage == Stage.WAITING_3D_APPROVAL:
             self._register_model_from_event(event)
-            model_art = self.store.upsert_artifact(
-                artifact_id=f"art_model_{event.task_id[:10]}",
-                job_id=event.task_id,
-                artifact_type="MODEL_3D",
-                name="3D MODEL READY",
-                state="READY",
-            )
-            self.events.publish("CHAT_ARTIFACT", {"artifact": model_art})
         elif event.stage == Stage.COMPLETE:
             self.events.publish("JOB_COMPLETE", {"jobId": event.task_id})
             task = self.store.load_task(event.task_id) or {}
             text = str(task.get("final_text") or event.message)
             self.events.publish(
                 "CHAT_MESSAGE",
-                {"message": self._event_chat_message(event.task_id, text, "zenless")},
+                {"jobId": event.task_id, "message": self._event_chat_message(event.task_id, text, "zenless")},
             )
         elif event.stage in {Stage.BLOCKED, Stage.FAILED}:
+            self._fail_generating_artifacts(event.task_id)
             if event.stage == Stage.FAILED:
                 self.events.publish("JOB_FAILED", {"jobId": event.task_id, "reason": event.message})
             self.events.publish(
                 "CHAT_MESSAGE",
-                {"message": self._event_chat_message(event.task_id, event.message, "system")},
+                {
+                    "jobId": event.task_id,
+                    "message": self._event_chat_message(event.task_id, event.message, "system"),
+                },
             )
 
     def _event_chat_message(self, job_id: str, content: str, role: str) -> dict[str, Any]:
@@ -1583,77 +1684,117 @@ class ZenlessCore:
             result["action"] = action
         return result
 
-    def _publish_activity(self, event: PipelineEvent, job: dict[str, Any]) -> None:
-        if not hasattr(self, "_activities"):
-            self._activities = {}
-        previous = self._activities.get(event.task_id)
-        if previous and previous["phase"] != event.stage.value:
-            finished = {**previous, "status": "FINISHED", "timestamp": int(time.time() * 1000)}
-            self.events.publish("CHAT_ACTIVITY_FINISHED", finished)
-            previous = None
-        if event.stage in {Stage.COMPLETE, Stage.BLOCKED, Stage.FAILED}:
-            self._activities.pop(event.task_id, None)
-            return
-        step, total = self._activity_step(event.stage, job)
-        provider_id, role = self._activity_owner(event.stage, job)
-        activity = {
-            "id": f"activity-{event.task_id}-{event.stage.value.casefold()}",
-            "jobId": event.task_id,
-            "providerId": provider_id,
-            "role": role,
-            "phase": event.stage.value,
-            "status": "RUNNING",
-            "title": event.message,
-            "target": event.detail[:500] if event.detail else "",
-            "step": step,
-            "totalSteps": total,
-            "timestamp": int(time.time() * 1000),
-            **({"detail": event.detail[:4000]} if event.detail else {}),
+    def _record_activity(self, event: PipelineEvent, job: dict[str, Any]) -> None:
+        phase_map: dict[Stage, str] = {
+            Stage.NEW: "CONTEXT",
+            Stage.COLLECTING_CONTEXT: "CONTEXT",
+            Stage.PLANNING: "PLAN",
+            Stage.GENERATING_CONCEPT: "CONCEPT",
+            Stage.WAITING_IMAGE_APPROVAL: "CONCEPT",
+            Stage.GENERATING_3D: "THREED",
+            Stage.WAITING_3D_APPROVAL: "THREED",
+            Stage.BUILDING: "BUILD",
+            Stage.REVIEWING: "REVIEW",
+            Stage.REVISING: "REVIEW",
+            Stage.WAITING_CHANGE_APPROVAL: "REVIEW",
+            Stage.APPLYING: "APPLY",
+            Stage.TESTING: "TEST",
+            Stage.FIXING: "BUILD",
+            Stage.FINAL_REVIEW: "FINAL",
+            Stage.COMPLETE: "FINAL",
+            Stage.FAILED: "FINAL",
+            Stage.BLOCKED: "FINAL",
+            Stage.PAUSED: "REVIEW",
         }
-        self._activities[event.task_id] = activity
-        self.events.publish("CHAT_ACTIVITY_UPDATED" if previous else "CHAT_ACTIVITY_STARTED", activity)
-
-    @staticmethod
-    def _activity_step(stage: Stage, job: dict[str, Any]) -> tuple[int, int]:
-        raw_options = job.get("options")
-        options: dict[str, Any] = raw_options if isinstance(raw_options, dict) else {}
-        visual = bool(options.get("visualFirst") or options.get("create3D"))
-        order = (
-            [
-                Stage.COLLECTING_CONTEXT,
-                Stage.GENERATING_CONCEPT,
-                Stage.WAITING_IMAGE_APPROVAL,
-                Stage.GENERATING_3D,
-                Stage.PLANNING,
-                Stage.REVIEWING,
-                Stage.APPLYING,
-                Stage.TESTING,
-                Stage.FINAL_REVIEW,
-            ]
-            if visual
-            else [
-                Stage.COLLECTING_CONTEXT,
-                Stage.PLANNING,
-                Stage.REVIEWING,
-                Stage.APPLYING,
-                Stage.TESTING,
-                Stage.FINAL_REVIEW,
-            ]
+        research_status = {
+            "research_running": "RUNNING",
+            "research_done": "DONE",
+            "research_warning": "WARNING",
+        }
+        phase = "RESEARCH" if event.kind in research_status else phase_map.get(event.stage, "PLAN")
+        terminal_waits = {
+            Stage.WAITING_CHANGE_APPROVAL,
+            Stage.WAITING_IMAGE_APPROVAL,
+            Stage.WAITING_3D_APPROVAL,
+            Stage.COMPLETE,
+        }
+        status = research_status.get(
+            event.kind,
+            "FAILED"
+            if event.stage in {Stage.FAILED, Stage.BLOCKED}
+            else ("DONE" if event.stage in terminal_waits else "RUNNING"),
         )
-        aliases = {
-            Stage.BUILDING: Stage.PLANNING,
-            Stage.REVISING: Stage.REVIEWING,
-            Stage.WAITING_CHANGE_APPROVAL: Stage.REVIEWING,
-            Stage.WAITING_3D_APPROVAL: Stage.GENERATING_3D,
-            Stage.FIXING: Stage.APPLYING,
-            Stage.PAUSED: Stage.REVIEWING,
-            Stage.NEW: Stage.COLLECTING_CONTEXT,
-        }
-        normalized = aliases.get(stage, stage)
-        try:
-            return order.index(normalized) + 1, len(order)
-        except ValueError:
-            return 1, len(order)
+        if not hasattr(self, "_active_activities"):
+            self._active_activities = {}
+        previous = self._active_activities.get(event.task_id)
+        if previous is None:
+            previous = next(
+                (
+                    item
+                    for item in reversed(self.store.list_activities(event.task_id))
+                    if item["status"] == "RUNNING"
+                ),
+                None,
+            )
+        if previous and (previous["phase"] != phase or previous["status"] != "RUNNING"):
+            if previous["status"] == "RUNNING":
+                closed = self.store.upsert_activity(
+                    str(previous["id"]),
+                    event.task_id,
+                    str(previous["phase"]),
+                    "DONE" if status != "FAILED" else "FAILED",
+                    str(previous["title"]),
+                    str(previous.get("detail") or ""),
+                    str(previous.get("providerId") or ""),
+                    str(previous.get("role") or ""),
+                    int(previous.get("cycle") or 1),
+                    int(previous.get("attempt") or 1),
+                )
+                self.events.publish("CHAT_ACTIVITY", {"jobId": event.task_id, "activity": closed})
+            previous = None
+        if previous is None:
+            cycle = self._next_activity_cycle(event.task_id, phase)
+            activity_id = f"activity-{event.task_id}-{phase.casefold()}-{cycle}"
+        else:
+            cycle = int(previous.get("cycle") or 1)
+            activity_id = str(previous["id"])
+        provider_id, role = self._activity_owner(event.stage, job)
+        if phase == "RESEARCH":
+            provider_id = self._resolved_role_providers()["RESEARCH"]
+            role = "RESEARCH"
+        activity = self.store.upsert_activity(
+            activity_id,
+            event.task_id,
+            phase,
+            status,
+            event.message or f"Executing {phase.casefold()}",
+            event.detail[:4_000],
+            provider_id,
+            role,
+            cycle,
+            cycle,
+        )
+        self.events.publish("CHAT_ACTIVITY", {"jobId": event.task_id, "activity": activity})
+        if status == "RUNNING":
+            self._active_activities[event.task_id] = activity
+        else:
+            self._active_activities.pop(event.task_id, None)
+
+    def _next_activity_cycle(self, job_id: str, phase: str) -> int:
+        cycles = [
+            int(item.get("cycle") or 1)
+            for item in self.store.list_activities(job_id)
+            if item.get("phase") == phase
+        ]
+        return max(cycles, default=0) + 1
+
+    def _next_artifact_version(self, job_id: str, artifact_type: str) -> int:
+        versions = [
+            int(item.get("version") or 1)
+            for item in self.store.list_artifacts(job_id)
+            if item.get("type") == artifact_type
+        ]
+        return max(versions, default=0) + 1
 
     def _activity_owner(self, stage: Stage, job: dict[str, Any]) -> tuple[str, str]:
         providers = self._resolved_role_providers()
@@ -1662,17 +1803,18 @@ class ZenlessCore:
         if stage in {Stage.APPLYING, Stage.COLLECTING_CONTEXT}:
             return "studio", "STUDIO"
         if stage in {Stage.TESTING, Stage.FIXING}:
-            return "qa", "QA"
+            return "", "QA_ANALYST"
         if stage in {Stage.GENERATING_3D, Stage.WAITING_3D_APPROVAL}:
-            return providers["3D"], "3D"
+            return providers["3D"], "THREED"
         if stage in {Stage.GENERATING_CONCEPT, Stage.WAITING_IMAGE_APPROVAL}:
             return providers["VISUAL"], "VISUAL"
         return providers["BUILDER"], "BUILDER"
 
     def _publish_visual_artifact(self, job_id: str, *, state: str = "READY") -> None:
         visual = self.visual(job_id)
+        version = max(1, int(visual["concept"].get("version") or 1))
         artifact = {
-            "id": f"artifact-visual-{job_id}",
+            "id": f"artifact-visual-{job_id}-v{version}",
             "jobId": job_id,
             "messageId": None,
             "type": "IMAGE",
@@ -1684,18 +1826,205 @@ class ZenlessCore:
             "contentUrl": None,
             "modelUrl": None,
             "metadata": {"views": visual["views"], "concept": visual["concept"]},
+            "version": version,
+            "revision": version,
             "actions": ["APPROVE", "REJECT", "REGENERATE", "EDIT", "OPEN_FULL_VIEW"],
-            "createdAt": int(time.time() * 1000),
         }
         self._publish_artifact(artifact)
 
-    def _publish_artifact(self, artifact: dict[str, Any]) -> None:
-        if not hasattr(self, "_artifacts_seen"):
-            self._artifacts_seen = set()
-        artifact_id = str(artifact["id"])
-        event = "CHAT_ARTIFACT_UPDATED" if artifact_id in self._artifacts_seen else "CHAT_ARTIFACT_CREATED"
-        self._artifacts_seen.add(artifact_id)
-        self.events.publish(event, {"artifact": artifact})
+    def _publish_visual_state(self, job_id: str, *, fallback: str = "EMPTY") -> None:
+        visual = self.visual(job_id)
+        concept_version = max(0, int(visual["concept"].get("version") or 0))
+        for view in visual["views"]:
+            state = str(view.get("state") or "EMPTY")
+            if state == "EMPTY" and fallback != "EMPTY":
+                state = fallback
+            self.events.publish(
+                "VISUAL_GENERATION_CHANGED",
+                {
+                    "jobId": job_id,
+                    "view": view["name"],
+                    "state": state,
+                    "assetId": view.get("assetId"),
+                    "conceptVersion": concept_version,
+                },
+            )
+            if state in {"READY", "APPROVED"} and view.get("imageUrl") and view.get("assetId"):
+                self.events.publish(
+                    "VISUAL_READY",
+                    {
+                        "jobId": job_id,
+                        "view": view["name"],
+                        "imageUrl": view["imageUrl"],
+                        "assetId": view["assetId"],
+                        "conceptVersion": concept_version,
+                    },
+                )
+
+    def _publish_visual_generation(self, job_id: str, version: int) -> None:
+        for view in ("FRONT", "BACK", "LEFT", "RIGHT", "TOP", "BOTTOM"):
+            self.events.publish(
+                "VISUAL_GENERATION_CHANGED",
+                {
+                    "jobId": job_id,
+                    "view": view,
+                    "state": "GENERATING",
+                    "assetId": None,
+                    "conceptVersion": version,
+                },
+            )
+        self._publish_artifact(
+            {
+                "id": f"artifact-visual-{job_id}-v{version}",
+                "jobId": job_id,
+                "type": "IMAGE",
+                "name": "Six-view concept",
+                "state": "GENERATING",
+                "metadata": {"views": [], "concept": {"version": version, "status": "GENERATING"}},
+                "version": version,
+                "revision": version,
+            }
+        )
+
+    def _publish_visual_ready(self, event: PipelineEvent) -> None:
+        try:
+            payload = json.loads(event.detail)
+        except (TypeError, json.JSONDecodeError):
+            return
+        if not isinstance(payload, dict):
+            return
+        view = str(payload.get("view") or "").upper()
+        asset_id = str(payload.get("assetId") or "")
+        version = self._safe_positive_int(payload.get("conceptVersion"), 1)
+        if view not in {"FRONT", "BACK", "LEFT", "RIGHT", "TOP", "BOTTOM"} or not asset_id:
+            return
+        asset = self.store.asset(asset_id)
+        if asset is None or str(asset.get("job_id") or "") != event.task_id or str(asset.get("kind") or "") != "VIEW":
+            return
+        path = Path(str(asset.get("path") or "")).resolve()
+        if not self._is_within(path, self.data_root) or not path.is_file():
+            return
+        image_url = f"/api/assets/{asset_id}/content"
+        self.events.publish(
+            "VISUAL_GENERATION_CHANGED",
+            {
+                "jobId": event.task_id,
+                "view": view,
+                "state": "READY",
+                "assetId": asset_id,
+                "conceptVersion": version,
+            },
+        )
+        self.events.publish(
+            "VISUAL_READY",
+            {
+                "jobId": event.task_id,
+                "view": view,
+                "imageUrl": image_url,
+                "assetId": asset_id,
+                "conceptVersion": version,
+            },
+        )
+
+    def _publish_model_generation(self, job_id: str, version: int) -> None:
+        self.events.publish(
+            "MODEL_GENERATION_CHANGED",
+            {"jobId": job_id, "target": "geometry", "state": "GENERATING"},
+        )
+        self._publish_artifact(
+            {
+                "id": f"artifact-model-{job_id}-v{version}",
+                "jobId": job_id,
+                "type": "MODEL_3D",
+                "name": f"3D model V{version}",
+                "state": "GENERATING",
+                "version": version,
+                "revision": version,
+            }
+        )
+
+    def _fail_generating_artifacts(self, job_id: str) -> None:
+        latest: dict[str, dict[str, Any]] = {}
+        for artifact in self.store.list_artifacts(job_id):
+            latest[str(artifact["type"])] = artifact
+        for artifact in latest.values():
+            if artifact["state"] == "GENERATING":
+                self._publish_artifact({**artifact, "state": "FAILED"})
+                if artifact["type"] == "IMAGE":
+                    task = self._require_task(job_id)
+                    context = task.get("context") or {}
+                    visual = context.get("visual") or {}
+                    self.store.update_context_section(job_id, "visual", {**visual, "status": "FAILED"})
+                    for view in ("FRONT", "BACK", "LEFT", "RIGHT", "TOP", "BOTTOM"):
+                        self.events.publish(
+                            "VISUAL_GENERATION_CHANGED",
+                            {
+                                "jobId": job_id,
+                                "view": view,
+                                "state": "FAILED",
+                                "conceptVersion": artifact["version"],
+                            },
+                        )
+                elif artifact["type"] == "MODEL_3D":
+                    for target in ("geometry", "texture"):
+                        self.events.publish(
+                            "MODEL_GENERATION_CHANGED",
+                            {"jobId": job_id, "target": target, "state": "FAILED"},
+                        )
+
+    @staticmethod
+    def _safe_positive_int(value: Any, fallback: int) -> int:
+        try:
+            return max(1, int(value))
+        except (TypeError, ValueError):
+            return max(1, fallback)
+
+    def _event_version(self, event: PipelineEvent, fallback: int) -> int:
+        try:
+            payload = json.loads(event.detail)
+        except (TypeError, json.JSONDecodeError):
+            return max(1, fallback)
+        return self._safe_positive_int(payload.get("version") if isinstance(payload, dict) else None, fallback)
+
+    def _publish_artifact(self, artifact: dict[str, Any]) -> dict[str, Any]:
+        job_id = str(artifact.get("jobId") or "")
+        if not job_id:
+            raise ValueError("Artifact jobId is required.")
+        metadata = dict(artifact.get("metadata") or {})
+        for key in ("messageId", "mime", "size", "actions"):
+            if key in artifact and artifact[key] is not None:
+                metadata[key] = artifact[key]
+        version = max(1, int(artifact.get("version") or metadata.get("version") or 1))
+        revision = max(1, int(artifact.get("revision") or metadata.get("revision") or version))
+        persisted = self.store.upsert_artifact(
+            artifact_id=str(artifact["id"]),
+            job_id=job_id,
+            artifact_type=str(artifact["type"]),
+            name=str(artifact["name"]),
+            state=str(artifact["state"]),
+            preview_url=str(artifact.get("previewUrl") or ""),
+            content_url=str(artifact.get("contentUrl") or ""),
+            model_url=str(artifact.get("modelUrl") or ""),
+            metadata=metadata,
+            version=version,
+            revision=revision,
+            created_at=int(artifact.get("createdAt") or int(time.time() * 1000)),
+        )
+        persisted.update(
+            {
+                key: artifact[key]
+                for key in ("messageId", "mime", "size", "actions")
+                if key in artifact and artifact[key] is not None
+            }
+        )
+        self.events.publish("CHAT_ARTIFACT", {"jobId": job_id, "artifact": persisted})
+        return persisted
+
+    def _transition_latest_artifact(self, job_id: str, artifact_type: str, state: str) -> dict[str, Any] | None:
+        artifacts = [item for item in self.store.list_artifacts(job_id) if item["type"] == artifact_type]
+        if not artifacts:
+            return None
+        return self._publish_artifact({**artifacts[-1], "state": state})
 
     def _register_model_from_event(self, event: PipelineEvent) -> None:
         try:
@@ -1714,16 +2043,29 @@ class ZenlessCore:
                 "Use the authorized internal download flow.",
             )
             return
-        asset = self._register_file_asset(path, job_id=event.task_id, kind="GLB")
+        asset = self._register_file_asset(path, job_id=event.task_id, kind="GLB", publish_artifact=False)
+        try:
+            version = int(payload.get("version") or 0)
+        except (TypeError, ValueError):
+            version = 0
+        version = max(1, version or self._next_artifact_version(event.task_id, "MODEL_3D"))
         self.events.publish("ASSETS_UPDATED", {"assets": self.assets()})
         self.events.publish(
             "MODEL_READY",
-            {"jobId": event.task_id, "modelUrl": f"/api/assets/{asset}/content", "filename": path.name},
+            {
+                "jobId": event.task_id,
+                "assetId": asset,
+                "version": version,
+                "modelUrl": f"/api/assets/{asset}/content",
+                "filename": path.name,
+                "geometryStatus": "READY",
+                "textureStatus": "READY",
+            },
         )
         record = self.store.asset(asset) or {}
         self._publish_artifact(
             {
-                "id": f"artifact-file-{asset}",
+                "id": f"artifact-model-{event.task_id}-v{version}",
                 "jobId": event.task_id,
                 "messageId": None,
                 "type": "MODEL_3D",
@@ -1734,7 +2076,14 @@ class ZenlessCore:
                 "previewUrl": None,
                 "contentUrl": f"/api/assets/{asset}/content",
                 "modelUrl": f"/api/assets/{asset}/content",
-                "metadata": {"geometryStatus": "READY", "textureStatus": "READY", "version": 1},
+                "metadata": {
+                    "assetId": asset,
+                    "geometryStatus": "READY",
+                    "textureStatus": "READY",
+                    "version": version,
+                },
+                "version": version,
+                "revision": version,
                 "actions": ["APPROVE", "REJECT", "REGENERATE_GEOMETRY", "REGENERATE_TEXTURE", "OPEN_FULL_VIEW"],
                 "createdAt": int(time.time() * 1000),
             }
@@ -1948,7 +2297,14 @@ class ZenlessCore:
             roots.append(node)
         return roots[:500], nodes
 
-    def _register_file_asset(self, path: Path, *, job_id: str, kind: str) -> str:
+    def _register_file_asset(
+        self,
+        path: Path,
+        *,
+        job_id: str,
+        kind: str,
+        publish_artifact: bool = True,
+    ) -> str:
         resolved = path.resolve()
         if not self._is_within(resolved, self.data_root) or not resolved.is_file():
             raise CoreError("INVALID_ASSET_PATH", "The asset does not belong to local storage.")
@@ -1974,24 +2330,25 @@ class ZenlessCore:
             else ("IMAGE" if normalized_kind in {"IMG", "VIEW", "TEX"} else "FILE")
         )
         content_url = f"/api/assets/{asset_id}/content"
-        self._publish_artifact(
-            {
-                "id": f"artifact-file-{asset_id}",
-                "jobId": job_id,
-                "messageId": None,
-                "type": artifact_type,
-                "name": resolved.name,
-                "mime": mime,
-                "size": resolved.stat().st_size,
-                "state": "READY",
-                "previewUrl": content_url if artifact_type == "IMAGE" else None,
-                "contentUrl": content_url,
-                "modelUrl": content_url if artifact_type == "MODEL_3D" else None,
-                "metadata": {"assetKind": normalized_kind},
-                "actions": ["OPEN", "DOWNLOAD"],
-                "createdAt": int(time.time() * 1000),
-            }
-        )
+        if publish_artifact:
+            self._publish_artifact(
+                {
+                    "id": f"artifact-file-{asset_id}",
+                    "jobId": job_id,
+                    "messageId": None,
+                    "type": artifact_type,
+                    "name": resolved.name,
+                    "mime": mime,
+                    "size": resolved.stat().st_size,
+                    "state": "READY",
+                    "previewUrl": content_url if artifact_type == "IMAGE" else None,
+                    "contentUrl": content_url,
+                    "modelUrl": content_url if artifact_type == "MODEL_3D" else None,
+                    "metadata": {"assetKind": normalized_kind},
+                    "actions": ["OPEN", "DOWNLOAD"],
+                    "createdAt": int(time.time() * 1000),
+                }
+            )
         return asset_id
 
     @staticmethod

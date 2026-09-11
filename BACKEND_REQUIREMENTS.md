@@ -209,7 +209,7 @@ type ReadinessSnapshot = {
 
 `GET /api/readiness` returns `ReadinessSnapshot`. `GET /api/readiness?refresh=1` bypasses the three-second cache, performs bounded provider probes, refreshes Studio discovery, and verifies the required Studio tool advertisements. Render `steps` in order. Do not enable project submission unless `canRunProjectTasks` is true.
 
-`READINESS_CHANGED` data is the full `ReadinessSnapshot`.
+`READINESS_CHANGED` data is `{ readiness: ReadinessSnapshot }`.
 
 ## Providers
 
@@ -363,7 +363,7 @@ type TaskOptionsRequest = {
 }
 ```
 
-Missing `visualFirst` and `create3D` mean `AUTO`. Job responses expose resolved booleans as `visualFirst` and `create3D`, original modes as `visualMode` and `create3DMode`, and the remaining normalized settings. `TEMP` mode must be presented as non-project chat; it cannot perform Studio writes or visual/3D generation.
+Missing `visualFirst` and `create3D` mean `AUTO`. Job responses expose resolved booleans as `visualFirst` and `create3D`, original modes as `visualMode` and `create3DMode`, and the remaining normalized settings. `TEMP` starts without prior conversation handoff but performs the same fresh Studio reads and explicitly requested visual, 3D, QA, approval, and mutation flow as `PROJECT`.
 
 ## Activity and artifacts
 
@@ -374,7 +374,7 @@ type ChatActivity = {
   providerId: string
   role: string
   phase: string
-  status: 'RUNNING' | 'FINISHED'
+  status: 'QUEUED' | 'RUNNING' | 'DONE' | 'WARNING' | 'FAILED'
   title: string
   target: string
   step: number
@@ -387,7 +387,7 @@ type ChatArtifact = {
   id: string
   jobId: string
   messageId: string | null
-  type: 'IMAGE' | 'MODEL_3D' | 'FILE'
+  type: 'IMAGE' | 'MODEL_3D' | 'FILE' | 'DIFF' | 'REPORT'
   name: string
   mime: string
   size: number
@@ -398,6 +398,9 @@ type ChatArtifact = {
   metadata: Record<string, unknown>
   actions: string[]
   createdAt: number
+  updatedAt?: number
+  version?: number
+  revision?: number
 }
 ```
 
@@ -411,7 +414,7 @@ All payloads below are the `data` field of `BackendEvent`.
 
 | Event | Data |
 | --- | --- |
-| `READINESS_CHANGED` | `ReadinessSnapshot` |
+| `READINESS_CHANGED` | `{ readiness: ReadinessSnapshot }` |
 | `LOGIN_REQUIRED` | `{ providerId: string }` |
 | `LOGIN_WINDOW_WILL_OPEN` | `{ providerId: string }` |
 | `LOGIN_WINDOW_OPENED` | `{ providerId: string, route: 'webview2' | 'playwright' }` |
@@ -423,18 +426,15 @@ All payloads below are the `data` field of `BackendEvent`.
 | `PROVIDER_MODEL_CHANGED` | `{ providerId: string, selection: { route?: string, mode?: string, model?: string } }` |
 | `STUDIO_DISCOVERY_CHANGED` | `StudioDiscovery` without guaranteed `capabilities` |
 | `STUDIO_SELECTION_REQUIRED` | `StudioDiscovery` |
-| `CHAT_ACTIVITY_STARTED` | `ChatActivity` |
-| `CHAT_ACTIVITY_UPDATED` | `ChatActivity` |
-| `CHAT_ACTIVITY_FINISHED` | `ChatActivity` |
-| `CHAT_ARTIFACT_CREATED` | `{ artifact: ChatArtifact }` |
-| `CHAT_ARTIFACT_UPDATED` | `{ artifact: ChatArtifact }` |
-| `STORAGE_CLEANUP_COMPLETED` | `{ bytesBefore: number, bytesAfter: number, bytesRemoved: number, categories: string[], itemsRemoved: number }` |
+| `CHAT_ACTIVITY` | `{ jobId: string, activity: ChatActivity }` |
+| `CHAT_ARTIFACT` | `{ jobId: string, artifact: ChatArtifact }` |
+| `STORAGE_CLEANUP_COMPLETED` | `StorageCleanup` |
 | `TOOL_STATUS_CHANGED` | `{ tool: Tool }` |
 | `CHAT_SYSTEM_EVENT` | `{ severity: string, title: string, message: string, recovery: string, jobId?: string | null, diagnosticId?: string }` |
 
 The login pre-notification events are emitted before the blocking login workflow. Keep the modal or card active through challenges and uncertainty, and close it only on `LOGIN_READY`. `LOGIN_WINDOW_OPENED` is a lifecycle notification, not authentication evidence.
 
-Existing events remain supported. New event handling must be additive and idempotent.
+The canonical event map is versioned as an exact contract. Job-scoped events carry `jobId` at the top level, and client handling must remain idempotent across hydration and reconnect replay.
 
 ## Required frontend behavior
 

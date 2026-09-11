@@ -1,6 +1,6 @@
 # Release Notes
 
-## Unreleased backend-vnext - 2026-08-30
+## Unreleased final integration - 2026-09-08
 
 ### Provider and readiness core
 
@@ -8,8 +8,8 @@
 - Replaced generic composer authentication with provider-specific URL, account, application, composer, generation, login, and challenge signals.
 - Added stable authentication confirmation, persistence verification, durable route selection, and non-secret provider session metadata.
 - Added a provider registry with support status, role bindings, mode-level capability hints, live capability normalization, selection, refresh, and reassignment APIs.
-- Kept unsupported catalog entries visible but disabled; enabled browser adapters remain `BETA` until real external verification.
-- Added `AUTO`, `ON`, and `OFF` visual and 3D intent, provider-independent effort, bounded deadlines, and temporary chat mode.
+- Limited selectable providers to the three implemented browser adapters; each remains `BETA` until real external verification.
+- Added `AUTO`, `ON`, and `OFF` visual and 3D intent, adaptive effort, bounded deadlines, and temporary chat isolation without disabling requested project actions.
 
 ### Studio, orchestration, and QA
 
@@ -24,6 +24,7 @@
 - Added content-aware attachment inspection, safe bounded ZIP extraction, provider type and size validation, relevance ranking, and complete batching.
 - Normalized six-view assets to `VIEW`, model runtime states to `IDLE`, `GENERATING`, `READY`, or `FAILED`, and approval to a separate field.
 - Added observable chat activity, unified image/model/file artifacts, aggregate visual approval, and user-visible diagnostic events.
+- Added durable chronological messages, activities and versioned image, model, diff and report artifacts with selected-job hydration and stale-response protection.
 - Expanded storage accounting to database, logs, runs, snapshots, generated assets, downloads, temporary data, browser cache and profiles, runtime, tools, tool cache, and test artifacts.
 - Added configurable 1-100 GB budgets with a 10 GB default and LRU cleanup limited to disposable data.
 - Added a checksum-pinned optional ToolManager. Current default entries are catalog-only and `ON_DEMAND`; no unpinned package is automatically installed.
@@ -33,29 +34,30 @@
 - Changed native startup and WebView2 shell colors to monochrome.
 - Added Windows x64, disk, memory, WebView2, and Studio diagnostics plus component-scoped repair endpoints.
 - Added a per-user NSIS installer, Windows uninstall entry, current-user shortcuts, Keep Settings uninstall, Full Remove uninstall, and exact owned-root validation.
-- `build.ps1` keeps backend and frontend work isolated by default and produces the portable executable plus installer when NSIS is available.
+- `build.ps1 -FrontendIntegration` validates and compiles the frontend before packaging; the default build reuses the existing compiled frontend. NSIS 3.12 produces the optional per-user installer.
 
 ### Verification status
 
-The entries above describe the implementation, not external E2E certification. Final gate results must be recorded from the release run.
+The entries above describe the implementation. Automated checks and controlled Studio verification were run on September 8, 2026. Final executable evidence is recorded separately in `RELEASE_VALIDATION.md`.
 
 | Gate | Current release evidence |
 | --- | --- |
-| Ruff | Pending final branch run |
-| Pyright | Pending final branch run |
-| pytest | Pending final branch run |
-| Frozen executable startup | Pending final package run |
-| Installer build and per-user install/uninstall | Pending final package run |
-| Live Studio, Play, Output, and mutation | `NOT RUN` unless separately recorded |
-| ChatGPT browser workflow | `LOGIN_REQUIRED` or `NOT RUN` unless separately recorded |
-| DeepSeek browser workflow | `LOGIN_REQUIRED` or `NOT RUN` unless separately recorded |
-| Hunyuan 3D workflow | `LOGIN_REQUIRED` or `NOT RUN` unless separately recorded |
-| Clean Windows 11 x64 profile | `NOT RUN` unless separately recorded |
+| Ruff | PASS |
+| Pyright | PASS: 0 errors, warnings, or information |
+| pytest | PASS: 101 tests and 5 subtests |
+| Frontend | PASS: lint, typecheck, 68 tests, production build |
+| npm audit | PASS: 0 reported vulnerabilities |
+| Frozen executable startup | PASS on integration package; final artifact recorded separately |
+| Installer build and per-user install/uninstall | Final artifact results recorded separately |
+| Live Studio | PASS: discovery, tree/property/script reads, controlled mutation, read-back, idempotency, stale-precondition rejection, Play, keyboard input, Output, Stop, and cleanup |
+| Live ChatGPT, DeepSeek, and Hunyuan workflows | NOT RUN: authenticated provider sessions required |
+| Device emulation and multiplayer | NOT RUN |
+| Clean Windows 11 x64 profile | NOT RUN |
 
 ### Known limits
 
 - Provider interfaces and account permissions can change independently of Zenless; live capability probes remain authoritative.
-- Current provider catalog entries beyond the three enabled adapters have no active transport and cannot be selected.
+- Only implemented provider adapters are exposed for selection.
 - Optional tool manifests are not installable until a verified versioned package and checksum are configured.
 - RAR and 7Z are detected but not extracted by the built-in safe extractor.
 - The scenario executor skips input and harness steps without a compatible advertised Studio schema.

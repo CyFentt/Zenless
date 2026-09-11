@@ -16,7 +16,7 @@ describe('ChatPage', () => {
   it('shows a login response instead of remaining silent', async () => {
     const loginProvider = vi.fn().mockResolvedValue({ ok: true });
     service.getApi.mockReturnValue({
-      sendMessage: vi.fn().mockRejectedValue(new ApiError(409, 'Builder requires login.', 'request-1', 'PROVIDER_LOGIN_REQUIRED', { provider: 'chatgpt' })),
+      sendMessage: vi.fn().mockRejectedValue(new ApiError(409, 'ChatGPT requires login.', 'request-1', 'PROVIDER_LOGIN_REQUIRED', { provider: 'chatgpt' })),
       loginProvider,
       getConnections: vi.fn().mockResolvedValue({ bridge: 'READY', browser: 'READY', chatgpt: 'LOGIN', deepseek: 'LOGIN', hunyuan: 'LOGIN', studio: 'OFF' }),
       getAgents: vi.fn().mockResolvedValue([]),
@@ -26,7 +26,7 @@ describe('ChatPage', () => {
     fireEvent.change(screen.getByPlaceholderText('Message Zenless'), { target: { value: 'Build a collectible coin system' } });
     fireEvent.click(screen.getByLabelText('Send'));
 
-    expect(await screen.findByText('Builder requires login.')).toBeInTheDocument();
+    expect(await screen.findByText('ChatGPT requires login.')).toBeInTheDocument();
     expect(screen.getByText('Build a collectible coin system')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'LOGIN' }));
     await waitFor(() => expect(loginProvider).toHaveBeenCalledWith('chatgpt'));

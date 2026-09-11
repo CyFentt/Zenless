@@ -1,11 +1,12 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { HomePage } from '@/features/home/HomePage';
-import { ApplicationRuntime } from '@/runtime/AppRuntime';
+import { ApplicationRuntime } from '@/runtime/ApplicationRuntime';
 import { MockZenlessAPI } from '@/services/mock/mockApi';
+import type { JobTimelineSnapshot, ZenlessAPI } from '@/services/api/types';
 import type { ZenlessSocket } from '@/services/websocket/socket';
 import { useStore } from '@/store';
-import type { AgentInfo, ConnectionInfo, SocketStatus, ZenlessEvent, ZenlessEventHandler } from '@/types';
+import type { AgentInfo, ConnectionInfo, Job, SocketStatus, ZenlessEvent, ZenlessEventHandler } from '@/types';
 
 type StatusHandler = (status: SocketStatus) => void;
 
@@ -55,6 +56,66 @@ const initialState = useStore.getState();
 beforeEach(() => useStore.setState(initialState, true));
 
 describe('ApplicationRuntime', () => {
+  it('preserves a job created and selected while reconnect jobs are loading', async () => {
+    const api = new MockZenlessAPI();
+    const socket = new RuntimeSocket();
+    vi.spyOn(api, 'bootstrap').mockResolvedValue({ steps: [{ stage: 'UI', state: 'READY' }] });
+    const getJobs = vi.spyOn(api, 'getJobs').mockResolvedValue([]);
+    const runtime = new ApplicationRuntime(api, socket);
+    await runtime.start();
+    let resolveJobs!: (jobs: Job[]) => void;
+    getJobs.mockImplementationOnce(() => new Promise((resolve) => { resolveJobs = resolve; }));
+    const hydration = runtime.rehydrate();
+    const job: Job = { id: 'new-job', title: 'New job', status: 'NEW', stage: 'NEW', createdAt: 1, updatedAt: 1 };
+    socket.emit({ type: 'JOB_CREATED', data: { jobId: job.id, job } });
+    useStore.getState().setCurrentJobId(job.id);
+    resolveJobs([]);
+    await hydration;
+    expect(useStore.getState().currentJobId).toBe(job.id);
+    expect(useStore.getState().jobs).toContainEqual(job);
+    runtime.stop();
+  });
+
+  it('preserves an existing stream and replays only new deltas during reconnect', async () => {
+    const api = new MockZenlessAPI();
+    const socket = new RuntimeSocket();
+    vi.spyOn(api, 'bootstrap').mockResolvedValue({ steps: [{ stage: 'UI', state: 'READY' }] });
+    const job: Job = { id: 'job-a', title: 'A', status: 'RUNNING', stage: 'PLANNING', createdAt: 1, updatedAt: 1 };
+    vi.spyOn(api, 'getJobs').mockResolvedValue([job]);
+    const timeline: JobTimelineSnapshot = {
+      jobId: job.id, messages: [], activities: [], artifacts: [],
+      test: { testState: { status: 'IDLE', elapsedMs: 0, fixAttempt: 0, maxFixAttempts: 3 }, cases: [], failures: [], logs: [] },
+    };
+    const getTimeline = vi.spyOn(api as ZenlessAPI, 'getTimeline').mockResolvedValue(timeline);
+    const runtime = new ApplicationRuntime(api, socket);
+    await runtime.start();
+    socket.emit({ type: 'CHAT_STREAM_STARTED', data: { jobId: job.id, messageId: 'stream-a' } });
+    socket.emit({ type: 'CHAT_STREAM_DELTA', data: { jobId: job.id, messageId: 'stream-a', delta: 'Before ' } });
+    let resolveTimeline!: (value: JobTimelineSnapshot) => void;
+    getTimeline.mockImplementationOnce(() => new Promise((resolve) => { resolveTimeline = resolve; }));
+    const hydration = runtime.rehydrate();
+    await waitFor(() => expect(resolveTimeline).toBeDefined());
+    socket.emit({ type: 'CHAT_STREAM_DELTA', data: { jobId: job.id, messageId: 'stream-a', delta: 'after' } });
+    resolveTimeline(timeline);
+    await hydration;
+    expect(useStore.getState().streamingContent).toBe('Before after');
+    socket.emit({ type: 'CHAT_STREAM_FINISHED', data: { jobId: job.id, messageId: 'stream-a' } });
+    expect(useStore.getState().messages.find((message) => message.id === 'stream-a')?.content).toBe('Before after');
+
+    socket.emit({ type: 'CHAT_STREAM_STARTED', data: { jobId: job.id, messageId: 'stream-b' } });
+    socket.emit({ type: 'CHAT_STREAM_DELTA', data: { jobId: job.id, messageId: 'stream-b', delta: 'Partial' } });
+    getTimeline.mockImplementationOnce(() => new Promise((resolve) => { resolveTimeline = resolve; }));
+    const completedHydration = runtime.rehydrate();
+    await waitFor(() => expect(getTimeline).toHaveBeenCalledTimes(3));
+    socket.emit({ type: 'CHAT_STREAM_FINISHED', data: { jobId: job.id, messageId: 'stream-b' } });
+    resolveTimeline({ ...timeline, messages: [{ id: 'stream-b', jobId: job.id, role: 'zenless', content: 'Authoritative final', timestamp: 123 }] });
+    await completedHydration;
+    expect(useStore.getState().messages).toHaveLength(1);
+    expect(useStore.getState().messages[0]).toMatchObject({ content: 'Authoritative final', timestamp: 123 });
+    expect(useStore.getState().streamingMessageId).toBeNull();
+    runtime.stop();
+  });
+
   it('finishes delayed hydration before leaving the splash and keeps the socket alive', async () => {
     const api = new MockZenlessAPI();
     const socket = new RuntimeSocket();
@@ -75,19 +136,19 @@ describe('ApplicationRuntime', () => {
 
     resolveConnections({ bridge: 'READY', browser: 'READY', chatgpt: 'LOGIN', deepseek: 'LOGIN', hunyuan: 'OFF', studio: 'READY' });
     resolveAgents([
-      { id: 'chatgpt', name: 'External Name', status: 'LOGIN' },
-      { id: 'deepseek', name: 'External Name', status: 'LOGIN' },
-      { id: 'hunyuan', name: 'External Name', status: 'OFF' },
-      { id: 'studio', name: 'External Name', status: 'READY' },
+      { id: 'chatgpt', name: 'ChatGPT', status: 'LOGIN' },
+      { id: 'deepseek', name: 'DeepSeek', status: 'LOGIN' },
+      { id: 'hunyuan', name: 'Hunyuan', status: 'OFF' },
+      { id: 'studio', name: 'Roblox Studio', status: 'READY' },
     ]);
     await started;
 
     expect(useStore.getState().booted).toBe(true);
     expect(socket.disconnects).toBe(0);
     render(<HomePage />);
-    expect(screen.getByText('Builder')).toBeInTheDocument();
-    expect(screen.getByText('Reviewer')).toBeInTheDocument();
-    expect(screen.getByText('3D Generator')).toBeInTheDocument();
+    expect(screen.getByText('ChatGPT')).toBeInTheDocument();
+    expect(screen.getByText('DeepSeek')).toBeInTheDocument();
+    expect(screen.getByText('Hunyuan')).toBeInTheDocument();
     runtime.stop();
     expect(socket.disconnects).toBe(1);
   });
@@ -106,6 +167,103 @@ describe('ApplicationRuntime', () => {
     socket.emitStatus('CONNECTED');
     await waitFor(() => expect(getAgents.mock.calls.length).toBeGreaterThan(initialCalls));
     expect(useStore.getState().socketStatus).toBe('CONNECTED');
+    runtime.stop();
+  });
+
+  it('keeps only the newest snapshot during an A to B to A selection race', async () => {
+    const api = new MockZenlessAPI();
+    const socket = new RuntimeSocket();
+    vi.spyOn(api, 'bootstrap').mockResolvedValue({ steps: [{ stage: 'UI', state: 'READY' }] });
+    vi.spyOn(api, 'getJobs').mockResolvedValue([]);
+    const pending: Array<{
+      jobId: string;
+      signal?: AbortSignal;
+      resolve: (snapshot: JobTimelineSnapshot) => void;
+    }> = [];
+    const runtime = new ApplicationRuntime(api, socket);
+    await runtime.start();
+    vi.spyOn(api as ZenlessAPI, 'getTimeline').mockImplementation((jobId, signal) => new Promise<JobTimelineSnapshot>((resolve) => {
+      pending.push({ jobId, signal, resolve });
+    }));
+
+    useStore.getState().setCurrentJobId('job-a');
+    useStore.getState().setCurrentJobId('job-b');
+    useStore.getState().setCurrentJobId('job-a');
+    const finalHydration = runtime.selectAndHydrateJob('job-a');
+
+    expect(pending.map((request) => request.jobId)).toEqual(['job-a', 'job-b', 'job-a']);
+    expect(pending[0].signal?.aborted).toBe(true);
+    expect(pending[1].signal?.aborted).toBe(true);
+    expect(pending[2].signal?.aborted).toBe(false);
+
+    pending[2].resolve({
+      jobId: 'job-a',
+      messages: [{ id: 'message-a-final', role: 'zenless', content: 'Newest A snapshot', timestamp: 300, jobId: 'job-a' }],
+      activities: [],
+      artifacts: [],
+      test: {
+        testState: { status: 'STOPPED', elapsedMs: 30, fixAttempt: 0, maxFixAttempts: 3, resultStatus: 'PASSED' },
+        cases: [],
+        failures: [],
+        logs: [],
+      },
+    });
+    await finalHydration;
+    expect(useStore.getState().messages.map((message) => message.id)).toEqual(['message-a-final']);
+
+    pending[0].resolve({
+      jobId: 'job-a',
+      messages: [{ id: 'message-a-stale', role: 'zenless', content: 'Stale A snapshot', timestamp: 100, jobId: 'job-a' }],
+      activities: [],
+      artifacts: [],
+      test: { testState: { status: 'IDLE', elapsedMs: 0, fixAttempt: 0, maxFixAttempts: 3 }, cases: [], failures: [], logs: [] },
+    });
+    pending[1].resolve({
+      jobId: 'job-b',
+      messages: [{ id: 'message-b-stale', role: 'zenless', content: 'Stale B snapshot', timestamp: 200, jobId: 'job-b' }],
+      activities: [],
+      artifacts: [],
+      test: { testState: { status: 'FAILED', elapsedMs: 20, fixAttempt: 1, maxFixAttempts: 3 }, cases: [], failures: [], logs: [] },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(useStore.getState().currentJobId).toBe('job-a');
+    expect(useStore.getState().messages.map((message) => message.id)).toEqual(['message-a-final']);
+    expect(useStore.getState().testState.resultStatus).toBe('PASSED');
+    runtime.stop();
+  });
+
+  it('replays current-job WebSocket deltas received during REST hydration', async () => {
+    const api = new MockZenlessAPI();
+    const socket = new RuntimeSocket();
+    vi.spyOn(api, 'bootstrap').mockResolvedValue({ steps: [{ stage: 'UI', state: 'READY' }] });
+    vi.spyOn(api, 'getJobs').mockResolvedValue([]);
+    let resolveTimeline!: (snapshot: JobTimelineSnapshot) => void;
+    vi.spyOn(api as ZenlessAPI, 'getTimeline').mockImplementation(() => new Promise<JobTimelineSnapshot>((resolve) => {
+      resolveTimeline = resolve;
+    }));
+    const runtime = new ApplicationRuntime(api, socket);
+    await runtime.start();
+
+    useStore.getState().setCurrentJobId('job-a');
+    const hydration = runtime.selectAndHydrateJob('job-a');
+    socket.emit({
+      type: 'CHAT_MESSAGE',
+      data: {
+        jobId: 'job-a',
+        message: { id: 'message-live', role: 'zenless', content: 'Live update', timestamp: 200, jobId: 'job-a' },
+      },
+    });
+    resolveTimeline({
+      jobId: 'job-a',
+      messages: [{ id: 'message-snapshot', role: 'user', content: 'Snapshot', timestamp: 100, jobId: 'job-a' }],
+      activities: [],
+      artifacts: [],
+      test: { testState: { status: 'IDLE', elapsedMs: 0, fixAttempt: 0, maxFixAttempts: 3 }, cases: [], failures: [], logs: [] },
+    });
+    await hydration;
+
+    expect(useStore.getState().messages.map((message) => message.id)).toEqual(['message-snapshot', 'message-live']);
     runtime.stop();
   });
 });

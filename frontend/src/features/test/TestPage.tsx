@@ -23,17 +23,6 @@ export function TestPage() {
   const [selectedLog, setSelectedLog] = useState<TestLog | null>(null);
 
   useEffect(() => {
-    if (!currentJobId) {
-      setTestState({ status: "IDLE", elapsedMs: 0, fixAttempt: 0, maxFixAttempts: 3 });
-      return;
-    }
-    getApi()
-      .getTestState(currentJobId)
-      .then(setTestState)
-      .catch((error) => frontendDiagnostics.capture(error, "test", "Failed to load test state"));
-  }, [currentJobId, setTestState]);
-
-  useEffect(() => {
     if (testState.status !== "RUNNING") return;
     const startedAt = Date.now() - testState.elapsedMs;
     const updateElapsed = () => setElapsed(Date.now() - startedAt);
@@ -53,7 +42,6 @@ export function TestPage() {
       setElapsed(0);
       setTestState({ ...testState, status: "STARTING" });
       await getApi().startTest(currentJobId);
-      setTestState({ ...testState, status: "RUNNING" });
     } catch (error) {
       frontendDiagnostics.capture(error, "test", "Failed to start Play Test");
       setTestState({ ...testState, status: "FAILED" });
@@ -65,7 +53,6 @@ export function TestPage() {
     try {
       setTestState({ ...testState, status: "STOPPING" });
       await getApi().stopTest(currentJobId);
-      setTestState({ ...testState, status: "STOPPED" });
     } catch (error) {
       frontendDiagnostics.capture(error, "test", "Failed to stop Play Test");
       setTestState({ ...testState, status: "FAILED" });

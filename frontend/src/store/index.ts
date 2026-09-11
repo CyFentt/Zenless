@@ -14,11 +14,15 @@ import type {
   EffortLevel,
   ChatMode,
   Job,
+  JobProjection,
   ModelInfo,
+  ProjectIdentity,
   ProviderDescriptor,
   ProviderId,
   ReadinessStateInfo,
+  Review,
   Settings,
+  StudioDiscoverySnapshot,
   StudioNode,
   StudioState,
   StorageInfo,
@@ -73,6 +77,7 @@ interface AppState {
   jobs: Job[];
   currentJobId: string | null;
   setCurrentJobId: (id: string | null) => void;
+  projectJobSnapshot: (snapshot: JobProjection) => void;
   messages: ChatMessage[];
   activities: ChatActivity[];
   artifacts: ChatArtifact[];
@@ -83,9 +88,12 @@ interface AppState {
   addArtifact: (a: ChatArtifact) => void;
   updateArtifact: (id: string, patch: Partial<ChatArtifact>) => void;
   streamingMessageId: string | null;
+  streamingJobId: string | null;
   streamingContent: string;
   contextItems: ContextItem[];
   changedFiles: ChangedFile[];
+  review: Review | null;
+  setReview: (review: Review | null) => void;
   selectedFileId: string | null;
   setSelectedFileId: (id: string | null) => void;
   views: ViewTile[];
@@ -95,6 +103,10 @@ interface AppState {
   modelInfo: ModelInfo;
   assets: Asset[];
   studioState: StudioState;
+  studioDiscovery: StudioDiscoverySnapshot | null;
+  setStudioDiscovery: (discovery: StudioDiscoverySnapshot | null) => void;
+  projectIdentity: ProjectIdentity | null;
+  setProjectIdentity: (identity: ProjectIdentity | null) => void;
   studioTree: StudioNode[];
   selectedStudioNode: StudioNode | null;
   setSelectedStudioNode: (node: StudioNode | null) => void;
@@ -135,7 +147,7 @@ interface AppState {
   setMessages: (m: ChatMessage[]) => void;
   addMessage: (m: ChatMessage) => void;
   reconcileMessage: (localId: string, serverId: string, jobId?: string) => void;
-  setStreaming: (id: string | null) => void;
+  setStreaming: (id: string | null, jobId?: string | null) => void;
   appendStreamDelta: (delta: string) => void;
   finishStream: () => void;
   setContextItems: (c: ContextItem[]) => void;
@@ -185,9 +197,21 @@ export const useStore = create<AppState>((set) => ({
   providers: [],
   setProviders: (providers) => set({ providers }),
   upsertProvider: (id, patch) => set((state) => ({
-    providers: state.providers.some((p) => p.id === id)
-      ? state.providers.map((p) => (p.id === id ? { ...p, ...patch } : p))
-      : [...state.providers, { id, name: id, role: 'BUILDER', status: 'OFF', ...patch }],
+    providers: state.providers.some((provider) => provider.providerId === id)
+      ? state.providers.map((provider) => (provider.providerId === id ? { ...provider, ...patch } : provider))
+      : [...state.providers, {
+        providerId: id,
+        displayName: id,
+        webUrl: '',
+        support: 'UNSUPPORTED',
+        adapter: '',
+        roles: [],
+        modes: [],
+        enabled: false,
+        authState: 'UNKNOWN',
+        route: '',
+        ...patch,
+      }],
   })),
 
   jobs: [],
@@ -204,13 +228,41 @@ export const useStore = create<AppState>((set) => ({
       testLogs: [],
       contextItems: [],
       changedFiles: [],
+      review: null,
       selectedFileId: null,
       views: [],
       conceptVersion: 0,
       conceptStatus: 'EMPTY',
       conceptPrompt: '',
-      modelInfo: { state: 'EMPTY', geometryStatus: 'IDLE', textureStatus: 'IDLE' },
+      modelInfo: { state: 'IDLE', geometryStatus: 'IDLE', textureStatus: 'IDLE' },
       testState: { status: 'IDLE', elapsedMs: 0, fixAttempt: 0, maxFixAttempts: 3 },
+      streamingMessageId: null,
+      streamingJobId: null,
+      streamingContent: '',
+    };
+  }),
+  projectJobSnapshot: (snapshot) => set((state) => {
+    if (state.currentJobId !== snapshot.jobId) return {};
+    return {
+      messages: uniqueMessages(snapshot.messages),
+      activities: snapshot.activities,
+      artifacts: snapshot.artifacts,
+      contextItems: snapshot.contextItems,
+      changedFiles: snapshot.changedFiles,
+      review: snapshot.review,
+      selectedFileId: null,
+      views: snapshot.views,
+      conceptVersion: snapshot.concept.version,
+      conceptStatus: snapshot.concept.status,
+      conceptPrompt: snapshot.concept.prompt ?? '',
+      modelInfo: snapshot.modelInfo,
+      testState: snapshot.testState,
+      testCases: snapshot.testCases,
+      testFailures: snapshot.testFailures,
+      testLogs: snapshot.testLogs,
+      streamingMessageId: null,
+      streamingJobId: null,
+      streamingContent: '',
     };
   }),
 
@@ -237,11 +289,14 @@ export const useStore = create<AppState>((set) => ({
   })),
 
   streamingMessageId: null,
+  streamingJobId: null,
   streamingContent: '',
 
   contextItems: [],
 
   changedFiles: [],
+  review: null,
+  setReview: (review) => set({ review }),
   selectedFileId: null,
   setSelectedFileId: (id) => set({ selectedFileId: id }),
 
@@ -250,11 +305,15 @@ export const useStore = create<AppState>((set) => ({
   conceptStatus: 'EMPTY',
   conceptPrompt: '',
 
-  modelInfo: { state: 'EMPTY', geometryStatus: 'IDLE', textureStatus: 'IDLE' },
+  modelInfo: { state: 'IDLE', geometryStatus: 'IDLE', textureStatus: 'IDLE' },
 
   assets: [],
 
   studioState: 'OFFLINE',
+  studioDiscovery: null,
+  setStudioDiscovery: (studioDiscovery) => set({ studioDiscovery }),
+  projectIdentity: null,
+  setProjectIdentity: (projectIdentity) => set({ projectIdentity }),
   studioTree: [],
   selectedStudioNode: null,
   setSelectedStudioNode: (node) => set({ selectedStudioNode: node }),
@@ -307,7 +366,7 @@ export const useStore = create<AppState>((set) => ({
   addJob: (job) => set((state) => ({ jobs: [job, ...state.jobs.filter((item) => item.id !== job.id)] })),
   upsertJob: (job) => set((state) => ({ jobs: [job, ...state.jobs.filter((item) => item.id !== job.id)] })),
   updateJob: (id, patch) =>
-    set((state) => ({ jobs: state.jobs.map((j) => (j.id === id ? { ...j, ...patch, updatedAt: Date.now() } : j)) })),
+    set((state) => ({ jobs: state.jobs.map((j) => (j.id === id ? { ...j, ...patch, updatedAt: patch.updatedAt ?? Date.now() } : j)) })),
   setMessages: (messages) => set({ messages: uniqueMessages(messages) }),
   addMessage: (message) => set((state) => ({ messages: uniqueMessages([...state.messages, message]) })),
   reconcileMessage: (localId, serverId, jobId) => set((state) => {
@@ -320,7 +379,7 @@ export const useStore = create<AppState>((set) => ({
       )),
     };
   }),
-  setStreaming: (id) => set({ streamingMessageId: id, streamingContent: '' }),
+  setStreaming: (id, jobId = null) => set({ streamingMessageId: id, streamingJobId: jobId, streamingContent: '' }),
   appendStreamDelta: (delta) => set((state) => ({ streamingContent: state.streamingContent + delta })),
   finishStream: () =>
     set((state) => {
@@ -330,8 +389,16 @@ export const useStore = create<AppState>((set) => ({
         role: 'zenless',
         content: state.streamingContent,
         timestamp: Date.now(),
+        jobId: state.streamingJobId ?? undefined,
       };
-      return { messages: uniqueMessages([...state.messages, msg]), streamingMessageId: null, streamingContent: '' };
+      return {
+        messages: state.messages.some((message) => message.id === msg.id)
+          ? state.messages
+          : uniqueMessages([...state.messages, msg]),
+        streamingMessageId: null,
+        streamingJobId: null,
+        streamingContent: '',
+      };
     }),
   setContextItems: (c) => set({ contextItems: c }),
   setChangedFiles: (f) => set({ changedFiles: f }),
@@ -343,7 +410,11 @@ export const useStore = create<AppState>((set) => ({
   setStudioState: (s) => set({ studioState: s }),
   setStudioTree: (t) => set({ studioTree: t }),
   setTestState: (t) => set({ testState: t }),
-  addTestLog: (log) => set((state) => ({ testLogs: [...state.testLogs, log] })),
+  addTestLog: (log) => set((state) => ({
+    testLogs: state.testLogs.some((item) => item.id === log.id)
+      ? state.testLogs.map((item) => (item.id === log.id ? { ...item, ...log } : item))
+      : [...state.testLogs, log],
+  })),
   setTestLogs: (logs) => set({ testLogs: logs }),
   setTestCases: (cases) => set({ testCases: cases }),
   upsertTestCase: (testCase) =>
@@ -356,7 +427,11 @@ export const useStore = create<AppState>((set) => ({
       };
     }),
   setTestFailures: (failures) => set({ testFailures: failures }),
-  addTestFailure: (failure) => set((state) => ({ testFailures: [...state.testFailures, failure] })),
+  addTestFailure: (failure) => set((state) => ({
+    testFailures: state.testFailures.some((item) => item.id === failure.id)
+      ? state.testFailures.map((item) => (item.id === failure.id ? { ...item, ...failure } : item))
+      : [...state.testFailures, failure],
+  })),
   resetTestDetails: () => set({ testCases: [], testFailures: [] }),
   setSettings: (s) => set({ settings: s }),
   addDiagnostic: (d) => set((state) => ({ diagnostics: [...state.diagnostics, d] })),

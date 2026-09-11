@@ -10,6 +10,7 @@ export function DiffViewer({ file, onSaveContent }: DiffViewerProps) {
   const [editing, setEditing] = useState(false);
   const [editContent, setEditContent] = useState('');
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState('');
 
   const handleStartEdit = () => {
     const content = file.diff
@@ -23,11 +24,12 @@ export function DiffViewer({ file, onSaveContent }: DiffViewerProps) {
   const handleSave = async () => {
     if (!onSaveContent) return;
     setSaving(true);
+    setSaveError('');
     try {
       await onSaveContent(file.id, editContent);
       setEditing(false);
-    } catch {
-      // error handled upstream
+    } catch (error) {
+      setSaveError(error instanceof Error && error.message ? error.message : 'The change could not be saved.');
     } finally {
       setSaving(false);
     }
@@ -35,7 +37,6 @@ export function DiffViewer({ file, onSaveContent }: DiffViewerProps) {
 
   return (
     <div className="flex flex-col h-full bg-ink-950 border border-ink-700 rounded overflow-hidden">
-      {/* File Header */}
       <div className="flex items-center justify-between px-4 h-9 bg-ink-900 border-b border-ink-700">
         <div className="flex items-center gap-3 font-mono text-xs">
           <span className="font-semibold text-ink-100">{file.name}</span>
@@ -85,7 +86,11 @@ export function DiffViewer({ file, onSaveContent }: DiffViewerProps) {
         </div>
       </div>
 
-      {/* Content / Diff view */}
+      {saveError && (
+        <div role="alert" className="px-3 py-2 text-2xs text-zen-errBright border-b border-zen-err/30 bg-zen-err/10">
+          {saveError}
+        </div>
+      )}
       {editing ? (
         <div className="flex-1 p-2 bg-ink-950">
           <textarea
