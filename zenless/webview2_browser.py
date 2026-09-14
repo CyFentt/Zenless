@@ -17,6 +17,7 @@ from .browser_bridge import BridgeError, LoginWindowOpenedCallback, StatusCallba
 from .diagnostics import ErrorBus
 from .managed_browser import PROVIDERS, ProviderSpec
 from .native_host import read_native_message, write_native_message
+from .provider_failures import failure_from_error
 
 
 @dataclass(slots=True)
@@ -143,11 +144,14 @@ class WebView2BrowserController:
             return False
         ready = bool(result.get("ready"))
         state = str(result.get("state") or ("AUTHENTICATED" if ready else "UNKNOWN"))
-        self._set_state(
-            provider,
-            "Ready" if ready else state.replace("_", " ").title(),
-            "Authenticated WebView2 session" if ready else self._login_detail(state),
-        )
+        with self._states_lock:
+            current_state = str(self._states.get(provider, {}).get("state") or "")
+        if not ready or not self._is_availability_failure(current_state):
+            self._set_state(
+                provider,
+                "Ready" if ready else state.replace("_", " ").title(),
+                "Authenticated WebView2 session" if ready else self._login_detail(state),
+            )
         return ready
 
     def login(
@@ -228,14 +232,24 @@ class WebView2BrowserController:
             self.start()
         request_payload = dict(payload)
         request_payload.update({"provider_action": action, "task_id": task_id})
-        self._set_state(provider, "Working", f"WebView2: {action}")
-        result = self._request(
-            "request",
-            provider,
-            request_payload,
-            timeout=timeout,
-            stream_callback=stream_callback,
-        )
+        preserve_availability = action in {"capabilities", "get_models"}
+        if not preserve_availability:
+            self._set_state(provider, "Working", f"WebView2: {action}")
+        try:
+            result = self._request(
+                "request",
+                provider,
+                request_payload,
+                timeout=timeout,
+                stream_callback=stream_callback,
+            )
+        except BridgeError as exc:
+            failure = failure_from_error(str(exc))
+            if failure is not None:
+                self._set_state(provider, failure.state.value.replace("_", " ").title(), failure.message)
+            else:
+                self._set_state(provider, "Error", str(exc)[:500])
+            raise
         if (
             action in {"generate_3d", "generate_geometry", "generate_texture"}
             and result.get("artifact_url")
@@ -246,7 +260,8 @@ class WebView2BrowserController:
             except Exception as exc:
                 result["download_error"] = str(exc)
                 self._report(exc, "artifact-download")
-        self._set_state(provider, "Ready", "WebView2 session idle")
+        if not preserve_availability:
+            self._set_state(provider, "Ready", "WebView2 session idle")
         return result
 
     def _download_artifact(self, url: str, task_id: str) -> Path:
@@ -396,6 +411,16 @@ class WebView2BrowserController:
             self._states[provider] = {"state": state, "detail": detail, "transport": "webview2"}
         if self.status_callback is not None:
             self.status_callback(provider, state, detail)
+
+    @staticmethod
+    def _is_availability_failure(state: str) -> bool:
+        return state.strip().replace("_", " ").casefold() in {
+            "rate limited",
+            "quota exhausted",
+            "model unavailable",
+            "temp unavailable",
+            "temporarily unavailable",
+        }
 
     @staticmethod
     def _login_detail(state: str) -> str:

@@ -133,6 +133,7 @@ class ZenlessOrchestrator:
         options: TaskOptions,
         *,
         attachment_paths: tuple[Path, ...] = (),
+        attachment_context: str = "",
     ) -> str:
         objective = prompt.strip()
         if not objective:
@@ -142,7 +143,7 @@ class ZenlessOrchestrator:
         pause_event = threading.Event()
         thread = threading.Thread(
             target=self._run_guarded,
-            args=(task_id, objective, options, cancel_event, attachment_paths),
+            args=(task_id, objective, options, cancel_event, attachment_paths, attachment_context),
             name=f"Zenless-Task-{task_id[:8]}",
             daemon=True,
         )
@@ -301,10 +302,11 @@ class ZenlessOrchestrator:
         options: TaskOptions,
         cancel_event: threading.Event,
         attachment_paths: tuple[Path, ...],
+        attachment_context: str,
     ) -> None:
         try:
             with self._run_lock:
-                self._run(task_id, objective, options, cancel_event, attachment_paths)
+                self._run(task_id, objective, options, cancel_event, attachment_paths, attachment_context)
         except TaskCancelled as exc:
             self._finish_error(task_id, Stage.BLOCKED, str(exc))
         except TaskBlocked as exc:
@@ -336,6 +338,7 @@ class ZenlessOrchestrator:
         options: TaskOptions,
         cancel_event: threading.Event,
         attachment_paths: tuple[Path, ...],
+        attachment_context: str,
     ) -> None:
         self._check_control(task_id, cancel_event)
         options = options.resolve(objective)
@@ -378,6 +381,9 @@ class ZenlessOrchestrator:
         options = self._resolve_effort(options, analysis, context)
         context["effort"] = {"requested": requested_effort, "resolved": options.effort}
         context["research"] = self._perform_research(task_id, objective, options, analysis, context)
+        if attachment_context:
+            context["attachments"] = {"delivery": "INLINE_TEXT", "content": attachment_context}
+            self._emit(task_id, Stage.COLLECTING_CONTEXT, "Attached project files were encoded as bounded text context.")
         self.store.update_task(task_id, context_json=context)
 
         builder = self._provider(task_id, "BUILDER")

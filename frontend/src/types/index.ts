@@ -469,6 +469,7 @@ export interface ModelOption {
   id: string;
   label: string;
   available?: boolean;
+  source?: "LIVE" | "CONFIGURED";
 }
 
 export interface ModelSettings {
@@ -479,9 +480,15 @@ export interface ModelSettings {
 }
 
 export interface ModelCatalog {
-  chatgpt: { models: ModelOption[]; reasoningOptions?: ModelOption[] };
-  deepseek: { models: ModelOption[]; reasoningOptions?: ModelOption[] };
-  hunyuan: { versions: ModelOption[]; qualities: ModelOption[] };
+  chatgpt: ProviderModelCatalog & { models: ModelOption[] };
+  deepseek: ProviderModelCatalog & { models: ModelOption[] };
+  hunyuan: ProviderModelCatalog & { versions: ModelOption[]; qualities: ModelOption[] };
+}
+
+export interface ProviderModelCatalog {
+  modes?: ProviderMode[];
+  selection?: Record<string, unknown>;
+  liveCapabilities?: ProviderCapabilities | null;
 }
 
 export interface Settings {
@@ -598,6 +605,8 @@ export interface ProviderCapabilities {
   supportsDownload: boolean;
   supportsCancel: boolean;
   supportsStreaming: boolean;
+  supportsModelSelection?: boolean;
+  supportsModeSelection?: boolean;
   source?: string;
   detectedAt?: number;
 }
@@ -632,7 +641,19 @@ export interface ProviderDescriptor {
   liveCapabilities?: ProviderCapabilities | null;
   status?: ConnectionStatus;
   loginState?: ProviderLoginState;
+  availabilityState?: ProviderAvailabilityState;
 }
+
+export type ProviderAvailabilityState =
+  | "UNKNOWN"
+  | "READY"
+  | "BUSY"
+  | "RATE_LIMITED"
+  | "QUOTA_EXHAUSTED"
+  | "MODEL_UNAVAILABLE"
+  | "LOGIN_REQUIRED"
+  | "TEMP_UNAVAILABLE"
+  | "ERROR";
 
 export type ProviderLoginState = "IDLE" | "OPENING" | "WAITING" | "VERIFYING" | "READY" | "FAILED";
 

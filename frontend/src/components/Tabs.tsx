@@ -20,9 +20,9 @@ export function Tabs({ tabs, active, onChange, right }: TabsProps) {
           <button
             key={tab.id}
             onClick={() => onChange(tab.id)}
-            className={`px-3 h-7 text-xs font-medium uppercase tracking-wider transition-colors duration-150 ${
+            className={`relative px-3 h-7 text-xs font-medium uppercase tracking-wider transition-all duration-150 ${
               active === tab.id
-                ? 'text-ink-0 border-b border-ink-0 -mb-px'
+                ? 'text-ink-0 border-b border-ink-0 -mb-px bg-ink-850'
                 : 'text-ink-300 hover:text-ink-100 border-b border-transparent'
             }`}
           >
@@ -63,13 +63,13 @@ export function Toggle({ checked, onChange, label }: { checked: boolean; onChang
   return (
     <button
       onClick={() => onChange(!checked)}
-      className="inline-flex items-center gap-2"
+        className="inline-flex items-center gap-2 group"
       role="switch"
       aria-checked={checked}
       aria-label={label}
     >
-      <span className={`relative w-8 h-4 border transition-colors duration-150 ${checked ? 'bg-ink-600 border-ink-500' : 'bg-ink-800 border-ink-600'}`}>
-        <span className={`absolute top-0.5 w-2.5 h-2.5 transition-transform duration-150 ${checked ? 'left-4 bg-ink-0' : 'left-0.5 bg-ink-300'}`} />
+      <span className={`relative w-8 h-4 border transition-all duration-200 group-hover:border-ink-300 ${checked ? 'bg-ink-500 border-ink-300' : 'bg-ink-850 border-ink-600'}`}>
+        <span className={`absolute top-0.5 left-0.5 w-2.5 h-2.5 transition-transform duration-200 ease-out ${checked ? 'translate-x-4 bg-ink-0' : 'translate-x-0 bg-ink-300'}`} />
       </span>
       {label && <span className="text-xs text-ink-100">{label}</span>}
     </button>
@@ -99,7 +99,7 @@ export function Select({ value, options, onChange, label }: SelectProps) {
       {open && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute z-50 mt-1 w-full bg-ink-800 border border-ink-600 max-h-40 overflow-y-auto scrollbar-zen">
+          <div className="absolute z-50 mt-1 w-full bg-ink-800 border border-ink-600 max-h-40 overflow-y-auto scrollbar-zen animate-reveal shadow-panel">
             {options.map((opt) => (
               <button
                 key={opt.id}

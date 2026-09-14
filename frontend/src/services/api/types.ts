@@ -48,9 +48,11 @@ export interface ZenlessAPI {
 
   getConnections(): Promise<ConnectionInfo>;
   getAgents(): Promise<AgentInfo[]>;
-  getProviders(): Promise<ProviderDescriptor[]>;
+  getProviders(refresh?: boolean): Promise<ProviderDescriptor[]>;
   getReadiness(): Promise<ReadinessStateInfo>;
   loginProvider(provider: ProviderId): Promise<{ ok: boolean }>;
+  refreshProvider(provider: ProviderId): Promise<ProviderDescriptor>;
+  selectProvider(provider: ProviderId, selection: { model?: string; mode?: string; route?: string }): Promise<ProviderDescriptor>;
 
   getJobs(): Promise<Job[]>;
   getJob(id: string): Promise<Job>;
@@ -106,7 +108,7 @@ export interface ZenlessAPI {
 
   getSettings(): Promise<Settings>;
   updateSettings(partial: Partial<Settings>): Promise<Settings>;
-  getModels(): Promise<ModelCatalog>;
+  getModels(refresh?: boolean): Promise<ModelCatalog>;
   setModel(agent: 'chatgpt' | 'deepseek' | 'hunyuan', model: string): Promise<{ ok: boolean }>;
   setSmartRouting(enabled: boolean): Promise<{ ok: boolean }>;
 

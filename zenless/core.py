@@ -12,7 +12,13 @@ from pathlib import Path
 from typing import Any
 
 from .agent_gateway import AgentGateway
-from .attachments import AttachmentError, AttachmentInspector, AttachmentRouter, ProviderFileCapability
+from .attachments import (
+    AttachmentError,
+    AttachmentInspector,
+    AttachmentRouter,
+    AttachmentTextEncoder,
+    ProviderFileCapability,
+)
 from .browser_bridge import BridgeError
 from .diagnostics import DiagnosticEvent, ErrorBus
 from .event_bus import EventBus
@@ -20,6 +26,7 @@ from .managed_browser import ManagedBrowserController
 from .models import PipelineEvent, Stage, TaskOptions
 from .orchestrator import OrchestratorError, ZenlessOrchestrator
 from .policy import is_read_only
+from .provider_failures import ProviderAvailability
 from .provider_registry import (
     BUILTIN_MANIFESTS,
     AuthState,
@@ -133,6 +140,7 @@ class ZenlessCore:
         self.storage = StorageManager(self.data_root, budget_bytes=int(stored_budget))
         self.tools = ToolManager(self.data_root / "tools", DEFAULT_TOOL_MANIFESTS)
         self.attachments = AttachmentRouter(AttachmentInspector())
+        self.attachment_text = AttachmentTextEncoder()
         self.uninstaller = UninstallManager(self.resource_root, self.data_root)
         self.system_diagnostics = SystemDiagnostics(self.data_root)
         self._closing = threading.Event()
@@ -404,10 +412,19 @@ class ZenlessCore:
         result["selection"] = dict(selections.get(provider_id) or {})
         result["roles"] = list(assigned.get(provider_id) or manifest.roles)
         if not manifest.enabled:
-            result.update({"authState": AuthState.UNKNOWN.value, "route": "", "liveCapabilities": None})
+            result.update(
+                {
+                    "authState": AuthState.UNKNOWN.value,
+                    "availabilityState": ProviderAvailability.UNKNOWN.value,
+                    "route": "",
+                    "liveCapabilities": None,
+                }
+            )
             return result
         status = self.bridge.provider_status().get(provider_id, {})
-        result["authState"] = self._provider_auth_state(str(status.get("state") or "UNKNOWN")).value
+        provider_state = str(status.get("state") or "UNKNOWN")
+        result["authState"] = self._provider_auth_state(provider_state).value
+        result["availabilityState"] = self._provider_availability_state(provider_state).value
         result["route"] = str(status.get("route") or status.get("transport") or self.bridge.selected_route(provider_id))
         result["detail"] = str(status.get("detail") or "")
         metadata = getattr(self.bridge, "session_metadata", None)
@@ -419,6 +436,7 @@ class ZenlessCore:
                 raw = response.get("capabilities")
                 result["liveCapabilities"] = normalize_capabilities(dict(raw) if isinstance(raw, dict) else {})
                 result["authState"] = AuthState.READY.value
+                result["availabilityState"] = ProviderAvailability.READY.value
             except BridgeError as exc:
                 result["detail"] = str(exc)
         return result
@@ -598,16 +616,19 @@ class ZenlessCore:
         options: dict[str, Any] | TaskOptions | None = None,
         *,
         attachments: tuple[Path, ...] = (),
+        attachment_assets: tuple[Path, ...] = (),
+        attachment_context: str = "",
     ) -> dict[str, Any]:
         try:
             task_id = self.orchestrator.submit(
                 title,
                 (options if isinstance(options, TaskOptions) else TaskOptions.from_api(options)).resolve(title),
                 attachment_paths=attachments,
+                attachment_context=attachment_context,
             )
         except OrchestratorError as exc:
             raise CoreError("JOB_BUSY", str(exc), status=409) from exc
-        for path in attachments:
+        for path in attachment_assets or attachments:
             self._register_file_asset(path, job_id=task_id, kind="IMG" if self._is_image(path) else "RBX")
         return self.job(task_id)
 
@@ -662,8 +683,14 @@ class ZenlessCore:
         task_options = TaskOptions.from_api(options).resolve(objective)
         roles = self._preflight_providers(task_options)
         builder = roles["BUILDER"]
-        prepared = self._prepare_attachments(attachments, builder) if attachments else attachments
-        job = self.create_job(objective, options=task_options, attachments=prepared)
+        prepared, attachment_context = self._prepare_attachment_delivery(attachments, builder)
+        job = self.create_job(
+            objective,
+            options=task_options,
+            attachments=prepared,
+            attachment_assets=attachments,
+            attachment_context=attachment_context,
+        )
         user_messages = [message for message in self.messages(job["id"]) if message["role"] == "user"]
         message_id = user_messages[-1]["id"] if user_messages else uuid.uuid4().hex
         return {"messageId": message_id, "jobId": job["id"]}
@@ -1344,10 +1371,20 @@ class ZenlessCore:
             return json.loads(json.dumps(self._model_cache[1]))
         settings = self.settings()["models"]
         catalog: dict[str, Any] = {
-            "chatgpt": {"models": [{"id": settings["chatgpt"]["model"], "label": settings["chatgpt"]["model"]}]},
-            "deepseek": {"models": [{"id": settings["deepseek"]["model"], "label": settings["deepseek"]["model"]}]},
+            "chatgpt": {
+                "models": [
+                    {"id": settings["chatgpt"]["model"], "label": settings["chatgpt"]["model"], "source": "CONFIGURED"}
+                ]
+            },
+            "deepseek": {
+                "models": [
+                    {"id": settings["deepseek"]["model"], "label": settings["deepseek"]["model"], "source": "CONFIGURED"}
+                ]
+            },
             "hunyuan": {
-                "versions": [{"id": settings["hunyuan"]["version"], "label": settings["hunyuan"]["version"]}],
+                "versions": [
+                    {"id": settings["hunyuan"]["version"], "label": settings["hunyuan"]["version"], "source": "CONFIGURED"}
+                ],
                 "qualities": [
                     {"id": "standard", "label": "Standard"},
                     {"id": "high", "label": "High"},
@@ -1359,18 +1396,28 @@ class ZenlessCore:
                 continue
             try:
                 response = self.bridge.request(provider, "get_models", {}, task_id="settings", timeout=8)
-                names = [str(item).strip() for item in response.get("models", []) if str(item).strip()]
+                discovered = response.get("models", [])
             except BridgeError:
-                names = []
-            if not names:
+                discovered = []
+            options: list[dict[str, Any]] = []
+            if isinstance(discovered, list):
+                for item in discovered:
+                    if isinstance(item, dict):
+                        model_id = str(item.get("id") or "").strip()
+                        label = str(item.get("label") or model_id).strip()
+                    else:
+                        model_id = str(item).strip()
+                        label = model_id
+                    if model_id and label and not any(existing["id"] == model_id for existing in options):
+                        options.append({"id": model_id, "label": label, "source": "LIVE"})
+            if not options:
                 continue
-            options = [{"id": name, "label": name} for name in names]
             if provider == "hunyuan":
                 catalog[provider]["versions"] = options
             else:
                 catalog[provider]["models"] = options
         for provider in ("chatgpt", "deepseek", "hunyuan"):
-            detail = self.provider(provider, refresh=False)
+            detail = self.provider(provider, refresh=refresh)
             catalog[provider]["modes"] = detail.get("modes", [])
             catalog[provider]["selection"] = detail.get("selection", {})
             catalog[provider]["liveCapabilities"] = detail.get("liveCapabilities")
@@ -2185,6 +2232,33 @@ class ZenlessCore:
             )
         return tuple(item.path for batch in route.batches for item in batch)
 
+    def _prepare_attachment_delivery(self, paths: tuple[Path, ...], provider: str) -> tuple[tuple[Path, ...], str]:
+        if not paths:
+            return (), ""
+        try:
+            response = self.bridge.request(provider, "capabilities", {}, task_id="attachment-routing", timeout=15)
+        except BridgeError as exc:
+            raise CoreError(
+                "PROVIDER_CAPABILITY_UNAVAILABLE",
+                "The provider attachment limits could not be verified.",
+                status=409,
+                details={"provider": provider},
+            ) from exc
+        raw = response.get("capabilities")
+        capabilities = normalize_capabilities(dict(raw) if isinstance(raw, dict) else {})
+        if bool(capabilities.get("supportsFiles")):
+            return self._prepare_attachments(paths, provider), ""
+        try:
+            encoded = self.attachment_text.encode(paths, extraction_root=self.data_root / "tmp" / "inline")
+        except AttachmentError as exc:
+            raise CoreError(
+                exc.code,
+                str(exc) + " Select a file-capable mode or remove the incompatible file.",
+                status=409,
+                details={"provider": provider},
+            ) from exc
+        return (), encoded.text
+
     def _boot_state(self, stage: str) -> str:
         with self._boot_lock:
             match = next((item for item in self._boot_steps if item["stage"] == stage), None)
@@ -2401,7 +2475,16 @@ class ZenlessCore:
             "verifying persistence",
         }:
             return "CONNECTING"
-        if value in {"error", "failed", "unavailable", "runtime required"}:
+        if value in {
+            "error",
+            "failed",
+            "unavailable",
+            "runtime required",
+            "rate limited",
+            "quota exhausted",
+            "model unavailable",
+            "temp unavailable",
+        }:
             return "ERR"
         return "OFF"
 
@@ -2424,6 +2507,10 @@ class ZenlessCore:
             "connected": AuthState.READY,
             "idle": AuthState.READY,
             "working": AuthState.READY,
+            "rate limited": AuthState.READY,
+            "quota exhausted": AuthState.READY,
+            "model unavailable": AuthState.READY,
+            "temp unavailable": AuthState.READY,
             "expired": AuthState.EXPIRED,
             "error": AuthState.ERROR,
             "err": AuthState.ERROR,
@@ -2431,6 +2518,30 @@ class ZenlessCore:
             "unavailable": AuthState.ERROR,
         }
         return mapping.get(value, AuthState.UNKNOWN)
+
+    @staticmethod
+    def _provider_availability_state(state: str) -> ProviderAvailability:
+        value = state.strip().replace("_", " ").casefold()
+        mapping = {
+            "ready": ProviderAvailability.READY,
+            "connected": ProviderAvailability.READY,
+            "idle": ProviderAvailability.READY,
+            "working": ProviderAvailability.BUSY,
+            "rate limited": ProviderAvailability.RATE_LIMITED,
+            "quota exhausted": ProviderAvailability.QUOTA_EXHAUSTED,
+            "model unavailable": ProviderAvailability.MODEL_UNAVAILABLE,
+            "temp unavailable": ProviderAvailability.TEMP_UNAVAILABLE,
+            "temporarily unavailable": ProviderAvailability.TEMP_UNAVAILABLE,
+            "login": ProviderAvailability.LOGIN_REQUIRED,
+            "login required": ProviderAvailability.LOGIN_REQUIRED,
+            "standby": ProviderAvailability.LOGIN_REQUIRED,
+            "off": ProviderAvailability.LOGIN_REQUIRED,
+            "error": ProviderAvailability.ERROR,
+            "err": ProviderAvailability.ERROR,
+            "failed": ProviderAvailability.ERROR,
+            "unavailable": ProviderAvailability.TEMP_UNAVAILABLE,
+        }
+        return mapping.get(value, ProviderAvailability.UNKNOWN)
 
     @staticmethod
     def _merge_models(current: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:

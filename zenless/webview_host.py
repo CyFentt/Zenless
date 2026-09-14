@@ -14,6 +14,7 @@ from typing import Any, BinaryIO, cast
 
 from .managed_browser import PROVIDERS, ProviderSpec
 from .native_host import read_native_message, write_native_message
+from .provider_failures import classify_provider_failure
 from .provider_registry import normalize_capabilities
 
 
@@ -390,12 +391,22 @@ class WebViewHost:
     def _select_model(window: Any, model: str) -> dict[str, Any]:
         if not model.strip():
             raise ValueError("Model name is empty")
+        window.evaluate_js(
+            "[...document.querySelectorAll('[data-testid*=\"model\" i],button[aria-label*=\"model\" i],button[class*=\"model\" i]')]"
+            ".find(node => { const style=getComputedStyle(node); return style.display!=='none' && style.visibility!=='hidden'; })?.click()"
+        )
+        time.sleep(0.35)
         result = window.evaluate_js(
             f"""
             (() => {{
               const wanted = {json.dumps(model.casefold())};
-              const nodes = [...document.querySelectorAll('[role="option"], [role="menuitem"], [data-model], button')];
-              const target = nodes.find(node => (node.innerText || node.textContent || '').trim().toLocaleLowerCase().includes(wanted));
+              const visible = node => {{ const style=getComputedStyle(node); const box=node.getBoundingClientRect(); return style.display!=='none' && style.visibility!=='hidden' && box.width>0 && box.height>0; }};
+              const nodes = [...document.querySelectorAll('[data-model], [role="option"], [role="menuitem"]')];
+              const target = nodes.find(node => {{
+                const label = (node.innerText || node.textContent || '').trim().toLocaleLowerCase();
+                const identity = (node.getAttribute('data-model') || label).trim().toLocaleLowerCase();
+                return visible(node) && (identity === wanted || label === wanted);
+              }});
               if (!target) return {{ok: false}};
               target.click();
               return {{ok: true, selected: (target.innerText || target.textContent || '').trim()}};
@@ -408,18 +419,24 @@ class WebViewHost:
 
     @staticmethod
     def _discover_models(window: Any) -> dict[str, Any]:
+        trigger = window.evaluate_js(
+            "(() => { const visible=node=>{const style=getComputedStyle(node);const box=node.getBoundingClientRect();return style.display!=='none'&&style.visibility!=='hidden'&&box.width>0&&box.height>0};"
+            "const node=[...document.querySelectorAll('[data-testid*=\"model\" i],button[aria-label*=\"model\" i],button[class*=\"model\" i]')].find(visible);"
+            "if(!node)return '';const value=(node.getAttribute('data-model')||node.innerText||node.textContent||'').trim();node.click();return value.length<=120?value:'';})()"
+        )
+        time.sleep(0.35)
         result = window.evaluate_js(
             """
             (() => {
-              const selectors = [
-                '[data-model]', '[role="option"]', '[role="menuitem"]',
-                'button[aria-haspopup="listbox"]', 'button[aria-haspopup="menu"]'
-              ];
+              const selectors = ['[data-model]', '[role="option"]', '[role="menuitem"]'];
               const values = [];
+              const visible = node => { const style=getComputedStyle(node); const box=node.getBoundingClientRect(); return style.display!=='none' && style.visibility!=='hidden' && box.width>0 && box.height>0; };
               for (const selector of selectors) {
                 for (const node of document.querySelectorAll(selector)) {
-                  const value = (node.getAttribute('data-model') || node.innerText || node.textContent || '').trim();
-                  if (value && value.length <= 120 && !values.includes(value)) values.push(value);
+                  if (!visible(node)) continue;
+                  const label = (node.innerText || node.textContent || '').trim();
+                  const id = (node.getAttribute('data-model') || label).trim();
+                  if (id && label && label.length <= 120 && !values.some(value => value.id === id)) values.push({id, label});
                   if (values.length >= 30) return values;
                 }
               }
@@ -427,8 +444,11 @@ class WebViewHost:
             })()
             """
         )
-        models = [str(item).strip() for item in result] if isinstance(result, list) else []
-        return {"status": "ok", "models": [item for item in models if item], "transport": "webview2"}
+        models = [dict(item) for item in result if isinstance(item, dict)] if isinstance(result, list) else []
+        trigger_text = str(trigger or "").strip()
+        if trigger_text and not any(item.get("label") == trigger_text for item in models):
+            models.insert(0, {"id": trigger_text, "label": trigger_text})
+        return {"status": "ok", "models": models, "transport": "webview2"}
 
     def _select_mode(self, window: Any, spec: ProviderSpec, mode: str) -> dict[str, Any]:
         normalized = mode.strip().casefold()
@@ -531,6 +551,7 @@ class WebViewHost:
             raise RuntimeError(str(reason))
         before_count = int(setup.get("beforeCount") or 0)
         before_text = str(setup.get("beforeText") or "")
+        before_alert = str(setup.get("beforeAlert") or "")
         timeout_ms = int(payload.get("timeout_ms") or 360_000)
         deadline = time.monotonic() + max(10.0, min(900.0, timeout_ms / 1000))
         last_text = ""
@@ -539,6 +560,10 @@ class WebViewHost:
             state = window.evaluate_js(self._response_script(spec))
             if not isinstance(state, dict):
                 continue
+            alert = str(state.get("alertText") or "")
+            failure = classify_provider_failure(alert) if alert and alert != before_alert else None
+            if failure is not None:
+                raise RuntimeError(failure.bridge_message())
             text = str(state.get("text") or "").strip()
             count = int(state.get("count") or 0)
             is_new = count > before_count or bool(text and text != before_text)
@@ -675,6 +700,8 @@ class WebViewHost:
             }}
             return nodes;
           }};
+          const alerts = () => [...document.querySelectorAll('[role="alert"],[aria-live="assertive"],[data-testid*="toast" i],[class*="toast" i]')]
+            .filter(visible).map(node => (node.innerText || node.textContent || '').trim()).filter(Boolean).join('\\n').slice(0, 2000);
           const input = first(inputSelectors);
           if (!input) return {{ok: false, error: 'Login required or composer selector changed'}};
           const before = responses();
@@ -693,7 +720,7 @@ class WebViewHost:
           const sender = first(sendSelectors);
           if (!sender || sender.disabled) return {{ok: false, error: 'Send button unavailable'}};
           sender.click();
-          return {{ok: true, beforeCount: before.length, beforeText}};
+          return {{ok: true, beforeCount: before.length, beforeText, beforeAlert: alerts()}};
         }})()
         """
 
@@ -717,9 +744,12 @@ class WebViewHost:
             }}
           }}
           const last = nodes.at(-1);
+          const alertText = [...document.querySelectorAll('[role="alert"],[aria-live="assertive"],[data-testid*="toast" i],[class*="toast" i]')]
+            .filter(visible).map(node => (node.innerText || node.textContent || '').trim()).filter(Boolean).join('\\n').slice(0, 2000);
           return {{
             count: nodes.length,
             text: (last?.innerText || last?.textContent || '').trim(),
+            alertText,
             streaming: stopSelectors.some(selector => [...document.querySelectorAll(selector)].some(visible))
           }};
         }})()

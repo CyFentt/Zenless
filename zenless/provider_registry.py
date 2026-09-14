@@ -296,6 +296,8 @@ def normalize_capabilities(raw: dict[str, Any], *, source: str = "LIVE") -> dict
         "select_model": supports_models,
         "get_models": supports_models,
         "select_mode": supports_modes,
+        "supportsModelSelection": supports_models,
+        "supportsModeSelection": supports_modes,
         "geometry": supports_geometry,
         "texture": supports_texture,
         "download_artifact": supports_download,

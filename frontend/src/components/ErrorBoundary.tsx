@@ -25,7 +25,7 @@ export class ErrorBoundary extends Component<Props, State> {
     if (this.state.hasError) {
       return (
         <div className="flex flex-col items-center justify-center h-screen bg-ink-950 text-ink-150 gap-3">
-          <span className="text-xs uppercase tracking-widest text-zen-errBright">Fatal Error</span>
+          <span className="text-xs uppercase tracking-widest text-ink-0">Fatal Error</span>
           <span className="text-xs text-ink-300 max-w-md text-center font-mono">{this.state.message}</span>
           <button
             onClick={() => window.location.reload()}

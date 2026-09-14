@@ -1,6 +1,5 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { HomePage } from '@/features/home/HomePage';
 import { ApplicationRuntime } from '@/runtime/ApplicationRuntime';
 import { MockZenlessAPI } from '@/services/mock/mockApi';
 import type { JobTimelineSnapshot, ZenlessAPI } from '@/services/api/types';
@@ -145,10 +144,7 @@ describe('ApplicationRuntime', () => {
 
     expect(useStore.getState().booted).toBe(true);
     expect(socket.disconnects).toBe(0);
-    render(<HomePage />);
-    expect(screen.getByText('ChatGPT')).toBeInTheDocument();
-    expect(screen.getByText('DeepSeek')).toBeInTheDocument();
-    expect(screen.getByText('Hunyuan')).toBeInTheDocument();
+    expect(useStore.getState().providers.map((provider) => provider.displayName)).toEqual(['ChatGPT']);
     runtime.stop();
     expect(socket.disconnects).toBe(1);
   });

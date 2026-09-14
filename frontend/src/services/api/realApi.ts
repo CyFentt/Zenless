@@ -178,10 +178,16 @@ export class RealZenlessAPI implements ZenlessAPI {
   getStatus(): Promise<{ ready: boolean }> { return request('/api/status'); }
   getConnections(): Promise<ConnectionInfo> { return request('/api/connections'); }
   getAgents(): Promise<AgentInfo[]> { return request('/api/agents'); }
-  getProviders(): Promise<ProviderDescriptor[]> { return request('/api/providers'); }
+  getProviders(refresh = false): Promise<ProviderDescriptor[]> { return request(`/api/providers${refresh ? '?refresh=1' : ''}`); }
   getReadiness(): Promise<ReadinessStateInfo> { return request('/api/readiness'); }
   loginProvider(provider: ProviderId): Promise<{ ok: boolean }> {
     return request(`/api/providers/${encodeURIComponent(provider)}/login`, { method: 'POST', timeout: 30000 });
+  }
+  refreshProvider(provider: ProviderId): Promise<ProviderDescriptor> {
+    return request(`/api/providers/${encodeURIComponent(provider)}/refresh`, { method: 'POST', timeout: 45000 });
+  }
+  selectProvider(provider: ProviderId, selection: { model?: string; mode?: string; route?: string }): Promise<ProviderDescriptor> {
+    return request(`/api/providers/${encodeURIComponent(provider)}/select`, { method: 'POST', body: selection, timeout: 45000 });
   }
 
   getJobs(): Promise<Job[]> { return request('/api/jobs'); }
@@ -251,7 +257,7 @@ export class RealZenlessAPI implements ZenlessAPI {
 
   getSettings(): Promise<Settings> { return request('/api/settings'); }
   updateSettings(partial: Partial<Settings>): Promise<Settings> { return request('/api/settings', { method: 'PATCH', body: partial }); }
-  getModels(): Promise<ModelCatalog> { return request('/api/settings/models'); }
+  getModels(refresh = false): Promise<ModelCatalog> { return request(`/api/settings/models${refresh ? '?refresh=1' : ''}`); }
   setModel(agent: 'chatgpt' | 'deepseek' | 'hunyuan', model: string): Promise<{ ok: boolean }> { return request('/api/settings/models', { method: 'PUT', body: { agent, model } }); }
   setSmartRouting(enabled: boolean): Promise<{ ok: boolean }> { return request('/api/settings/smart-routing', { method: 'PUT', body: { enabled } }); }
 

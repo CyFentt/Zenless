@@ -33,12 +33,17 @@ describe('TopBar Project Identity & Provider Role', () => {
     expect(screen.queryByText('ARENA')).toBeNull();
   });
 
-  it('separates provider identity from role in status bar', () => {
+  it('summarizes provider readiness without presenting one role as the product', () => {
     useStore.setState({
-      agents: [{ id: 'chatgpt', name: 'ChatGPT', status: 'READY' }],
+      connections: { ...useStore.getState().connections, chatgpt: 'READY' },
+      providers: [{
+        providerId: 'chatgpt', displayName: 'ChatGPT', webUrl: 'https://chatgpt.com', support: 'BETA',
+        adapter: 'web', roles: ['BUILDER'], modes: [], enabled: true, authState: 'READY', route: 'webview2',
+      }],
     });
     render(<TopBar />);
-    expect(screen.getByText('ChatGPT · Builder')).toBeInTheDocument();
+    expect(screen.getByText('AI 1/1')).toBeInTheDocument();
+    expect(screen.queryByText('ChatGPT · Builder')).toBeNull();
   });
 });
 

@@ -5,13 +5,14 @@ export function TopBar() {
   const jobs = useStore((s) => s.jobs);
   const currentJobId = useStore((s) => s.currentJobId);
   const connections = useStore((s) => s.connections);
-  const agents = useStore((s) => s.agents);
+  const providers = useStore((s) => s.providers);
   const socketStatus = useStore((s) => s.socketStatus);
   const studioState = useStore((s) => s.studioState);
   const projectIdentity = useStore((s) => s.projectIdentity);
 
   const currentJob = jobs.find((j) => j.id === currentJobId);
-  const chatgpt = agents.find((a) => a.id === 'chatgpt');
+  const enabledProviders = providers.filter((provider) => provider.enabled);
+  const readyProviders = enabledProviders.filter((provider) => connections[provider.providerId as 'chatgpt' | 'deepseek' | 'hunyuan'] === 'READY').length;
 
   const projectName = projectIdentity?.name.trim();
   const displayProject = projectName
@@ -50,18 +51,16 @@ export function TopBar() {
         )}
       </div>
       <div className="flex items-center gap-4">
-        {chatgpt && (
-          <span className="flex items-center gap-1.5">
-            <span className="text-ink-300">ChatGPT · Builder</span>
-            <StatusDot status={chatgpt.status} />
-          </span>
-        )}
         <span className="flex items-center gap-1.5">
-          <span className="text-ink-300">Roblox Studio</span>
+          <span className="text-ink-300">AI {readyProviders}/{enabledProviders.length || 3}</span>
+          <StatusDot status={readyProviders > 0 ? 'READY' : 'LOGIN'} />
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="text-ink-300">STUDIO</span>
           <StatusDot status={connections.studio} />
         </span>
         <span className="flex items-center gap-1.5">
-          <span className="text-ink-300">WS</span>
+          <span className="text-ink-300">LINK</span>
           <StatusDot
             status={
               socketStatus === 'CONNECTED' ? 'READY' :

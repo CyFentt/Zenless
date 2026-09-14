@@ -14,6 +14,7 @@ from urllib.parse import urlparse
 
 from .browser_bridge import BridgeError, LoginWindowOpenedCallback, StatusCallback
 from .diagnostics import ErrorBus
+from .provider_failures import classify_provider_failure
 from .provider_registry import normalize_capabilities
 
 
@@ -451,11 +452,14 @@ class ManagedBrowserController:
             page = self._ensure_page(command.provider)
             auth_state = self._auth_state(page, self.provider_specs[command.provider])
             ready = auth_state == "AUTHENTICATED"
-            self._set_state(
-                command.provider,
-                "Ready" if ready else "Login Required",
-                "Authenticated managed session" if ready else f"Provider state: {auth_state}",
-            )
+            with self._state_lock:
+                current_state = str(self._states.get(command.provider, {}).get("state") or "")
+            if not ready or not self._is_availability_failure(current_state):
+                self._set_state(
+                    command.provider,
+                    "Ready" if ready else "Login Required",
+                    "Authenticated managed session" if ready else f"Provider state: {auth_state}",
+                )
             return {
                 "ready": ready,
                 "runtime": "ready",
@@ -562,6 +566,7 @@ class ManagedBrowserController:
         response_locator = self._response_locator(page, spec)
         before_count = response_locator.count() if response_locator is not None else 0
         before_text = self._last_text(response_locator)
+        before_alert = self._visible_alert_text(page)
         prompt = str(command.payload.get("prompt") or "").strip()
         if not prompt:
             raise BridgeError("Prompt is empty.")
@@ -571,7 +576,7 @@ class ManagedBrowserController:
             raise BridgeError(f"Submit button is unavailable for {command.provider}.")
         sender.click()
         self._set_state(command.provider, "Working", "Waiting for provider response")
-        text = self._wait_response(page, spec, before_count, before_text, command)
+        text = self._wait_response(page, spec, before_count, before_text, before_alert, command)
         result: dict[str, Any] = {"status": "ok", "text": text}
         if provider_action == "generate_image":
             result.update(self._capture_generated_image(page, spec, command))
@@ -610,14 +615,17 @@ class ManagedBrowserController:
         if not model:
             raise BridgeError("Model name is empty.")
         page = self._ensure_page(command.provider)
-        nodes = page.locator('[role="option"], [role="menuitem"], [data-model], button')
+        self._open_model_menu(page)
+        nodes = page.locator('[data-model], [role="option"], [role="menuitem"]')
         count = min(nodes.count(), 300)
         for index in range(count):
             node = nodes.nth(index)
             try:
                 text = (node.inner_text(timeout=500) or "").strip()
-                if model.casefold() in text.casefold() and node.is_visible():
+                identity = (node.get_attribute("data-model") or text).strip()
+                if model.casefold() in {identity.casefold(), text.casefold()} and node.is_visible():
                     node.click(timeout=3_000)
+                    page.wait_for_timeout(350)
                     return {"status": "ok", "selected": text or model, "transport": "playwright"}
             except Exception:
                 continue
@@ -625,15 +633,38 @@ class ManagedBrowserController:
 
     def _discover_models(self, command: _Command) -> dict[str, Any]:
         page = self._ensure_page(command.provider)
-        values = page.locator(
-            '[data-model], [role="option"], [role="menuitem"], '
-            'button[aria-haspopup="listbox"], button[aria-haspopup="menu"]'
-        ).evaluate_all(
-            "nodes => nodes.map(node => (node.dataset.model || node.innerText || node.textContent || '').trim())"
-            ".filter((value, index, all) => value && value.length <= 120 && all.indexOf(value) === index)"
+        trigger_value = self._open_model_menu(page)
+        values = page.locator('[data-model], [role="option"], [role="menuitem"]').evaluate_all(
+            "nodes => nodes.filter(node => { const style=getComputedStyle(node); const box=node.getBoundingClientRect(); "
+            "return style.display!=='none' && style.visibility!=='hidden' && box.width>0 && box.height>0; })"
+            ".map(node => { const label=(node.innerText || node.textContent || '').trim(); "
+            "return {id:(node.dataset.model || label).trim(), label}; })"
+            ".filter((value, index, all) => value.id && value.label && value.label.length <= 120 && "
+            "all.findIndex(item => item.id === value.id) === index)"
             ".slice(0, 30)"
         )
-        return {"status": "ok", "models": [str(item) for item in values], "transport": "playwright"}
+        models = [dict(item) for item in values if isinstance(item, dict)]
+        if trigger_value and not any(item.get("label") == trigger_value for item in models):
+            models.insert(0, {"id": trigger_value, "label": trigger_value})
+        return {"status": "ok", "models": models, "transport": "playwright"}
+
+    @staticmethod
+    def _open_model_menu(page: Any) -> str:
+        triggers = page.locator(
+            '[data-testid*="model" i], button[aria-label*="model" i], button[class*="model" i]'
+        )
+        for index in range(min(triggers.count(), 30)):
+            trigger = triggers.nth(index)
+            try:
+                if not trigger.is_visible():
+                    continue
+                value = (trigger.get_attribute("data-model") or trigger.inner_text(timeout=500) or "").strip()
+                trigger.click(timeout=3_000)
+                page.wait_for_timeout(350)
+                return value if len(value) <= 120 else ""
+            except Exception:
+                continue
+        return ""
 
     def _select_mode(self, command: _Command) -> dict[str, Any]:
         mode = str(command.payload.get("mode") or "").strip().casefold()
@@ -693,6 +724,7 @@ class ManagedBrowserController:
         spec: ProviderSpec,
         before_count: int,
         before_text: str,
+        before_alert: str,
         command: _Command,
     ) -> str:
         timeout_ms = int(command.payload.get("timeout_ms") or command.timeout * 1000)
@@ -702,6 +734,11 @@ class ManagedBrowserController:
         while time.monotonic() < deadline:
             if self._stop.is_set() or command.cancelled.is_set():
                 raise BridgeError("Managed browser operation cancelled.")
+            alert = self._visible_alert_text(page)
+            failure = classify_provider_failure(alert) if alert and alert != before_alert else None
+            if failure is not None:
+                self._set_state(command.provider, failure.state.value.replace("_", " ").title(), failure.message)
+                raise BridgeError(failure.bridge_message())
             locator = self._response_locator(page, spec)
             count = locator.count() if locator is not None else 0
             text = self._last_text(locator)
@@ -726,6 +763,22 @@ class ManagedBrowserController:
                     return text
             page.wait_for_timeout(350)
         raise BridgeError(f"Timed out waiting for a complete response from {spec.code}.")
+
+    @staticmethod
+    def _visible_alert_text(page: Any) -> str:
+        result = page.evaluate(
+            r"""
+            () => [...document.querySelectorAll('[role="alert"],[aria-live="assertive"],[data-testid*="toast" i],[class*="toast" i]')]
+              .filter(node => {
+                const style = getComputedStyle(node);
+                const box = node.getBoundingClientRect();
+                return style.display !== 'none' && style.visibility !== 'hidden' && box.width > 0 && box.height > 0;
+              })
+              .map(node => (node.innerText || node.textContent || '').trim())
+              .filter(Boolean).join('\n').slice(0, 2000)
+            """
+        )
+        return str(result or "").strip()
 
     def _capabilities(self, page: Any, spec: ProviderSpec) -> dict[str, Any]:
         raw = page.evaluate(
@@ -1042,6 +1095,16 @@ class ManagedBrowserController:
             self._states[provider] = {"state": state, "detail": detail, "transport": "playwright"}
         if self.status_callback is not None:
             self.status_callback(provider, state, detail)
+
+    @staticmethod
+    def _is_availability_failure(state: str) -> bool:
+        return state.strip().replace("_", " ").casefold() in {
+            "rate limited",
+            "quota exhausted",
+            "model unavailable",
+            "temp unavailable",
+            "temporarily unavailable",
+        }
 
     def _report(
         self,

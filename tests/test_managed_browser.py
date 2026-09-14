@@ -89,6 +89,14 @@ class WebView2BrowserIntegrationTests(unittest.TestCase):
                         timeout=30,
                     )
                     self.assertEqual(upload_result["uploaded"], 1)
+                    model_catalog = controller.request(
+                        "chatgpt",
+                        "get_models",
+                        {},
+                        task_id="mock",
+                        timeout=30,
+                    )
+                    self.assertIn({"id": "sol", "label": "GPT Sol"}, model_catalog["models"])
                     model_result = controller.request(
                         "chatgpt",
                         "select_model",

@@ -30,7 +30,7 @@ describe('Store', () => {
   it('setActivePage changes page', () => {
     useStore.getState().setActivePage('chat');
     expect(useStore.getState().activePage).toBe('chat');
-    useStore.getState().setActivePage('home');
+    useStore.getState().setActivePage('build');
   });
 
   it('addMessage appends to messages', () => {

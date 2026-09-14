@@ -135,7 +135,7 @@ export class MockZenlessAPI implements ZenlessAPI {
     await delay(80);
     return clone(this.agents);
   }
-  async getProviders() {
+  async getProviders(_refresh = false) {
     await delay(50);
     return clone(this.providers);
   }
@@ -148,6 +148,23 @@ export class MockZenlessAPI implements ZenlessAPI {
     this.connections[provider] = "READY";
     this.setMockAgentStatus(provider, "READY");
     return { ok: true };
+  }
+  async refreshProvider(provider: ProviderId) {
+    await delay(50);
+    const current = this.providers.find((item) => item.providerId === provider);
+    if (!current) throw new Error("Provider not found");
+    return clone(current);
+  }
+  async selectProvider(provider: ProviderId, selection: { model?: string; mode?: string; route?: string }) {
+    await delay(50);
+    const current = this.providers.find((item) => item.providerId === provider);
+    if (!current) throw new Error("Provider not found");
+    current.selection = { ...current.selection, ...selection };
+    if (selection.model) {
+      if (provider === "hunyuan") this.settings.models.hunyuan.version = selection.model;
+      else this.settings.models[provider].model = selection.model;
+    }
+    return clone(current);
   }
   async getJobs() {
     await delay(80);
@@ -448,7 +465,7 @@ export class MockZenlessAPI implements ZenlessAPI {
     };
     return clone(this.settings);
   }
-  async getModels(): Promise<ModelCatalog> {
+  async getModels(_refresh = false): Promise<ModelCatalog> {
     await delay(50);
     return clone(mockModelCatalog);
   }

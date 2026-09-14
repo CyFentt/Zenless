@@ -1,11 +1,10 @@
 import {
-  Home,
   MessageSquare,
   FileCode,
   Box,
   Gamepad2,
   Play,
-  Settings,
+  ScrollText,
   type LucideIcon,
 } from "lucide-react";
 import { useStore } from "@/store";
@@ -19,13 +18,12 @@ interface NavItem {
 }
 
 const NAV: NavItem[] = [
-  { id: "home", label: "HOME", icon: Home },
   { id: "chat", label: "CHAT", icon: MessageSquare },
   { id: "build", label: "BUILD", icon: FileCode },
   { id: "visual", label: "VISUAL", icon: Box },
   { id: "studio", label: "EDITOR", icon: Gamepad2 },
   { id: "test", label: "TEST", icon: Play },
-  { id: "settings", label: "SETTINGS", icon: Settings },
+  { id: "logs", label: "LOGS", icon: ScrollText },
 ];
 
 export function Sidebar() {
@@ -38,8 +36,8 @@ export function Sidebar() {
 
   return (
     <nav className="w-14 shrink-0 bg-ink-900 border-r border-ink-600 flex flex-col items-center py-3 gap-1">
-      <div className="mb-4">
-        <span className="text-xs font-bold tracking-[0.2em] text-ink-0">Z</span>
+      <div className="mb-4 flex h-8 w-8 items-center justify-center border border-ink-500 bg-ink-950">
+        <span className="text-xs font-semibold tracking-[0.18em] text-ink-0 translate-x-[0.08em]">Z</span>
       </div>
       <div className="flex flex-col gap-0.5 flex-1">
         {NAV.map((item) => {
@@ -49,7 +47,7 @@ export function Sidebar() {
             <Tooltip key={item.id} content={item.label}>
               <button
                 onClick={() => setActivePage(item.id)}
-                className={`relative flex items-center justify-center w-10 h-10 transition-colors duration-150 ${
+                className={`zen-nav relative flex items-center justify-center w-10 h-10 ${
                   isActive
                     ? "text-ink-0 bg-ink-700"
                     : "text-ink-300 hover:text-ink-50 hover:bg-ink-800"
@@ -57,7 +55,7 @@ export function Sidebar() {
                 aria-label={item.label}
                 aria-current={isActive ? "page" : undefined}
               >
-                {isActive && <span className="absolute left-0 top-0 bottom-0 w-px bg-ink-0" />}
+                {isActive && <span className="absolute left-0 top-1 bottom-1 w-px bg-ink-0 animate-nav-line" />}
                 <Icon size={16} strokeWidth={1.5} />
               </button>
             </Tooltip>

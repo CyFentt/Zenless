@@ -211,6 +211,20 @@ class BackendVNextTests(unittest.TestCase):
             self.assertEqual(status["state"], "Verifying Persistence")
             self.assertEqual(status["route"], "playwright")
 
+    def test_quota_state_is_not_hidden_by_an_idle_alternate_route(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            gateway = AgentGateway(
+                managed=_RouteTransport(root, ready=True, state="Ready"),
+                embedded=_RouteTransport(root, ready=False, state="Quota Exhausted"),
+            )
+            gateway.select_route("chatgpt", "webview2")
+
+            status = gateway.provider_status()["chatgpt"]
+
+            self.assertEqual(status["state"], "Quota Exhausted")
+            self.assertEqual(status["route"], "webview2")
+
     def test_route_selection_persists_and_valid_managed_route_wins(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
@@ -345,7 +359,7 @@ class BackendVNextTests(unittest.TestCase):
             self.assertEqual(bridge.wait_calls, [])
             routed: list[str] = []
             core._preflight_providers = lambda _options: core._resolved_role_providers()
-            core._prepare_attachments = lambda paths, provider: routed.append(provider) or paths
+            core._prepare_attachment_delivery = lambda paths, provider: (routed.append(provider) or paths, "")
             core.create_job = lambda *_args, **_kwargs: {"id": "job"}
             core.messages = lambda _job_id: [{"id": "message", "role": "user"}]
             result = core.send_chat("Review this", None, (Path(folder) / "input.txt",), {"chatMode": "TEMP"})

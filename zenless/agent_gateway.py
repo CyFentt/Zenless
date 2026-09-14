@@ -146,10 +146,12 @@ class AgentGateway:
             route = routes.get(provider)
             managed_ready = self._status_ready(managed.get(provider))
             embedded_ready = self._status_ready(embedded.get(provider))
-            if route == "webview2" and not embedded_ready and managed_ready:
+            active_status = embedded.get(provider) if route == "webview2" else managed.get(provider)
+            active_failure = self._status_availability_failure(active_status)
+            if route == "webview2" and not active_failure and not embedded_ready and managed_ready:
                 route = "playwright"
                 self._set_route(provider, route)
-            elif route == "playwright" and not managed_ready and embedded_ready:
+            elif route == "playwright" and not active_failure and not managed_ready and embedded_ready:
                 route = "webview2"
                 self._set_route(provider, route)
             if route == "extension" and provider in extension:
@@ -503,4 +505,14 @@ class AgentGateway:
         return str((status or {}).get("state", "")).casefold() in {
             "ready",
             "connected",
+        }
+
+    @staticmethod
+    def _status_availability_failure(status: dict[str, str] | None) -> bool:
+        return str((status or {}).get("state", "")).strip().replace("_", " ").casefold() in {
+            "rate limited",
+            "quota exhausted",
+            "model unavailable",
+            "temp unavailable",
+            "temporarily unavailable",
         }

@@ -8,11 +8,11 @@ interface StatusDotProps {
 }
 
 const colorMap: Record<ConnectionStatus, string> = {
-  READY: 'bg-zen-okBright',
-  CONNECTING: 'bg-zen-warnBright animate-pulse-soft',
-  LOGIN: 'bg-zen-warnBright',
+  READY: 'bg-ink-0',
+  CONNECTING: 'bg-ink-100 animate-pulse-soft',
+  LOGIN: 'bg-ink-200',
   OFF: 'bg-ink-400',
-  ERR: 'bg-zen-errBright',
+  ERR: 'bg-ink-50 ring-1 ring-ink-200',
 };
 
 export function StatusDot({ status, label, size = 'sm' }: StatusDotProps) {
@@ -37,11 +37,11 @@ interface StatusBadgeProps {
 }
 
 const badgeColor: Record<ConnectionStatus, string> = {
-  READY: 'text-zen-okBright border-ink-600',
-  CONNECTING: 'text-zen-warnBright border-ink-600',
-  LOGIN: 'text-zen-warnBright border-ink-600',
+  READY: 'text-ink-0 border-ink-600',
+  CONNECTING: 'text-ink-100 border-ink-600',
+  LOGIN: 'text-ink-200 border-ink-600',
   OFF: 'text-ink-300 border-ink-600',
-  ERR: 'text-zen-errBright border-ink-600',
+  ERR: 'text-ink-25 border-ink-400',
 };
 
 export function StatusBadge({ status, label }: StatusBadgeProps) {

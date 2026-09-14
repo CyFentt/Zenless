@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, lazy, Suspense } from 'react';
-import { Paperclip, ArrowUp, Settings2, X } from 'lucide-react';
+import { Paperclip, ArrowUp, Settings2, X, History, Plus } from 'lucide-react';
 import { useStore } from '@/store';
 import { getApi } from '@/services';
 import { ApiError } from '@/services/api/realApi';
@@ -30,6 +30,7 @@ const TaskOptionsPanel = lazy(() => import('./TaskOptionsPanel').then((m) => ({ 
 
 const VIEW_NAMES = new Set<ViewName>(['FRONT', 'BACK', 'LEFT', 'RIGHT', 'TOP', 'BOTTOM']);
 const VIEW_STATES = new Set<ViewState>(['EMPTY', 'GENERATING', 'READY', 'FAILED', 'APPROVED']);
+const MAX_ATTACHMENTS = 50;
 
 function artifactViews(artifact: ChatArtifact): ViewTile[] {
   const raw = artifact.metadata?.views;
@@ -97,6 +98,8 @@ export function ChatPage() {
   const [sending, setSending] = useState(false);
   const [loggingProvider, setLoggingProvider] = useState<ProviderId | null>(null);
   const [showOptions, setShowOptions] = useState(false);
+  const [panelView, setPanelView] = useState<'task' | 'providers' | 'defaults'>('task');
+  const [showHistory, setShowHistory] = useState(false);
   const [options, setOptions] = useState<TaskOptions>(DEFAULT_TASK_OPTIONS);
   const [attachments, setAttachments] = useState<{ id: string; file: File; previewUrl?: string }[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -169,19 +172,20 @@ export function ChatPage() {
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files) return;
-    const newAttachments = Array.from(files).slice(0, 3).map((file) => ({
+    const newAttachments = Array.from(files).slice(0, MAX_ATTACHMENTS).map((file) => ({
       id: `att_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
       file,
       previewUrl: file.type.startsWith('image/') ? URL.createObjectURL(file) : undefined,
     }));
     setAttachments((prev) => {
       const combined = [...prev, ...newAttachments];
-      combined.slice(5).forEach((attachment) => attachment.previewUrl && URL.revokeObjectURL(attachment.previewUrl));
-      return combined.slice(0, 5);
+      combined.slice(MAX_ATTACHMENTS).forEach((attachment) => attachment.previewUrl && URL.revokeObjectURL(attachment.previewUrl));
+      return combined.slice(0, MAX_ATTACHMENTS);
     });
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
+  const jobs = useStore((s) => s.jobs);
   const currentJob = useStore((s) => s.jobs.find((job) => job.id === s.currentJobId));
   const jobMessages = currentJobId
     ? messages.filter((message) => message.jobId === currentJobId)
@@ -311,14 +315,42 @@ export function ChatPage() {
     setNavigationTarget({ page: 'test' });
     setActivePage('test');
   };
-  const openSettingsPage = (tab: string = 'logs') => {
-    setNavigationTarget({ page: 'settings', tab });
-    setActivePage('settings');
+  const openLogsPage = () => {
+    setNavigationTarget({ page: 'logs' });
+    setActivePage('logs');
   };
 
   return (
-    <div className="flex h-full">
+    <div className="flex h-full animate-page-in">
       <div className="flex-1 flex flex-col min-w-0">
+        <div className="relative flex h-10 shrink-0 items-center justify-between border-b border-ink-700 px-4">
+          <div className="min-w-0">
+            <span className="block truncate text-2xs uppercase tracking-[0.18em] text-ink-100">{currentJob?.title ?? 'New conversation'}</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <button onClick={() => { setCurrentJobId(null); setShowHistory(false); }} className="zen-icon-button" aria-label="New conversation"><Plus size={13} /></button>
+            <button onClick={() => setShowHistory((value) => !value)} className={`zen-icon-button ${showHistory ? 'border-ink-500 bg-ink-800 text-ink-0' : ''}`} aria-label="Conversation history"><History size={13} /></button>
+          </div>
+          {showHistory && (
+            <>
+              <button className="fixed inset-0 z-30 cursor-default" onClick={() => setShowHistory(false)} aria-label="Close history" />
+              <div className="absolute right-4 top-9 z-40 w-80 border border-ink-600 bg-ink-900 p-1 shadow-panel animate-reveal">
+                <div className="max-h-72 overflow-y-auto scrollbar-zen">
+                  {jobs.length === 0 ? <div className="px-3 py-8 text-center text-2xs uppercase tracking-wider text-ink-400">No conversations</div> : jobs.map((job) => (
+                    <button
+                      key={job.id}
+                      onClick={() => { setCurrentJobId(job.id); setShowHistory(false); }}
+                      className={`zen-row block w-full border-b border-ink-700 px-3 py-2 text-left ${job.id === currentJobId ? 'bg-ink-800' : ''}`}
+                    >
+                      <span className="block truncate text-xs text-ink-50">{job.title}</span>
+                      <span className="mt-0.5 block text-[9px] uppercase tracking-wider text-ink-400">{job.stage.replace(/_/g, ' ')}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </>
+          )}
+        </div>
         <div ref={scrollRef} className="flex-1 overflow-y-auto scrollbar-zen">
           <div className="max-w-3xl mx-auto px-6 py-4 space-y-3">
             {jobMessages.length === 0 && !streamingMessageId && jobActivities.length === 0 && (
@@ -335,6 +367,7 @@ export function ChatPage() {
                     message={item.message}
                     logging={loggingProvider === item.message.action?.provider}
                     onLogin={handleProviderLogin}
+                    onOpenControls={() => { setPanelView('providers'); setShowOptions(true); }}
                   />
                 );
               }
@@ -412,7 +445,7 @@ export function ChatPage() {
                     source={item.diag.source}
                     message={item.diag.message}
                     detail={item.diag.probableCause}
-                    onOpenSettings={() => openSettingsPage('logs')}
+                    onOpenSettings={openLogsPage}
                   />
                 );
               }
@@ -430,6 +463,7 @@ export function ChatPage() {
                 }}
                 streaming
                 onLogin={handleProviderLogin}
+                onOpenControls={() => { setPanelView('providers'); setShowOptions(true); }}
               />
             )}
           </div>
@@ -446,7 +480,7 @@ export function ChatPage() {
                       const next = options.research === 'AUTO' ? 'ON' : options.research === 'ON' ? 'OFF' : 'AUTO';
                       setOptions({ ...options, research: next });
                     }}
-                    className="px-2 py-0.5 bg-ink-900 text-ink-200 border border-ink-700 rounded hover:text-ink-0 hover:bg-ink-800 transition-colors uppercase"
+                    className="px-2 py-0.5 bg-ink-900 text-ink-200 border border-ink-700 hover:text-ink-0 hover:bg-ink-800 transition-colors uppercase"
                   >
                     Research: <span className="font-bold text-ink-50">{options.research ?? 'AUTO'}</span>
                   </button>
@@ -459,7 +493,7 @@ export function ChatPage() {
                       const nexts: Record<string, TaskOptions['effort']> = { AUTO: 'MIN', MIN: 'MED', MED: 'MAX', MAX: 'AUTO' };
                       setOptions({ ...options, effort: nexts[options.effort ?? 'AUTO'] });
                     }}
-                    className="px-2 py-0.5 bg-ink-900 text-ink-200 border border-ink-700 rounded hover:text-ink-0 hover:bg-ink-800 transition-colors uppercase"
+                    className="px-2 py-0.5 bg-ink-900 text-ink-200 border border-ink-700 hover:text-ink-0 hover:bg-ink-800 transition-colors uppercase"
                   >
                     Effort: <span className="font-bold text-ink-50">{options.effort ?? 'AUTO'}</span>
                   </button>
@@ -471,7 +505,7 @@ export function ChatPage() {
                     onClick={() => {
                       setOptions({ ...options, chatMode: options.chatMode === 'TEMP' ? 'PROJECT' : 'TEMP' });
                     }}
-                    className="px-2 py-0.5 bg-ink-900 text-ink-200 border border-ink-700 rounded hover:text-ink-0 hover:bg-ink-800 transition-colors uppercase"
+                    className="px-2 py-0.5 bg-ink-900 text-ink-200 border border-ink-700 hover:text-ink-0 hover:bg-ink-800 transition-colors uppercase"
                   >
                     Mode: <span className="font-bold text-ink-50">{options.chatMode ?? 'PROJECT'}</span>
                   </button>
@@ -483,7 +517,7 @@ export function ChatPage() {
                     onClick={() => {
                       setOptions({ ...options, approval: !options.approval });
                     }}
-                    className="px-2 py-0.5 bg-ink-900 text-ink-200 border border-ink-700 rounded hover:text-ink-0 hover:bg-ink-800 transition-colors uppercase"
+                    className="px-2 py-0.5 bg-ink-900 text-ink-200 border border-ink-700 hover:text-ink-0 hover:bg-ink-800 transition-colors uppercase"
                   >
                     Approval: <span className="font-bold text-ink-50">{options.approval ? 'MANUAL' : 'AUTO'}</span>
                   </button>
@@ -511,7 +545,7 @@ export function ChatPage() {
             )}
             <div className="flex items-end gap-2">
               <Tooltip content="Attach">
-                <button onClick={handleAttach} className="w-8 h-8 flex items-center justify-center text-ink-300 hover:text-ink-0 border border-ink-600 hover:border-ink-500 transition-colors" aria-label="Attach file">
+                <button onClick={handleAttach} className="zen-icon-button w-8 h-8 border-ink-600" aria-label="Attach file">
                   <Paperclip size={14} strokeWidth={1.5} />
                 </button>
               </Tooltip>
@@ -526,11 +560,11 @@ export function ChatPage() {
                 style={{ minHeight: '36px', maxHeight: '120px' }}
               />
               <Tooltip content="Options">
-                <button onClick={() => setShowOptions(!showOptions)} className={`w-8 h-8 flex items-center justify-center border transition-colors ${showOptions ? 'text-ink-0 bg-ink-700 border-ink-500' : 'text-ink-300 border-ink-600 hover:border-ink-500 hover:text-ink-0'}`} aria-label="Task options">
+                <button onClick={() => { setPanelView('task'); setShowOptions(!showOptions); }} className={`zen-icon-button w-8 h-8 ${showOptions ? 'text-ink-0 bg-ink-700 border-ink-400' : 'border-ink-600'}`} aria-label="Task and provider controls">
                   <Settings2 size={14} strokeWidth={1.5} />
                 </button>
               </Tooltip>
-              <button onClick={handleSend} disabled={sending || (!input.trim() && attachments.length === 0)} className="w-8 h-8 flex items-center justify-center text-ink-0 bg-ink-700 border border-ink-500 disabled:opacity-30 hover:bg-ink-600 transition-colors" aria-label="Send">
+              <button onClick={handleSend} disabled={sending || (!input.trim() && attachments.length === 0)} className="w-8 h-8 flex items-center justify-center text-ink-950 bg-ink-0 border border-ink-0 disabled:opacity-30 hover:bg-ink-25 transition-all" aria-label="Send">
                 <ArrowUp size={14} strokeWidth={1.5} />
               </button>
             </div>
@@ -539,14 +573,14 @@ export function ChatPage() {
       </div>
       {showOptions && (
         <Suspense fallback={null}>
-          <TaskOptionsPanel options={options} onChange={setOptions} onClose={() => setShowOptions(false)} />
+          <TaskOptionsPanel options={options} initialView={panelView} onChange={setOptions} onClose={() => setShowOptions(false)} />
         </Suspense>
       )}
     </div>
   );
 }
 
-function ChatMessageRow({ message, streaming, logging, onLogin }: { message: ChatMessage; streaming?: boolean; logging?: boolean; onLogin: (provider: ProviderId) => Promise<void> }) {
+function ChatMessageRow({ message, streaming, logging, onLogin, onOpenControls }: { message: ChatMessage; streaming?: boolean; logging?: boolean; onLogin: (provider: ProviderId) => Promise<void>; onOpenControls: () => void }) {
   const isUser = message.role === 'user';
   const time = new Date(message.timestamp).toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' });
   const parts = message.content.split(/(```[\s\S]*?```)/g);
@@ -575,8 +609,16 @@ function ChatMessageRow({ message, streaming, logging, onLogin }: { message: Cha
           {logging ? 'OPENING' : 'LOGIN'}
         </button>
       )}
+      {requiresProviderControl(message.content) && (
+        <button onClick={onOpenControls} className="zen-button mt-2">Open controls</button>
+      )}
     </div>
   );
+}
+
+function requiresProviderControl(content: string) {
+  return /^(QUOTA_EXHAUSTED|RATE_LIMITED|MODEL_UNAVAILABLE|TEMP_UNAVAILABLE|PROVIDER_MODE_UNAVAILABLE|ATTACHMENT_TEXT_)/.test(content)
+    || /select a file-capable mode/i.test(content);
 }
 
 function chatErrorAction(error: unknown): ChatMessage['action'] {

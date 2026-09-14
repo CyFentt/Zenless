@@ -245,7 +245,7 @@ class LocalWebBridge:
 
         app.router.add_get("/api/settings", self._sync_handler(self.core.settings))
         app.router.add_patch("/api/settings", self._update_settings)
-        app.router.add_get("/api/settings/models", self._sync_handler(self.core.model_catalog))
+        app.router.add_get("/api/settings/models", self._models)
         app.router.add_put("/api/settings/models", self._set_model)
         app.router.add_put("/api/settings/smart-routing", self._set_smart_routing)
         app.router.add_get("/api/diagnostics", self._sync_handler(self.core.diagnostics_payload))
@@ -477,6 +477,9 @@ class LocalWebBridge:
 
     async def _update_settings(self, request: web.Request) -> web.Response:
         return self._json(self.core.update_settings(await self._json_body(request)))
+
+    async def _models(self, request: web.Request) -> web.Response:
+        return self._json(self.core.model_catalog(refresh=request.query.get("refresh") == "1"))
 
     async def _set_model(self, request: web.Request) -> web.Response:
         body = await self._json_body(request)
