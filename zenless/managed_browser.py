@@ -398,7 +398,10 @@ class ManagedBrowserController:
             with sync_playwright() as playwright:
                 self._playwright = playwright
                 self._ready.set()
-                self._event_loop()
+                try:
+                    self._event_loop()
+                finally:
+                    self._close_context()
         except BaseException as exc:
             self._start_error = exc
             self._ready.set()

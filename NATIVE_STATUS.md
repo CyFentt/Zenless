@@ -17,7 +17,10 @@ Provider authentication is manual. Build authentication cleanup remains enabled.
 
 - Backend before native additions: 120 tests and 5 subtests passed.
 - Native history isolation and escaped message rendering: 2 tests passed.
+- Frontend regression suite: 71 tests passed; lint, type checking and production build passed.
+- Browser integration and native regression checks after shutdown ordering correction: 5 tests passed.
 - Python type checking: zero errors.
 - Earlier native shell startup and clean shutdown: passed from source.
 
 Full updated GUI validation, frozen native package validation and live authenticated provider flows remain pending.
+The latest source startup returned successfully but emitted a browser cancellation warning. Shutdown ordering was corrected afterward; a full repeated GUI shutdown check remains pending.
