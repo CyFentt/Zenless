@@ -1,5 +1,6 @@
 import { useStore } from '@/store';
 import { StatusDot } from './StatusDot';
+import { SoundFeedback } from './SoundFeedback';
 
 export function TopBar() {
   const jobs = useStore((s) => s.jobs);
@@ -51,6 +52,7 @@ export function TopBar() {
         )}
       </div>
       <div className="flex items-center gap-4">
+        <SoundFeedback />
         <span className="flex items-center gap-1.5">
           <span className="text-ink-300">AI {readyProviders}/{enabledProviders.length || 3}</span>
           <StatusDot status={readyProviders > 0 ? 'READY' : 'LOGIN'} />

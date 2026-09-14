@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 import threading
 from pathlib import Path
 from typing import Callable
@@ -36,6 +37,11 @@ def run_web_app(
         status("BRIDGE", "binding authenticated loopback")
         url = bridge.start()
         core.start()
+        if "--native-ui" in sys.argv:
+            from .qt_shell import run_native_shell
+
+            status("UI", "starting native workspace")
+            return run_native_shell(url, core, resource_root, ui_ready or (lambda: None), core.set_shutdown_callback, smoke_test)
         status("UI", "starting React WebView2 shell")
         import webview
 

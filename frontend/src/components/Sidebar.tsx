@@ -35,11 +35,8 @@ export function Sidebar() {
   const anyError = Object.values(connections).some((v) => v === "ERR");
 
   return (
-    <nav className="w-14 shrink-0 bg-ink-900 border-r border-ink-600 flex flex-col items-center py-3 gap-1">
-      <div className="mb-4 flex h-8 w-8 items-center justify-center border border-ink-500 bg-ink-950">
-        <span className="text-xs font-semibold tracking-[0.18em] text-ink-0 translate-x-[0.08em]">Z</span>
-      </div>
-      <div className="flex flex-col gap-0.5 flex-1">
+    <nav className="h-[30px] shrink-0 bg-[#060606] border-b border-[#1b1b1b] flex items-end px-[5px] gap-1" aria-label="Workspaces">
+      <div className="flex min-w-0 gap-0.5 flex-1 overflow-x-auto scrollbar-zen">
         {NAV.map((item) => {
           const Icon = item.icon;
           const isActive = activePage === item.id;
@@ -47,23 +44,23 @@ export function Sidebar() {
             <Tooltip key={item.id} content={item.label}>
               <button
                 onClick={() => setActivePage(item.id)}
-                className={`zen-nav relative flex items-center justify-center w-10 h-10 ${
+                className={`zen-nav relative flex items-center justify-center gap-1.5 min-w-[74px] h-[24px] px-2 border border-b-0 font-mono text-[9px] font-bold tracking-wider ${
                   isActive
-                    ? "text-ink-0 bg-ink-700"
-                    : "text-ink-300 hover:text-ink-50 hover:bg-ink-800"
+                    ? "text-[#f0f0f0] bg-[#0b0b0b] border-[#505050] border-t-[#d8d8d8]"
+                    : "text-[#737373] bg-[#070707] border-[#202020] hover:text-[#d8d8d8] hover:border-[#383838]"
                 }`}
                 aria-label={item.label}
                 aria-current={isActive ? "page" : undefined}
               >
-                {isActive && <span className="absolute left-0 top-1 bottom-1 w-px bg-ink-0 animate-nav-line" />}
-                <Icon size={16} strokeWidth={1.5} />
+                <Icon size={11} strokeWidth={1.5} />
+                <span>{item.label}</span>
               </button>
             </Tooltip>
           );
         })}
       </div>
 
-      <div className="pt-2 border-t border-ink-700 w-full flex justify-center">
+      <div className="px-2 self-center flex justify-center">
         <Tooltip content={allReady ? "READY" : anyError ? "ERROR" : "CONNECTING"}>
           <span className="flex items-center justify-center py-2">
             <StatusDot status={allReady ? "READY" : anyError ? "ERR" : "CONNECTING"} size="md" />
