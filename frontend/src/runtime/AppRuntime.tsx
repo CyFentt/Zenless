@@ -12,9 +12,15 @@ export function AppRuntime() {
       useStore.getState().setActivePage('chat');
     };
     window.addEventListener('zenless-native-selection', selectNativeJob);
+    const selectNativeWorkspace = (event: Event) => {
+      if (!(event instanceof CustomEvent) || !['chat', 'build', 'visual', 'studio', 'test', 'logs'].includes(event.detail)) return;
+      useStore.getState().setActivePage(event.detail);
+    };
+    window.addEventListener('zenless-native-workspace', selectNativeWorkspace);
     void runtime.start();
     return () => {
       window.removeEventListener('zenless-native-selection', selectNativeJob);
+      window.removeEventListener('zenless-native-workspace', selectNativeWorkspace);
       runtime.stop();
     };
   }, []);
