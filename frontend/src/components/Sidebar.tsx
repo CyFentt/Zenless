@@ -37,7 +37,7 @@ export function Sidebar() {
   const anyError = Object.values(connections).some((v) => v === "ERR");
 
   return (
-    <nav className="w-14 shrink-0 bg-ink-900 border-r border-ink-600 flex flex-col items-center py-3 gap-1">
+    <nav className="w-12 shrink-0 bg-ink-900 border-r border-ink-600 flex flex-col items-center py-3 gap-1">
       <div className="mb-4">
         <span className="text-xs font-bold tracking-[0.2em] text-ink-0">Z</span>
       </div>
