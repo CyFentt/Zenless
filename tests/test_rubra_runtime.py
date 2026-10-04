@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import tempfile
 import unittest
@@ -8,6 +9,7 @@ from pathlib import Path
 from zenless.local_ai import LocalAIService
 from zenless.project_index import ProjectIndexService
 from zenless.tool_registry import ToolRegistry
+from zenless.toolchain import ToolchainManager
 
 
 class RubraRuntimeTests(unittest.TestCase):
@@ -41,6 +43,42 @@ class RubraRuntimeTests(unittest.TestCase):
             candidates = service._server_candidates()
 
             self.assertEqual(candidates, [(vulkan, True), (cpu, False)])
+
+    def test_toolchain_rejects_modified_installed_raw_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            assets = root / "assets"
+            assets.mkdir()
+            payload = b"verified-tool"
+            digest = hashlib.sha256(payload).hexdigest()
+            manifest = {
+                "artifacts": [
+                    {
+                        "id": "fake",
+                        "kind": "raw",
+                        "target": "runtime/tools/fake.exe",
+                        "marker": "fake.exe",
+                        "sha256": digest,
+                    }
+                ],
+                "sources": [],
+                "npm": [],
+            }
+            (assets / "toolchain.json").write_text(json.dumps(manifest), encoding="utf-8")
+            target = root / "runtime" / "tools" / "fake.exe"
+            target.parent.mkdir(parents=True)
+            target.write_bytes(payload)
+            manager = ToolchainManager(resource_root=root, portable_root=root)
+            manager._state["fake"] = {
+                "sha256": digest,
+                "target": str(target),
+                "size": len(payload),
+            }
+
+            self.assertTrue(manager._artifact_ready(manifest["artifacts"][0], target))
+
+            target.write_bytes(b"tampered")
+            self.assertFalse(manager._artifact_ready(manifest["artifacts"][0], target))
 
     def test_tool_registry_has_unique_pinned_entries(self) -> None:
         root = Path(__file__).resolve().parents[1]
