@@ -115,7 +115,13 @@ export class ApplicationRuntime {
     store.setStudioTree(studioTree);
     const current = this.selectCurrentJob(jobs, store.currentJobId);
     store.setCurrentJobId(current?.id ?? null);
-    if (current) await this.loadJobSnapshot(current);
+    if (current) {
+      try {
+        await this.loadJobSnapshot(current);
+      } catch (error) {
+        if (this.active) frontendDiagnostics.capture(error, 'runtime', 'Failed to restore the selected task', { jobId: current.id });
+      }
+    }
     if (!this.active) return;
     useStore.getState().setRuntimeHydrated(true);
     useStore.getState().setBootError('');

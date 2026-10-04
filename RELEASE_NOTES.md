@@ -1,4 +1,10 @@
-# Rubra 2.0.2 prerelease
+# Rubra 2.0.3 prerelease
+
+This maintenance build extends the 2.0.2 desktop fixes with bounded session initialization and response-body timeouts, recovery from unavailable saved tasks, MCP process shutdown and transport error handling, schema composition validation, bounded chunked JSON requests and cross-task idempotency protection.
+
+Validation includes real local HTTP requests, real child processes, 32 concurrent out-of-order MCP responses and property-based schema checks. See REVIEW_REPORT.md for evidence and remaining platform limitations.
+
+## Previous 2.0.2 changes
 
 The installer defaults to `%LOCALAPPDATA%\Programs\Rubra`, creates a Start menu shortcut and registers an uninstaller. Updates preserve application data and downloaded tools. Uninstall removes program files while keeping data. The ZIP remains portable.
 

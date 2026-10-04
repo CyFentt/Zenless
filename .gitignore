@@ -14,4 +14,7 @@ artifacts/
 data/
 runtime/
 frontend/dist/
-.venv/
+.venv
+
+.coverage*
+htmlcov/

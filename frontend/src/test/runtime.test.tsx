@@ -109,3 +109,33 @@ describe('ApplicationRuntime', () => {
     runtime.stop();
   });
 });
+
+describe('startup failure isolation', () => {
+  it('opens the shell when a saved task cannot be restored', async () => {
+    const api = new MockZenlessAPI();
+    const socket = new RuntimeSocket();
+    vi.spyOn(api, 'bootstrap').mockResolvedValue({ steps: [{ stage: 'UI', state: 'READY' }] });
+    vi.spyOn(api, 'getJobs').mockResolvedValue([{ id: 'broken', title: 'Saved task', status: 'RUNNING', stage: 'BUILDING' } as never]);
+    vi.spyOn(api, 'getMessages').mockRejectedValue(new Error('Saved task unavailable'));
+    const runtime = new ApplicationRuntime(api, socket);
+    await runtime.start();
+    expect(useStore.getState().booted).toBe(true);
+    expect(useStore.getState().diagnostics.some((d) => d.message.includes('Failed to restore'))).toBe(true);
+    runtime.stop();
+  });
+
+  it('does not connect after being stopped during bootstrap', async () => {
+    const api = new MockZenlessAPI();
+    const socket = new RuntimeSocket();
+    const connect = vi.spyOn(socket, 'connect');
+    let release!: (value: { steps: [] }) => void;
+    vi.spyOn(api, 'bootstrap').mockReturnValue(new Promise((resolve) => { release = resolve; }));
+    const runtime = new ApplicationRuntime(api, socket);
+    const started = runtime.start();
+    runtime.stop();
+    release({ steps: [] });
+    await started;
+    expect(connect).not.toHaveBeenCalled();
+    expect(useStore.getState().booted).toBe(false);
+  });
+});

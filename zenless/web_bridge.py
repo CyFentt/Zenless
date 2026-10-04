@@ -548,13 +548,21 @@ class LocalWebBridge:
     async def _json_body(self, request: web.Request) -> dict[str, Any]:
         if request.content_length and request.content_length > self.MAX_JSON_BYTES:
             raise CoreError("JSON_TOO_LARGE", "JSON body exceeds 2 MB.", status=413)
-        payload = await request.json(loads=json.loads)
+        body = bytearray()
+        async for chunk in request.content.iter_chunked(65536):
+            body.extend(chunk)
+            if len(body) > self.MAX_JSON_BYTES:
+                raise CoreError("JSON_TOO_LARGE", "JSON body exceeds 2 MB.", status=413)
+        try:
+            payload = json.loads(body.decode("utf-8"))
+        except UnicodeDecodeError as exc:
+            raise CoreError("INVALID_JSON", "JSON must use UTF-8.") from exc
         if not isinstance(payload, dict):
             raise CoreError("INVALID_JSON_SHAPE", "The JSON body must be an object.")
         return payload
 
     async def _optional_json_body(self, request: web.Request) -> dict[str, Any]:
-        if not request.can_read_body or not request.content_length:
+        if not request.can_read_body:
             return {}
         return await self._json_body(request)
 
@@ -571,7 +579,7 @@ class LocalWebBridge:
         if not re.fullmatch(r"[A-Za-z0-9._:-]{8,128}", key):
             raise CoreError("INVALID_IDEMPOTENCY_KEY", "Invalid Idempotency-Key.")
         operation = self.core.store.claim_operation(key, kind, resource_id)
-        if operation["kind"] != kind:
+        if operation["kind"] != kind or operation["resource_id"] != resource_id:
             raise CoreError("IDEMPOTENCY_CONFLICT", "The key already belongs to another operation.", status=409)
         if operation["state"] == "complete":
             return self._json(operation["response"])

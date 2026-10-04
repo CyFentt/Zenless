@@ -57,63 +57,52 @@ function withTimeout(ms: number): { signal: AbortSignal; cancel: () => void } {
 }
 
 async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
-  const timeout = opts.timeout ?? DEFAULT_TIMEOUT;
-  const { signal: timeoutSignal, cancel } = withTimeout(timeout);
-  const signal = opts.signal ? mergeSignals(opts.signal, timeoutSignal) : timeoutSignal;
-
-  const headers: Record<string, string> = {};
+  const { signal, cancel } = withTimeout(opts.timeout ?? DEFAULT_TIMEOUT);
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  signal.addEventListener('abort', abort, { once: true });
+  opts.signal?.addEventListener('abort', abort, { once: true });
+  if (opts.signal?.aborted) abort();
+  const requestId = crypto.randomUUID?.() ?? `req_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const headers: Record<string, string> = { 'X-Request-Id': requestId };
   if (opts.rawBody === undefined) headers['Content-Type'] = 'application/json';
   const token = getStoredToken();
   if (token) headers['X-Rubra-Token'] = token;
-  const requestId = crypto.randomUUID?.() ?? `req_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-  headers['X-Request-Id'] = requestId;
   if (opts.idempotencyKey) headers['Idempotency-Key'] = opts.idempotencyKey;
-
-  let res: Response;
   try {
-    res = await fetch(`${API_BASE}${path}`, {
+    const res = await fetch(`${API_BASE}${path}`, {
       method: opts.method ?? 'GET',
       headers,
       body: opts.rawBody ?? (opts.body !== undefined ? JSON.stringify(opts.body) : undefined),
-      signal,
+      signal: controller.signal,
     });
-  } catch (err) {
-    cancel();
-    const message = err instanceof DOMException && err.name === 'AbortError' ? 'Request timeout' : 'Bridge unreachable';
-    frontendDiagnostics.report('error', 'api', message, undefined, undefined, { requestId, stack: err instanceof Error ? err.stack : undefined });
-    throw new ApiError(0, message, requestId, err instanceof DOMException && err.name === 'AbortError' ? 'TIMEOUT' : 'UNREACHABLE');
-  }
-  cancel();
-
-  const responseRequestId = res.headers.get('X-Request-Id') ?? requestId;
-  if (!res.ok) {
-    let message = `HTTP ${res.status}`;
-    let code: string | undefined;
-    let details: unknown;
+    const responseRequestId = res.headers.get('X-Request-Id') ?? requestId;
+    if (res.status === 204) return undefined as T;
+    let body: unknown;
     try {
-      const body = (await res.json()) as { error?: string; message?: string; code?: string; details?: unknown };
-      message = body.message ?? body.error ?? message;
-      code = body.code;
-      details = body.details;
-    } catch (err) {
-      frontendDiagnostics.report('warning', 'api', 'Failed to parse error response', undefined, undefined, {
-        requestId: responseRequestId,
-        stack: err instanceof Error ? err.stack : undefined,
-      });
+      body = await res.json();
+    } catch (error) {
+      if (controller.signal.aborted) throw error;
+      throw new ApiError(res.status, res.ok ? 'Invalid bridge response' : `HTTP ${res.status}`, responseRequestId, 'INVALID_RESPONSE');
     }
-    throw new ApiError(res.status, message, responseRequestId, code, details);
+    if (!res.ok) {
+      const failure = body && typeof body === 'object' ? body as Record<string, unknown> : {};
+      const message = typeof failure.message === 'string' ? failure.message : typeof failure.error === 'string' ? failure.error : `HTTP ${res.status}`;
+      throw new ApiError(res.status, message, responseRequestId, typeof failure.code === 'string' ? failure.code : undefined, failure.details);
+    }
+    return body as T;
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
+    const timedOut = signal.aborted;
+    const code = timedOut ? 'TIMEOUT' : controller.signal.aborted ? 'CANCELLED' : 'UNREACHABLE';
+    const message = timedOut ? 'Request timeout' : controller.signal.aborted ? 'Request cancelled' : 'Bridge unreachable';
+    frontendDiagnostics.report('error', 'api', message, undefined, undefined, { requestId, stack: error instanceof Error ? error.stack : undefined });
+    throw new ApiError(0, message, requestId, code);
+  } finally {
+    cancel();
+    signal.removeEventListener('abort', abort);
+    opts.signal?.removeEventListener('abort', abort);
   }
-
-  if (res.status === 204) return undefined as T;
-  return res.json() as Promise<T>;
-}
-
-function mergeSignals(a: AbortSignal, b: AbortSignal): AbortSignal {
-  const controller = new AbortController();
-  const onAbort = () => controller.abort();
-  a.addEventListener('abort', onAbort, { once: true });
-  b.addEventListener('abort', onAbort, { once: true });
-  return controller.signal;
 }
 
 const TOKEN_KEY = 'rubra_token';
@@ -148,10 +137,8 @@ export function setStoredToken(token: string | null) {
 async function ensureSessionToken(force = false): Promise<void> {
   if (!force && getStoredToken()) return;
   try {
-    const response = await fetch(`${API_BASE}/api/session`, { method: 'GET' });
-    if (!response.ok) throw new Error(`Session bootstrap failed (${response.status})`);
-    const payload = (await response.json()) as { token?: string };
-    if (!payload.token) throw new Error('Session bootstrap returned no token');
+    const payload = await request<{ token?: unknown }>('/api/session');
+    if (!payload || typeof payload.token !== 'string' || !payload.token.trim()) throw new Error('Session bootstrap returned no token');
     setStoredToken(payload.token);
   } catch (error) {
     frontendDiagnostics.capture(error, 'api', 'Failed to establish Bridge session');

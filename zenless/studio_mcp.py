@@ -298,8 +298,11 @@ class StudioMCPClient:
         )
 
     def request(self, method: str, params: dict[str, Any], *, timeout: float) -> dict[str, Any]:
-        if not self.running or self.process is None or self.process.stdin is None:
+        process = self.process
+        if process is None or process.poll() is not None or process.stdin is None:
             raise MCPError(f"{self.client_name} is not running.")
+        if self._reader is not None and not self._reader.is_alive():
+            raise MCPError(f"{self.client_name} closed the connection.")
         with self._pending_lock:
             request_id = self._next_id
             self._next_id += 1
@@ -307,9 +310,12 @@ class StudioMCPClient:
             self._pending[request_id] = response_queue
         payload = {"jsonrpc": "2.0", "id": request_id, "method": method, "params": params}
         try:
-            with self._send_lock:
-                self.process.stdin.write(json.dumps(payload, ensure_ascii=False) + "\n")
-                self.process.stdin.flush()
+            try:
+                with self._send_lock:
+                    process.stdin.write(json.dumps(payload, ensure_ascii=False, allow_nan=False) + "\n")
+                    process.stdin.flush()
+            except (OSError, ValueError) as exc:
+                raise MCPError(f"{self.client_name} could not send {method}: {exc}") from exc
             try:
                 response = response_queue.get(timeout=timeout)
             except queue.Empty as exc:
@@ -355,18 +361,16 @@ class StudioMCPClient:
                     try:
                         process.wait(timeout=2)
                     except subprocess.TimeoutExpired:
-                        self.stderr_tail.append(
-                            "The child MCP process did not stop in time; no forced kill was used."
-                        )
-            for stream in (process.stdout, process.stderr):
-                if stream is not None:
+                        process.kill()
+                        process.wait(timeout=2)
+            for stream, reader in ((process.stdout, self._reader), (process.stderr, self._stderr_reader)):
+                if reader is not None and reader is not threading.current_thread():
+                    reader.join(timeout=1)
+                if stream is not None and (reader is None or not reader.is_alive()):
                     try:
                         stream.close()
                     except OSError:
                         pass
-            for reader in (self._reader, self._stderr_reader):
-                if reader is not None and reader is not threading.current_thread():
-                    reader.join(timeout=1)
             self._reader = None
             self._stderr_reader = None
 
@@ -374,35 +378,40 @@ class StudioMCPClient:
         process = self.process
         if process is None or process.stdout is None:
             return
-        for line in process.stdout:
-            try:
-                message = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if not isinstance(message, dict):
-                continue
-            request_id = message.get("id")
-            if isinstance(request_id, int):
-                with self._pending_lock:
-                    target = self._pending.get(request_id)
-                if target is not None:
+        try:
+            for line in process.stdout:
+                try:
+                    message = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(message, dict):
+                    continue
+                request_id = message.get("id")
+                if type(request_id) is int and "method" not in message:
+                    with self._pending_lock:
+                        target = self._pending.get(request_id)
+                    if target is not None:
+                        try:
+                            target.put_nowait(message)
+                        except queue.Full:
+                            pass
+                elif self.notification_callback is not None:
                     try:
-                        target.put_nowait(message)
+                        self.notification_callback(message)
+                    except Exception as exc:
+                        self.stderr_tail.append(f"MCP notification handler failed: {exc}")
+        except (OSError, ValueError) as exc:
+            self.stderr_tail.append(f"MCP output stream failed: {exc}")
+        finally:
+            if self.process is process or self.process is None:
+                failure = {"error": {"message": "StudioMCP closed the connection."}}
+                with self._pending_lock:
+                    pending = list(self._pending.values())
+                for target in pending:
+                    try:
+                        target.put_nowait(failure)
                     except queue.Full:
                         pass
-            elif self.notification_callback is not None:
-                try:
-                    self.notification_callback(message)
-                except Exception as exc:
-                    self.stderr_tail.append(f"MCP notification handler failed: {exc}")
-        failure = {"error": {"message": "StudioMCP closed the connection."}}
-        with self._pending_lock:
-            pending = list(self._pending.values())
-        for target in pending:
-            try:
-                target.put_nowait(failure)
-            except queue.Full:
-                pass
 
     def _read_stderr(self) -> None:
         process = self.process
@@ -417,15 +426,19 @@ def validate_json_schema(value: Any, schema: dict[str, Any], path: str = "$") ->
     if not isinstance(schema, dict):
         return errors
 
-    alternatives = schema.get("anyOf") or schema.get("oneOf")
-    if isinstance(alternatives, list):
-        if not any(not validate_json_schema(value, option, path) for option in alternatives):
-            errors.append(f"{path} does not match any accepted alternative")
-        return errors
+    for keyword in ("anyOf", "oneOf", "allOf"):
+        alternatives = schema.get(keyword)
+        if isinstance(alternatives, list):
+            matches = sum(not validate_json_schema(value, option, path) for option in alternatives)
+            valid = matches == len(alternatives) if keyword == "allOf" else matches == 1 if keyword == "oneOf" else matches > 0
+            if not valid:
+                errors.append(f"{path} does not satisfy {keyword}")
 
     expected = schema.get("type")
     valid_type = True
-    if expected == "object":
+    if isinstance(expected, list):
+        valid_type = any(not validate_json_schema(value, {"type": item}, path) for item in expected)
+    elif expected == "object":
         valid_type = isinstance(value, dict)
     elif expected == "array":
         valid_type = isinstance(value, list)
@@ -457,9 +470,10 @@ def validate_json_schema(value: Any, schema: dict[str, Any], path: str = "$") ->
                     errors.extend(validate_json_schema(child, properties[key], f"{path}.{key}"))
                 elif schema.get("additionalProperties") is False:
                     errors.append(f"{path}.{key} is not allowed")
-    elif isinstance(value, list) and isinstance(schema.get("items"), dict):
-        for index, item in enumerate(value):
-            errors.extend(validate_json_schema(item, schema["items"], f"{path}[{index}]"))
+    elif isinstance(value, list):
+        if isinstance(schema.get("items"), dict):
+            for index, item in enumerate(value):
+                errors.extend(validate_json_schema(item, schema["items"], f"{path}[{index}]"))
         if "minItems" in schema and len(value) < int(schema["minItems"]):
             errors.append(f"{path} requires at least {schema['minItems']} items")
         if "maxItems" in schema and len(value) > int(schema["maxItems"]):
