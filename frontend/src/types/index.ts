@@ -119,6 +119,7 @@ export interface TaskOptions {
   risk: "low" | "medium" | "high";
   revisions: number;
   fixAttempts: number;
+  continuousVerification?: boolean;
   effort?: EffortLevel;
   research?: "AUTO" | "ON" | "OFF";
   chatMode?: ChatMode;
@@ -134,6 +135,7 @@ export const DEFAULT_TASK_OPTIONS: TaskOptions = {
   risk: "medium",
   revisions: 3,
   fixAttempts: 3,
+  continuousVerification: true,
   effort: "AUTO",
   research: "AUTO",
   chatMode: "PROJECT",
