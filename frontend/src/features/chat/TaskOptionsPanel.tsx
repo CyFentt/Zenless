@@ -46,8 +46,19 @@ export function TaskOptionsPanel({ options, onChange, onClose }: Props) {
         <OptionRow label="Auto Fix" hint="Automatically fix detected errors">
           <Toggle checked={options.autoFix} onChange={(v) => set('autoFix', v)} label="Auto Fix" />
         </OptionRow>
-        <OptionRow label="Approval" hint="Require manual approval for changes">
-          <Toggle checked={options.approval} onChange={(v) => set('approval', v)} label="Approval" />
+        <OptionRow label="Approval" hint="ASK waits at every write gate. SAFE AUTO skips low-risk code gates after an approved review. FULL AUTO skips local write gates but never bypasses policy blocks.">
+          <Select
+            value={options.approvalMode}
+            options={[
+              { id: 'ASK', label: 'ASK' },
+              { id: 'SAFE_AUTO', label: 'SAFE AUTO' },
+              { id: 'FULL_AUTO', label: 'FULL AUTO' },
+            ]}
+            onChange={(value) => {
+              const mode = value as TaskOptions['approvalMode'];
+              onChange({ ...options, approvalMode: mode, approval: mode !== 'FULL_AUTO' });
+            }}
+          />
         </OptionRow>
         <OptionRow label="Risk" hint="Risk tolerance for generated changes">
           <Select
@@ -61,10 +72,10 @@ export function TaskOptionsPanel({ options, onChange, onClose }: Props) {
           />
         </OptionRow>
         <OptionRow label="Revisions" hint="Maximum revision attempts">
-          <NumberInput value={options.revisions} onChange={(v) => set('revisions', v)} min={1} max={10} />
+          <NumberInput value={options.revisions} onChange={(v) => set('revisions', v)} min={1} max={64} />
         </OptionRow>
         <OptionRow label="Fix Attempts" hint="Maximum auto-fix attempts">
-          <NumberInput value={options.fixAttempts} onChange={(v) => set('fixAttempts', v)} min={1} max={10} />
+          <NumberInput value={options.fixAttempts} onChange={(v) => set('fixAttempts', v)} min={1} max={64} />
         </OptionRow>
       </div>
     </div>
