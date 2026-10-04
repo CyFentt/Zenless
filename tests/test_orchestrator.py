@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from zenless.browser_bridge import BridgeError
-from zenless.models import ProposalAction, Stage, TaskOptions
+from zenless.models import ProposalAction, ReviewResult, Stage, TaskOptions
 from zenless.orchestrator import OrchestratorError, ZenlessOrchestrator
 from zenless.store import SQLiteStore
 from zenless.studio_mcp import MCPError, MCPTool, MCPToolResult, StudioTarget
@@ -237,6 +237,46 @@ class OrchestratorTests(unittest.TestCase):
                 return
             time.sleep(0.02)
         self.fail("Orchestrator did not finish within the timeout")
+
+    def test_safe_auto_requires_low_review_and_action_risk(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            orchestrator, _ = self.make_system(folder, FakeBridge({}), FakeStudio())
+            options = TaskOptions(create_3d_asset=False, approval_mode="safe_auto")
+            action = ProposalAction(
+                tool="multi_edit",
+                arguments={
+                    "file_path": "game.ServerScriptService.Main",
+                    "edits": [{"old_string": "local value = 1", "new_string": "local value = 2"}],
+                },
+                risk="medium",
+            )
+            low_review = ReviewResult(verdict="approve", summary="ok", risk="low", confidence=0.95)
+            high_review = ReviewResult(verdict="approve", summary="risk", risk="high", confidence=0.95)
+            high_action = ProposalAction(
+                tool="multi_edit",
+                arguments=action.arguments,
+                risk="high",
+            )
+
+            self.assertFalse(orchestrator._requires_change_approval(options, [action], low_review))
+            self.assertTrue(orchestrator._requires_change_approval(options, [action], high_review))
+            self.assertTrue(orchestrator._requires_change_approval(options, [high_action], low_review))
+
+    def test_full_auto_preserves_policy_blocking(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            orchestrator, _ = self.make_system(folder, FakeBridge({}), FakeStudio())
+            options = TaskOptions(create_3d_asset=False, require_approval=False, approval_mode="full_auto")
+            dangerous = ProposalAction(
+                tool="multi_edit",
+                arguments={
+                    "file_path": "game.ServerScriptService.Main",
+                    "edits": [{"old_string": "workspace:Destroy()", "new_string": "local value = 2"}],
+                },
+                risk="critical",
+            )
+            self.assertFalse(orchestrator._requires_change_approval(options, [dangerous], None))
+            from zenless.policy import validate_proposal
+            self.assertTrue(validate_proposal([dangerous], set(orchestrator.studio.tools)))
 
     def test_create_review_approve_apply_and_play_test(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
