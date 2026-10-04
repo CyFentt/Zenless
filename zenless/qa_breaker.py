@@ -602,6 +602,223 @@ class QABreaker:
         except RuntimeError:
             return ""
 
+    def _needs_visual_review(self, job_id: str, profile: TestProfile) -> bool:
+        task = self.store.load_task(job_id) or {}
+        prompt = str(task.get("prompt", "")).casefold()
+        visual_terms = (
+            "ui",
+            "gui",
+            "hud",
+            "menu",
+            "screen",
+            "visual",
+            "vfx",
+            "effect",
+            "particle",
+            "lighting",
+            "texture",
+            "material",
+            "mesh",
+            "model",
+            "animation",
+            "camera",
+            "map",
+            "environment",
+        )
+        return any(term in prompt for term in visual_terms)
+
+    def _run_official_playtest_subagent(self, job_id: str, studio_id: str) -> tuple[str, str, str]:
+        expected = "Roblox playtest subagent executes a focused scenario and returns evidence"
+        tool = self.studio.tools.get("subagent")
+        if tool is None:
+            return "SKIPPED", expected, "The current official Studio MCP does not expose subagent"
+        properties = tool.input_schema.get("properties")
+        required = tool.input_schema.get("required", [])
+        if not isinstance(properties, dict):
+            return "SKIPPED", expected, "The subagent schema is not introspectable"
+        arguments: dict[str, Any] = {}
+        type_key = ""
+        for candidate in ("type", "subagent_type", "agent_type", "kind"):
+            schema = properties.get(candidate)
+            if not isinstance(schema, dict):
+                continue
+            accepted = schema.get("enum")
+            if isinstance(accepted, list) and "playtest" in accepted:
+                type_key = candidate
+                arguments[candidate] = "playtest"
+                break
+        if not type_key:
+            return "SKIPPED", expected, "The subagent schema does not advertise a playtest type"
+        task = self.store.load_task(job_id) or {}
+        objective = str(task.get("prompt", "")).strip()[:4000]
+        instruction = (
+            "Playtest the implemented objective in the active Studio session. Exercise the main success path, "
+            "one realistic edge case, and any relevant UI or interaction. Report observed failures only from real "
+            "Studio evidence. Do not mutate persistent source. Objective: " + objective
+        )
+        for candidate in ("prompt", "task", "instruction", "instructions", "objective", "query"):
+            schema = properties.get(candidate)
+            if isinstance(schema, dict) and schema.get("type") == "string":
+                arguments[candidate] = instruction
+                break
+        unresolved = [
+            name
+            for name in required
+            if name not in arguments and name != "studio_id"
+        ] if isinstance(required, list) else []
+        if unresolved:
+            return "SKIPPED", expected, "Unsupported required subagent fields: " + ", ".join(map(str, unresolved))
+        try:
+            result = self.studio.call_tool("subagent", arguments, studio_id=studio_id, timeout=180)
+        except MCPError as exc:
+            return "FAILED", expected, str(exc)
+        if result.is_error:
+            return "FAILED", expected, result.compact(6000)
+        text = result.compact(8000)
+        normalized = text.casefold()
+        explicit_failure = any(
+            token in normalized
+            for token in (""passed":false", ""success":false", "verdict: fail", "status: failed", "test failed")
+        )
+        if explicit_failure:
+            return "FAILED", expected, text
+        return "PASSED", expected, text or "Playtest subagent completed"
+
+    def _run_tripwire_security(self, job_id: str) -> tuple[str, str, str]:
+        expected = "Tripwire reports zero unvalidated client-trust findings in the configured source tree"
+        if self.tripwire is None:
+            return "SKIPPED", expected, "Portable Tripwire server is unavailable"
+        settings = self.store.get_setting("ui.settings", {})
+        project_root = str(settings.get("projectRoot") or "").strip() if isinstance(settings, dict) else ""
+        if not project_root:
+            return "SKIPPED", expected, "No filesystem project is configured for Tripwire static analysis"
+        project = Path(project_root).expanduser().resolve()
+        if not project.is_dir():
+            return "FAILED", expected, f"Configured project directory does not exist: {project}"
+        try:
+            if not self.tripwire.running:
+                self.tripwire.start()
+        except MCPError as exc:
+            return "SKIPPED", expected, f"Tripwire could not start: {exc}"
+        if "review_security" not in self.tripwire.tools:
+            return "SKIPPED", expected, "Tripwire does not expose review_security"
+        try:
+            review = self.tripwire.call_tool("review_security", {"path": str(project)}, timeout=120)
+            remotes = (
+                self.tripwire.call_tool("scan_remotes", {"path": str(project)}, timeout=120)
+                if "scan_remotes" in self.tripwire.tools
+                else None
+            )
+            trust = (
+                self.tripwire.call_tool("scan_client_trust", {"path": str(project)}, timeout=120)
+                if "scan_client_trust" in self.tripwire.tools
+                else None
+            )
+        except MCPError as exc:
+            return "FAILED", expected, str(exc)
+        if review.is_error or review.text.lstrip().startswith("Error:"):
+            return "FAILED", expected, review.compact(6000)
+        match = re.search(r"Security review:\s*\d+ server remote handler\(s\),\s*(\d+) finding\(s\)\.", review.text)
+        if match is None:
+            return "FAILED", expected, "Tripwire returned an unrecognized security report:\n" + review.compact(5000)
+        finding_count = int(match.group(1))
+        evidence = [review.compact(6000)]
+        if trust is not None:
+            evidence.append("CLIENT TRUST\n" + trust.compact(6000))
+        if remotes is not None:
+            evidence.append("REMOTES\n" + remotes.compact(6000))
+        joined = "\n\n".join(evidence)
+        if finding_count > 0:
+            return "FAILED", expected, joined
+        return "PASSED", expected, joined
+
+    def _run_visual_review(self, job_id: str, studio_id: str, seed: int) -> tuple[str, str, str]:
+        expected = "Viewport capture is independently reviewed for visible regressions against the task objective"
+        tool = self.studio.tools.get("screen_capture")
+        if tool is None:
+            return "FAILED", expected, "Official Studio MCP does not expose screen_capture"
+        properties = tool.input_schema.get("properties")
+        required = tool.input_schema.get("required", [])
+        arguments: dict[str, Any] = {}
+        if isinstance(properties, dict) and "capture_id" in properties:
+            arguments["capture_id"] = f"RubraQA_{seed:08x}"
+        unresolved = [
+            name
+            for name in required
+            if name not in arguments and name != "studio_id"
+        ] if isinstance(required, list) else []
+        if unresolved:
+            return "FAILED", expected, "Unsupported required screen_capture fields: " + ", ".join(map(str, unresolved))
+        try:
+            capture = self.studio.call_tool("screen_capture", arguments, studio_id=studio_id, timeout=60)
+        except MCPError as exc:
+            return "FAILED", expected, str(exc)
+        if capture.is_error or not capture.images:
+            return "FAILED", expected, capture.compact(4000) or "screen_capture returned no image evidence"
+        path = self._persist_capture(job_id, seed, capture.images[0])
+        if path is None:
+            return "FAILED", expected, "Viewport image evidence could not be decoded"
+        task = self.store.load_task(job_id) or {}
+        objective = str(task.get("prompt", "")).strip()
+        prompt = (
+            "Review the attached Roblox Studio viewport as independent visual QA for the implemented task. "
+            "Look for broken layout, clipping, unreadable text, missing assets, obvious z-order problems, visual "
+            "inconsistency, unintended default materials, malformed geometry, and visible regressions. "
+            "Do not invent unseen problems. Return JSON only with this schema: "
+            '{"approved":true,"issues":[],"summary":"..."}. '
+            "Task objective: " + objective
+        )
+        errors: list[str] = []
+        for provider in ("gemini", "chatgpt"):
+            if not self.bridge.wait_for_provider(provider, timeout=0.5):
+                continue
+            try:
+                uploaded = self.bridge.request(
+                    provider,
+                    "upload_files",
+                    {"files": [str(path)]},
+                    task_id=job_id,
+                    timeout=90,
+                )
+                if str(uploaded.get("status", "ok")).casefold() != "ok":
+                    errors.append(f"{provider}: upload rejected")
+                    continue
+                raw = self.bridge.send_prompt(provider, prompt, task_id=job_id, timeout=180)
+                payload = extract_json_object(raw)
+                approved = payload.get("approved")
+                issues = payload.get("issues", [])
+                summary = str(payload.get("summary") or "").strip()
+                detail = json.dumps(
+                    {"provider": provider, "capture": str(path), "approved": approved, "issues": issues, "summary": summary},
+                    ensure_ascii=False,
+                )
+                if approved is True:
+                    return "PASSED", expected, detail
+                if approved is False:
+                    return "FAILED", expected, detail
+                errors.append(f"{provider}: review response had no boolean approved field")
+            except Exception as exc:
+                errors.append(f"{provider}: {exc}")
+        return "FAILED", expected, "Viewport was captured but no visual reviewer produced valid evidence. " + " | ".join(errors)
+
+    def _persist_capture(self, job_id: str, seed: int, image: dict[str, str]) -> Path | None:
+        data = str(image.get("data") or "")
+        mime = str(image.get("mimeType") or "image/png").casefold()
+        if not data or len(data) > 40_000_000:
+            return None
+        try:
+            payload = base64.b64decode(data, validate=True)
+        except ValueError:
+            return None
+        if not payload or len(payload) > 24 * 1024 * 1024:
+            return None
+        suffix = ".jpg" if "jpeg" in mime or "jpg" in mime else ".png"
+        root = self.capture_root / re.sub(r"[^A-Za-z0-9_.-]+", "_", job_id)[:96]
+        root.mkdir(parents=True, exist_ok=True)
+        path = root / f"viewport-{seed:08x}{suffix}"
+        path.write_bytes(payload)
+        return path
+
     def _run_play_case(
         self,
         run_id: str,
