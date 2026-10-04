@@ -170,6 +170,18 @@
         "min_ram_gb": 20,
         "min_free_gb": 8
       }
+    },
+    {
+      "id": "uv",
+      "group": "runtime",
+      "name": "uv 0.12.23",
+      "kind": "zip",
+      "url": "https://github.com/astral-sh/uv/releases/download/0.12.23/uv-x86_64-pc-windows-msvc.zip",
+      "sha256": "75d05de6762778c31ee183398de7dd15093fad0ed90b1f236d8205ea5ec00c90",
+      "target": "runtime/tools/uv",
+      "critical": true,
+      "flatten": true,
+      "marker": "uv.exe"
     }
   ],
   "npm": [
@@ -270,6 +282,30 @@
       "repo": "Nixera-Studio/roblox-ai-studio",
       "commit": "c88d2e57a5ca52381b49f488ee13a0fd7c3beae9",
       "target": "runtime/sources/roblox-ai-studio"
+    },
+    {
+      "id": "wally",
+      "repo": "UpliftGames/wally",
+      "commit": "4a9d53ea9d8cddf2065bdf177f8d3e7c75babc9d",
+      "target": "runtime/sources/wally"
+    },
+    {
+      "id": "run-in-roblox",
+      "repo": "rojo-rbx/run-in-roblox",
+      "commit": "40fb70c0f76d0e47aa497d32669c30732d40f551",
+      "target": "runtime/sources/run-in-roblox"
+    },
+    {
+      "id": "remodel",
+      "repo": "rojo-rbx/remodel",
+      "commit": "011748c4ecedda35aec79bbbf532deb08335b6e7",
+      "target": "runtime/sources/remodel"
+    },
+    {
+      "id": "darklua",
+      "repo": "seaofvoices/darklua",
+      "commit": "83a3a9d0a241fb193140807e4e77e81545f6f60d",
+      "target": "runtime/sources/darklua"
     }
   ]
 }
