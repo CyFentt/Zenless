@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import math
@@ -8,6 +9,7 @@ import threading
 import time
 import uuid
 from dataclasses import asdict, dataclass, field
+from pathlib import Path
 from typing import Any
 
 from .event_bus import EventBus
@@ -147,7 +149,8 @@ class TestProfile:
 PROFILES = {
     "SMOKE": TestProfile("SMOKE", 45.0, 4, 1, 0),
     "STANDARD": TestProfile("STANDARD", 120.0, 10, 2, 2),
-    "DEEP": TestProfile("DEEP", 240.0, 18, 4, 5),
+    "DEEP": TestProfile("DEEP", 300.0, 24, 4, 8),
+    "EXHAUSTIVE": TestProfile("EXHAUSTIVE", 600.0, 40, 8, 16),
 }
 
 
@@ -196,11 +199,16 @@ class QABreaker:
         bridge: AgentTransport,
         events: EventBus,
         play_test_seconds: float = 6.0,
+        tripwire: StudioMCPClient | None = None,
+        capture_root: Path | None = None,
     ) -> None:
         self.store = store
         self.studio = studio
         self.bridge = bridge
         self.events = events
+        self.tripwire = tripwire
+        self.capture_root = (capture_root or Path.cwd() / "qa-captures").resolve()
+        self.capture_root.mkdir(parents=True, exist_ok=True)
         self.play_test_seconds = max(1.0, min(20.0, play_test_seconds))
         self._run_lock = threading.Lock()
         self._manual_lock = threading.Lock()
@@ -214,6 +222,9 @@ class QABreaker:
         tools = {str(item.get("tool", "")).casefold() for item in evidence}
         deep_terms = ("datastore", "persist", "currency", "remoteevent", "multiplayer", "ragdoll", "physics")
         smoke_terms = ("textlabel", "texto", "cor ", "label", "tooltip")
+        continuous = bool((task.get("options") or {}).get("continuous_verification", True))
+        if risk == "high" and continuous:
+            return PROFILES["EXHAUSTIVE"]
         if risk == "high" or any(term in prompt for term in deep_terms) or any("remote" in tool for tool in tools):
             return PROFILES["DEEP"]
         if risk == "low" and len(evidence) <= 2 and any(term in prompt for term in smoke_terms):
