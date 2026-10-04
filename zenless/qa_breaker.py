@@ -552,6 +552,7 @@ class QABreaker:
             "Validate approved mutation evidence",
             "Confirm Studio starts in Edit mode",
             "Run pinned external static quality tools when a filesystem project is configured",
+            "Run pinned external static quality tools when a filesystem project is configured",
             "Start Play, collect Output, Stop, and reject runtime errors",
         ]
         if profile.name in {"STANDARD", "DEEP", "EXHAUSTIVE"}:
