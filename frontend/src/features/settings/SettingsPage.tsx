@@ -150,6 +150,14 @@ function ModelsTab({ settings, catalog, onChange }: { settings: Settings | null;
           <Toggle checked={models.deepseek.reasoning} onChange={(value) => void persistModels({ ...models, deepseek: { ...models.deepseek, reasoning: value } })} />
         </Row>
       </Section>
+      <Section title="RESEARCH">
+        <Row label="Model">
+          <Select value={models.gemini.model} options={available(catalog.gemini.models)} onChange={(value) => void selectModel('gemini', value)} />
+        </Row>
+        <Row label="Reasoning" hint="Enable extended reasoning">
+          <Toggle checked={models.gemini.reasoning} onChange={(value) => void persistModels({ ...models, gemini: { ...models.gemini, reasoning: value } })} />
+        </Row>
+      </Section>
       <Section title="3D GENERATOR">
         <Row label="Version">
           <Select value={models.hunyuan.version} options={available(catalog.hunyuan.versions)} onChange={(value) => void selectModel('hunyuan', value)} />
