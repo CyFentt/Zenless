@@ -2,12 +2,38 @@ from __future__ import annotations
 
 import threading
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 from .core import ZenlessCore
 from .diagnostics import ErrorBus
 from .provisioning import ensure_webview2
 from .web_bridge import LocalWebBridge
+
+
+class DesktopAPI:
+    def __init__(self) -> None:
+        self.window: Any = None
+
+    def bind(self, window: Any) -> None:
+        self.window = window
+
+    def select_project_folder(self, current: str = "") -> str:
+        window = self.window
+        if window is None:
+            return ""
+        try:
+            import webview
+
+            directory = str(Path(current).expanduser()) if current else ""
+            selected = window.create_file_dialog(
+                webview.FileDialog.FOLDER,
+                directory=directory,
+                allow_multiple=False,
+            )
+            return str(selected[0]) if selected else ""
+        except Exception:
+            return ""
+
 
 
 def run_web_app(
@@ -39,9 +65,11 @@ def run_web_app(
         status("UI", "starting React WebView2 shell")
         import webview
 
+        desktop_api = DesktopAPI()
         window = webview.create_window(
             "Rubra",
             url=url,
+            js_api=desktop_api,
             width=1420,
             height=880,
             min_size=(1000, 650),
@@ -51,6 +79,7 @@ def run_web_app(
         )
         if window is None:
             raise RuntimeError("The embedded browser did not create the main window.")
+        desktop_api.bind(window)
 
         def after_start() -> None:
             if ui_ready is not None:
