@@ -19,6 +19,7 @@ import type {
   StudioState,
   TaskOptions,
   TestState,
+  ToolDescriptor,
   ViewTile,
 } from '@/types';
 
@@ -28,6 +29,7 @@ export interface ZenlessAPI {
 
   getConnections(): Promise<ConnectionInfo>;
   getAgents(): Promise<AgentInfo[]>;
+  getTools(): Promise<ToolDescriptor[]>;
   loginProvider(provider: ProviderId): Promise<{ ok: boolean }>;
 
   getJobs(): Promise<Job[]>;
