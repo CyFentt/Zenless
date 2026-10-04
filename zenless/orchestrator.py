@@ -370,6 +370,12 @@ class ZenlessOrchestrator:
                 if indexed.get("available") and indexed.get("result"):
                     context["semantic_project_index"] = str(indexed["result"])[:30000]
                     context["semantic_project_root"] = str(indexed.get("projectRoot") or "")
+                    metadata = indexed.get("metadata")
+                    if isinstance(metadata, dict):
+                        context["semantic_project_metadata"] = {
+                            str(key): str(value)[:16000]
+                            for key, value in metadata.items()
+                        }
             except Exception as exc:
                 context["semantic_project_index_unavailable"] = str(exc)
         if research_enabled and self.local_ai_callback is not None:
