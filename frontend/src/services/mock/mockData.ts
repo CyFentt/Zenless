@@ -282,6 +282,8 @@ export const mockSettings: Settings = {
   },
   autoApprove: false,
   maxRevisions: 3,
+  projectRoot: "",
+  semanticIndex: true,
   bridgePort: 8787,
 };
 
