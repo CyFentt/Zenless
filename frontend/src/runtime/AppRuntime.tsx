@@ -86,10 +86,11 @@ export class ApplicationRuntime {
   }
 
   private async loadSnapshot(): Promise<void> {
-    const [bootstrap, connections, agents, jobs, settings, diagnostics, assets, studioState, studioTree] = await Promise.all([
+    const [bootstrap, connections, agents, tools, jobs, settings, diagnostics, assets, studioState, studioTree] = await Promise.all([
       this.api.bootstrap(),
       this.api.getConnections(),
       this.api.getAgents(),
+      this.api.getTools(),
       this.api.getJobs(),
       this.api.getSettings(),
       this.api.getDiagnostics(),
@@ -103,6 +104,7 @@ export class ApplicationRuntime {
     store.setBackendReady(bootstrap.steps.some((step) => step.stage === 'UI' && step.state === 'READY'));
     store.setConnections(connections);
     store.setAgents(agents);
+    store.setTools(tools);
     store.setJobs(jobs);
     store.setSettings(settings);
     const frontend = frontendDiagnostics.getAll();
