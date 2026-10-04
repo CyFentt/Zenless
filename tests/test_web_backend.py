@@ -111,24 +111,24 @@ class WebBackendTests(unittest.TestCase):
             root = Path(folder)
             frontend = root / "frontend"
             frontend.mkdir()
-            (frontend / "index.html").write_text("<html>Zenless</html>", encoding="utf-8")
+            (frontend / "index.html").write_text("<html>Rubra</html>", encoding="utf-8")
             core = _FakeCore(root)
             bridge = LocalWebBridge(core=core, frontend_root=frontend)
             base = bridge.start()
             try:
                 session = self._request(base + "/api/session")
                 token = str(session["token"])
-                headers = {"X-Zenless-Token": token, "Origin": base}
+                headers = {"X-Rubra-Token": token, "Origin": base}
                 self.assertTrue(self._request(base + "/api/status", headers=headers)["ready"])
 
                 with self.assertRaises(HTTPError) as unauthorized:
-                    self._request(base + "/api/status", headers={"X-Zenless-Token": "wrong"})
+                    self._request(base + "/api/status", headers={"X-Rubra-Token": "wrong"})
                 self.assertEqual(unauthorized.exception.code, 401)
 
                 with self.assertRaises(HTTPError) as forbidden:
                     self._request(
                         base + "/api/status",
-                        headers={"X-Zenless-Token": token, "Origin": "https://example.com"},
+                        headers={"X-Rubra-Token": token, "Origin": "https://example.com"},
                     )
                 self.assertEqual(forbidden.exception.code, 403)
 
