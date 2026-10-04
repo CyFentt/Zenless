@@ -124,6 +124,19 @@ def principal_prompt(
     )
 
 
+
+def research_prompt(objective: str, context: dict[str, Any]) -> str:
+    return (
+        RUBRA_ENGINEERING_POLICY
+        + "\nYou are Rubra's independent research and visual-reasoning agent. "
+        + "Investigate the Roblox-specific objective, challenge assumptions, identify current API or design risks, "
+        + "and return concise implementation evidence for the builder. Do not invent APIs and do not propose unsafe "
+        + "client-authoritative game logic.\n\nUSER OBJECTIVE:\n"
+        + objective
+        + "\n\nLIVE CONTEXT:\n"
+        + compact_json(context, 36000)
+    )
+
 def review_prompt(
     objective: str,
     context: dict[str, Any],
