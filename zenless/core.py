@@ -83,6 +83,7 @@ class ZenlessCore:
             "smartRouting": True,
         },
         "autoApprove": False,
+        "approvalMode": "ASK",
         "maxRevisions": 3,
         "projectRoot": "",
         "semanticIndex": True,
@@ -388,7 +389,7 @@ class ZenlessCore:
         effective_options.setdefault("revisions", int(current_settings.get("maxRevisions", 3)))
         effective_options.setdefault(
             "approvalMode",
-            "FULL_AUTO" if bool(current_settings.get("autoApprove", False)) else "ASK",
+            str(current_settings.get("approvalMode") or ("FULL_AUTO" if bool(current_settings.get("autoApprove", False)) else "ASK")),
         )
         task_options = TaskOptions.from_api(effective_options)
         self._preflight_providers(task_options)
@@ -817,6 +818,13 @@ class ZenlessCore:
         current = self.settings()
         if "autoApprove" in patch:
             current["autoApprove"] = bool(patch["autoApprove"])
+            current["approvalMode"] = "FULL_AUTO" if current["autoApprove"] else "ASK"
+        if "approvalMode" in patch:
+            approval_mode = str(patch["approvalMode"] or "ASK").strip().upper().replace("-", "_").replace(" ", "_")
+            if approval_mode not in {"ASK", "SAFE_AUTO", "FULL_AUTO"}:
+                raise CoreError("INVALID_APPROVAL_MODE", "Approval mode must be ASK, SAFE_AUTO, or FULL_AUTO.")
+            current["approvalMode"] = approval_mode
+            current["autoApprove"] = approval_mode == "FULL_AUTO"
         if "maxRevisions" in patch:
             current["maxRevisions"] = max(1, min(64, int(patch["maxRevisions"])))
         if "projectRoot" in patch:
