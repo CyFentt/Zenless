@@ -232,7 +232,7 @@ export class RealZenlessAPI implements ZenlessAPI {
   getSettings(): Promise<Settings> { return request('/api/settings'); }
   updateSettings(partial: Partial<Settings>): Promise<Settings> { return request('/api/settings', { method: 'PATCH', body: partial }); }
   getModels(): Promise<ModelCatalog> { return request('/api/settings/models'); }
-  setModel(agent: 'chatgpt' | 'deepseek' | 'hunyuan', model: string): Promise<{ ok: boolean }> { return request('/api/settings/models', { method: 'PUT', body: { agent, model } }); }
+  setModel(agent: 'chatgpt' | 'deepseek' | 'gemini' | 'hunyuan', model: string): Promise<{ ok: boolean }> { return request('/api/settings/models', { method: 'PUT', body: { agent, model } }); }
   setSmartRouting(enabled: boolean): Promise<{ ok: boolean }> { return request('/api/settings/smart-routing', { method: 'PUT', body: { enabled } }); }
 
   getDiagnostics(): Promise<Diagnostic[]> { return request('/api/diagnostics'); }
