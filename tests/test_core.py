@@ -28,6 +28,27 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(options.max_revisions, 64)
         self.assertEqual(options.max_test_fixes, 3)
 
+    def test_task_options_normalize_routing_and_approval_modes(self) -> None:
+        options = TaskOptions.from_api(
+            {
+                "approvalMode": "SAFE_AUTO",
+                "effort": "MAX",
+                "research": "ON",
+                "smartRouting": False,
+                "continuousVerification": True,
+            }
+        )
+        self.assertTrue(options.require_approval)
+        self.assertEqual(options.approval_mode, "safe_auto")
+        self.assertEqual(options.effort_level, "max")
+        self.assertEqual(options.research_mode, "on")
+        self.assertFalse(options.smart_routing)
+        self.assertTrue(options.continuous_verification)
+
+        legacy = TaskOptions.from_api({"approval": False})
+        self.assertFalse(legacy.require_approval)
+        self.assertEqual(legacy.approval_mode, "full_auto")
+
     def test_3d_option_forces_visual_first_but_non_3d_can_skip_it(self) -> None:
         model = TaskOptions.from_api({"visualFirst": False, "create3D": True})
         plain = TaskOptions.from_api({"visualFirst": False, "create3D": False})
