@@ -45,7 +45,7 @@ try {
     }
 
     Write-Host "Build complete:"
-    Write-Host (Join-Path $distRoot "Zenless.exe")
+    Write-Host (Join-Path $distRoot "Rubra.exe")
 }
 finally {
     Pop-Location
