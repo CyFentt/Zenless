@@ -7,7 +7,6 @@ import subprocess
 import threading
 import time
 from pathlib import Path
-from typing import Any
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
@@ -27,7 +26,7 @@ class LocalAIService:
 
     @property
     def available(self) -> bool:
-        return self.model_path.is_file() and self._server_executable() is not None
+        return self.model_path.is_file() and bool(self._server_candidates())
 
     @property
     def running(self) -> bool:
@@ -80,6 +79,67 @@ class LocalAIService:
         return text[:16000]
 
     def close(self) -> None:
+        self._stop_process()
+
+    def _ensure_started(self) -> None:
+        with self._lock:
+            if self.running:
+                return
+            if not self.model_path.is_file():
+                raise LocalAIError("Portable local model is unavailable.")
+            candidates = self._server_candidates()
+            if not candidates:
+                raise LocalAIError("Portable llama.cpp runtime is unavailable.")
+
+        errors: list[str] = []
+        for executable, use_gpu in candidates:
+            try:
+                self._start_candidate(executable, use_gpu)
+                self._wait_until_ready(45.0)
+                return
+            except Exception as exc:
+                errors.append(f"{executable.parent.name}: {exc}")
+                self._stop_process()
+        raise LocalAIError("No local model backend started successfully. " + " | ".join(errors[-3:]))
+
+    def _start_candidate(self, executable: Path, use_gpu: bool) -> None:
+        port = self._free_loopback_port()
+        command = [
+            str(executable),
+            "--model",
+            str(self.model_path),
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(port),
+            "--ctx-size",
+            "4096",
+            "--threads",
+            "4",
+            "--parallel",
+            "1",
+            "--no-webui",
+        ]
+        if use_gpu:
+            command.extend(["--n-gpu-layers", "99"])
+        environment = dict(os.environ)
+        environment["LLAMA_CACHE"] = str(self.runtime_root / "model-cache" / "llama")
+        process = subprocess.Popen(
+            command,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            env=environment,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        with self._lock:
+            self._process = process
+            self._port = port
+
+    def _stop_process(self) -> None:
         with self._lock:
             process = self._process
             self._process = None
@@ -89,74 +149,25 @@ class LocalAIService:
         if process.poll() is None:
             process.terminate()
             try:
-                process.wait(timeout=5)
+                process.wait(timeout=3)
             except subprocess.TimeoutExpired:
                 process.kill()
-                process.wait(timeout=3)
+                process.wait(timeout=2)
 
-    def _ensure_started(self) -> None:
-        with self._lock:
-            if self.running:
-                return
-            executable = self._server_executable()
-            if executable is None or not self.model_path.is_file():
-                raise LocalAIError("Portable local model runtime is unavailable.")
-            port = self._free_loopback_port()
-            command = [
-                str(executable),
-                "--model",
-                str(self.model_path),
-                "--host",
-                "127.0.0.1",
-                "--port",
-                str(port),
-                "--ctx-size",
-                "4096",
-                "--threads",
-                "4",
-                "--parallel",
-                "1",
-                "--no-webui",
-            ]
-            if "vulkan" in str(executable).casefold():
-                command.extend(["--n-gpu-layers", "99"])
-            creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-            environment = dict(os.environ)
-            environment["LLAMA_CACHE"] = str(self.runtime_root / "model-cache" / "llama")
-            process = subprocess.Popen(
-                command,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                env=environment,
-                creationflags=creation_flags,
-            )
-            self._process = process
-            self._port = port
-        try:
-            self._wait_until_ready(45.0)
-        except Exception:
-            self.close()
-            raise
-
-    def _server_executable(self) -> Path | None:
+    def _server_candidates(self) -> list[tuple[Path, bool]]:
         roots = [
-            self.runtime_root / "local-ai" / "llama-vulkan",
-            self.runtime_root / "local-ai" / "llama-cpu",
+            (self.runtime_root / "local-ai" / "llama-vulkan", True),
+            (self.runtime_root / "local-ai" / "llama-cpu", False),
         ]
-        for root in roots:
+        result: list[tuple[Path, bool]] = []
+        for root, use_gpu in roots:
             if not root.exists():
                 continue
             direct = root / "llama-server.exe"
-            if direct.is_file():
-                return direct
-            found = next(root.rglob("llama-server.exe"), None)
-            if found is not None:
-                return found
-        return None
+            executable = direct if direct.is_file() else next(root.rglob("llama-server.exe"), None)
+            if executable is not None:
+                result.append((executable, use_gpu))
+        return result
 
     def _wait_until_ready(self, timeout: float) -> None:
         deadline = time.monotonic() + timeout
