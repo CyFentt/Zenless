@@ -59,7 +59,7 @@ class WebViewHost:
 
         self.profile_root.mkdir(parents=True, exist_ok=True)
         self._control = webview.create_window(
-            "Zenless Managed WebView",
+            "Rubra Managed WebView",
             url="about:blank",
             width=1000,
             height=760,
@@ -163,7 +163,7 @@ class WebViewHost:
                     window.hide()
                     return {"state": "ready", "url": str(window.get_current_url() or spec.url)}
             if self._stop.is_set():
-                raise RuntimeError("Login cancelled because Zenless is closing")
+                raise RuntimeError("Login cancelled because Rubra is closing")
             raise TimeoutError(f"Login timeout for {provider}")
         if action == "request":
             provider_action = str(payload.get("provider_action") or "send_prompt")
@@ -203,7 +203,7 @@ class WebViewHost:
                 self._windows.pop(provider, None)
         spec = self.provider_specs[provider]
         window = webview.create_window(
-            f"Zenless • {provider}",
+            f"Rubra • {provider}",
             url=spec.url,
             width=1050,
             height=780,
@@ -463,7 +463,7 @@ class WebViewHost:
         try:
             output.relative_to(self.profile_root.parent.resolve())
         except ValueError as exc:
-            raise ValueError("Image output escaped Zenless storage") from exc
+            raise ValueError("Image output escaped Rubra storage") from exc
         if output.suffix.casefold() != ".png":
             raise ValueError("Generated concept output must be PNG")
         bounds = window.evaluate_js(

@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - rubra
+    tags:
+      - v*
   pull_request:
     branches:
       - main
@@ -116,13 +118,70 @@ jobs:
           VITE_RUBRA_MOCK: "false"
         run: npm run build
 
-      - name: PyInstaller
-        run: python -m PyInstaller --clean --noconfirm Rubra.spec
+      - name: NSIS
+        shell: pwsh
+        run: |
+          $nsis = Join-Path ${env:ProgramFiles(x86)} "NSIS\makensis.exe"
+          if (-not (Test-Path $nsis)) {
+            choco install nsis --version=3.09 --yes --no-progress --limit-output
+            if ($LASTEXITCODE -ne 0) { throw "NSIS installation failed." }
+          }
+
+      - name: Portable distribution
+        shell: pwsh
+        run: |
+          $nsis = Join-Path ${env:ProgramFiles(x86)} "NSIS\makensis.exe"
+          python scripts/build_portable.py --makensis $nsis
+          if ($LASTEXITCODE -ne 0) { throw "Portable packaging failed." }
+
+      - name: Package verification
+        run: python scripts/verify_portable.py dist/Rubra
+
+      - name: WebView2 runtime
+        run: python -c "from pathlib import Path; from zenless.provisioning import ensure_webview2; ensure_webview2(Path.cwd(), Path('build/webview-smoke'))"
+
+      - name: Portable Windows smoke
+        run: python scripts/smoke_portable.py dist/Rubra
+
+      - name: WebView2 round trip
+        run: python -m pytest -o addopts= -q tests/test_managed_browser.py::WebView2BrowserIntegrationTests
 
       - name: Upload Rubra
         uses: actions/upload-artifact@v4
         with:
           name: Rubra-Windows
-          path: dist/Rubra.exe
+          path: |
+            dist/Rubra-Setup.exe
+            dist/Rubra-Windows.zip
+            dist/SHA256SUMS.txt
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 30
+
+  release:
+    needs: package
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download package
+        uses: actions/download-artifact@v4
+        with:
+          name: Rubra-Windows
+          path: release-assets
+
+      - name: Publish prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          version=$(python -c 'from zenless import __version__; print(__version__)')
+          test "$RELEASE_TAG" = "v$version"
+          cd release-assets
+          sha256sum --check SHA256SUMS.txt
+          gh release create "$RELEASE_TAG" Rubra-Setup.exe Rubra-Windows.zip SHA256SUMS.txt \
+            --repo "$GITHUB_REPOSITORY" --verify-tag --title "Rubra $version" \
+            --notes-file ../RELEASE_NOTES.md --prerelease

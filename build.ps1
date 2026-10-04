@@ -39,13 +39,16 @@ try {
         Pop-Location
     }
 
-    python -m PyInstaller --clean --noconfirm Rubra.spec
-    if ($LASTEXITCODE -ne 0) {
-        throw "PyInstaller failed with exit code $LASTEXITCODE."
-    }
+    $nsis = Get-Command makensis -ErrorAction SilentlyContinue
+    $nsisPath = if ($nsis) { $nsis.Source } else { Join-Path ${env:ProgramFiles(x86)} "NSIS\makensis.exe" }
+    if (-not (Test-Path -LiteralPath $nsisPath)) { throw "Install NSIS 3 and rerun the build." }
+
+    python scripts/build_portable.py --makensis $nsisPath
+    if ($LASTEXITCODE -ne 0) { throw "Portable packaging failed with exit code $LASTEXITCODE." }
 
     Write-Host "Build complete:"
-    Write-Host (Join-Path $distRoot "Rubra.exe")
+    Write-Host (Join-Path $distRoot "Rubra-Setup.exe")
+    Write-Host (Join-Path $distRoot "Rubra-Windows.zip")
 }
 finally {
     Pop-Location

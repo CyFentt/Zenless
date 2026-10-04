@@ -148,7 +148,7 @@ class WebView2BrowserController:
     def login(self, provider: str, *, timeout: float = 600.0) -> dict[str, Any]:
         if not self.running:
             self.start()
-        self._set_state(provider, "Login Required", "Complete login in the Zenless WebView2 window")
+        self._set_state(provider, "Login Required", "Complete login in the Rubra WebView2 window")
         result = self._request("login", provider, {"timeout": timeout}, timeout=timeout + 5)
         self._set_state(provider, "Ready", "Authenticated WebView2 session")
         return result
@@ -336,7 +336,10 @@ class WebView2BrowserController:
             return [str(self.host_executable), *arguments]
         if getattr(sys, "frozen", False):
             return [sys.executable, *arguments]
-        return [sys.executable, "-m", "zenless.webview_host", *arguments[1:]]
+        executable = Path(sys.executable)
+        if sys.platform == "win32" and executable.name.casefold() == "pythonw.exe":
+            executable = executable.with_name("python.exe")
+        return [str(executable), "-m", "zenless.webview_host", *arguments[1:]]
 
     def _set_state(self, provider: str, state: str, detail: str) -> None:
         with self._states_lock:
@@ -353,5 +356,5 @@ class WebView2BrowserController:
                 message=str(exc),
                 exc=exc,
                 impact="The embedded browser route became unavailable.",
-                recovery_action="Retry the provider login; Zenless can use its managed Playwright fallback.",
+                recovery_action="Retry the provider login; Rubra can use its managed Playwright fallback.",
             )

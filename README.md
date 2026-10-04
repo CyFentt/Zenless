@@ -2,6 +2,8 @@
 
 Rubra is a portable Windows workspace for autonomous Roblox Studio development. It coordinates existing Roblox tooling, Studio MCP capabilities, authenticated web AI sessions, local models, indexing, review, and evidence-based QA behind one compact desktop interface.
 
+Download `Rubra-Setup.exe` or `Rubra-Windows.zip` from the matching GitHub prerelease. Setup extracts into a new writable folder; the ZIP can be extracted manually. Open `Rubra.exe` inside that folder. Python is included. Windows execution and live integration still require validation; see `RELEASE_NOTES.md`.
+
 The project is derived from the existing Zenless codebase. Rubra does not replace established tools when an upstream project already provides the required capability; pinned tools and source mirrors are composed under the portable runtime instead.
 
 ## Workflow
@@ -115,7 +117,7 @@ Build the Windows executable with:
 .\build.ps1
 ```
 
-The package target is `dist\Rubra.exe` using `Rubra.spec`.
+Install NSIS 3 before building. The package targets are `dist\Rubra-Setup.exe` and `dist\Rubra-Windows.zip`, containing the same portable folder. `packaging/windows-runtime.json` pins the official Windows Python runtime and application wheels by SHA-256. `scripts/build_portable.py` also supports packaging from Linux with NSIS after the production frontend is built. `Rubra.spec` remains available for native Windows PyInstaller builds.
 
 See `RUBRA.md`, `ARCHITECTURE.md`, `QA_ARCHITECTURE.md`, `NOTICE.md`, and `LICENSE`.
 

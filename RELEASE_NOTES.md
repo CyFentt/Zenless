@@ -1,58 +1,24 @@
-# Release Notes
+# Rubra 2.0.1
 
-## Unreleased - 2026-08-30
+Rubra now ships as a Windows x64 package with its own Python runtime and the production React interface. `Rubra-Setup.exe` extracts the application into a new folder. `Rubra-Windows.zip` contains the same application for manual extraction. Open `Rubra.exe` from the extracted folder; a global Python installation is unnecessary.
 
-### Runtime and recovery
+The distribution composes the official Python embeddable package, the existing application, pinned Windows wheels and NSIS. Published dependency digests are checked before extraction. The package includes upstream Python and dependency licenses, source commit metadata and SHA-256 checksums.
 
-- Application-lifetime ownership keeps the WebSocket, subscriptions, and hydration active after the splash closes.
-- Startup waits for both backend readiness and an authoritative REST snapshot.
-- Every reconnect refreshes connections, agents, jobs, settings, diagnostics, assets, Studio state, messages, context, changes, visual state, model state, and test state.
-- Agent, job, and message updates use idempotent upserts to prevent missing rows and duplicate chat history.
-- Interrupted jobs are recovered conservatively according to their last persisted stage.
+Startup failures during toolchain setup now produce the same startup log and error dialog as interface failures. An absent optional icon no longer reaches WebView2. The portable WebView2 helper uses the bundled console interpreter with hidden execution and pipes for its protocol. Remaining startup and provider window titles use Rubra branding.
 
-### Chat and providers
+This package includes the previous Rubra work: isolated project indexes with incremental refresh and credential-file exclusions, a pinned mcp-code-search adapter, serialized local AI startup with Vulkan-to-CPU fallback, the restored Changes/Context/History workspace and diff viewer, provider login error handling and the authenticated local application bridge.
 
-- Provider authentication is checked before a job is created or Studio work begins.
-- Login-required responses are structured, visible in chat, and expose a legitimate Login action.
-- Blocked and failed pipeline states persist and publish their real error messages.
-- Chat submission reconciles the temporary user message with its persisted server ID and hydrates the new job immediately.
-- Visible agent names are Builder, Reviewer, 3D Generator, and Studio.
+## Requirements and use
 
-### Core and safety
+- Windows 10 or later, x64, and a writable application folder.
+- Internet access for the first launch, provider authentication and tool/model downloads.
+- Roblox Studio with the current Studio MCP capability and an open place.
+- Microsoft WebView2. Startup can provision the Microsoft runtime when it is missing.
 
-- The local bridge uses an ephemeral port, random session token, strict host and origin checks, authenticated WebSocket access, bounded multipart input, and ID-based assets.
-- Mutations require snapshots, SHA-256 preconditions, operation claims, read-back, and correlated evidence.
-- Pending mutation operations are never replayed automatically after a crash.
-- Diagnostics collect startup, bridge, browser, Studio, and pipeline failures in bounded rotating logs.
+Select a new folder during setup. Existing folders are refused to protect saved state. After extracting, open `Rubra.exe`, complete provider authentication and select the project folder in Settings. Keep the entire application folder together. Deleting it removes Rubra state and portable tools; Roblox Studio and Microsoft WebView2 remain installed.
 
-### QA and release
+## Validation status
 
-- QA records profile, seed, plan, cases, output, failures, and independent review, and always requests Play cleanup.
-- Conditional checks remain `SKIPPED` when the required tool, schema, project harness, or live Studio session is unavailable.
-- `build.ps1` blocks packaging until Ruff, Pyright, pytest, ESLint, TypeScript, Vitest, and the production Vite build pass.
-- `Zenless.spec` produces one Windows executable without a console or unused GUI toolkits.
+The Linux-side checks pass: Ruff, Pyright, 82 backend tests, ESLint, TypeScript, 53 frontend tests and the production Vite build. One WebView2 integration test is skipped because it requires Windows. Package checks cover all 21 installed Python dependencies and 63 Windows binaries, including x64 Python extensions. The package uses the production frontend with demo mode disabled.
 
-### Verification
-
-| Gate | Current result |
-|---|---|
-| Ruff | `PASS` |
-| Pyright | `PASS` - 0 errors, 0 warnings |
-| pytest | `PASS` - 51 tests |
-| ESLint | `PASS` |
-| TypeScript | `PASS` |
-| Vitest | `PASS` - 5 files, 50 tests |
-| Production dependency audit | `PASS` - 0 vulnerabilities |
-| Production Vite build | `PASS` |
-| One-file executable | `PASS` - 63,738,647 bytes, SHA-256 `757FF4E68460D61AA32DDFB2352990CC448C40EC1AB1DD522071D48F10AD9854` |
-| Frozen executable startup | `PASS` |
-| Frozen embedded browser round trip | `PASS` |
-| Live Studio, Play, and Output | `NOT RUN` - no connected Studio session |
-| Live provider and visual workflow | `NOT RUN` |
-| Clean Windows machine | `NOT RUN` |
-
-### Known limits
-
-- Provider sites and account permissions can change independently and may require adapter maintenance.
-- The release produces `Zenless.exe` without a separate installer.
-- Local GLB support still depends on the import capabilities exposed by Studio and its bridge.
+Windows application execution, WebView2 rendering, real provider logins and live Roblox Studio round trips have not been verified in this environment. GitHub Actions cannot start because the repository account has a billing lock. Wine cannot run because the execution environment denies its required Unix socket. This release is a prerelease until Windows validation is completed; it does not claim that the full live workflow has passed.

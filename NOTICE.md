@@ -8,6 +8,8 @@ ZeroScript Free informed browser/Roblox AI integration research. Other integrate
 
 aiohttp, pywebview, Playwright, websockets, React, Three.js, and their dependencies retain their own licenses. Microsoft Edge WebView2, Roblox Studio, and provider web products are external platform dependencies and are owned by their respective vendors.
 
+The portable Windows distribution includes the official Python embeddable runtime under the Python Software Foundation license. Its license is included at `runtime/python/LICENSE.txt`. Python dependency license files remain in their package metadata directories. The portable launcher and extraction setup are compiled with NSIS; NSIS retains its upstream license, included in the distribution at `NSIS-LICENSE.txt`. No Pynsist code is bundled or modified.
+
 Rubra does not collect provider passwords or export browser cookies as API credentials. Authentication is performed on the provider's normal page. Login, MFA, CAPTCHA, consent, account restrictions, and provider terms remain under the provider's control.
 
 Product and provider names are trademarks of their respective owners. No official affiliation is claimed unless an upstream project explicitly states one.

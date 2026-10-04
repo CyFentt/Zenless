@@ -65,7 +65,7 @@ def run_native_host(runtime_file: Path) -> int:
                 source="native-host",
                 provider=hello.provider,
                 reply_to=hello.id,
-                payload={"error": "Zenless.exe is not open or the local runtime is unavailable."},
+                payload={"error": "Rubra.exe is not open or the local runtime is unavailable."},
             )
             .to_json()
             .encode("utf-8")
@@ -108,6 +108,6 @@ def run_native_host(runtime_file: Path) -> int:
 
 def main(runtime_file: Path | None = None) -> int:
     if runtime_file is None:
-        base = Path.home() / "AppData" / "Local" / "Zenless"
+        base = Path.home() / "AppData" / "Local" / "Rubra"
         runtime_file = base / "runtime.json"
     return run_native_host(runtime_file)

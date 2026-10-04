@@ -338,7 +338,7 @@ class ManagedBrowserController:
                         self._set_state(
                             command.provider,
                             "Unavailable",
-                            "Playwright runtime failed; Zenless will try embedded WebView2",
+                            "Playwright runtime failed; Rubra will try embedded WebView2",
                         )
                 command.error = exc
                 self._report(
@@ -658,7 +658,7 @@ class ManagedBrowserController:
         try:
             output.relative_to(self.data_root.resolve())
         except ValueError as exc:
-            raise BridgeError("Image output escaped Zenless storage.") from exc
+            raise BridgeError("Image output escaped Rubra storage.") from exc
         if output.suffix.casefold() != ".png":
             raise BridgeError("Generated concept output must be PNG.")
         response = self._response_locator(page, spec)

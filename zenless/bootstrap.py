@@ -219,8 +219,8 @@ class NativeSplash:
         user32.InvalidateRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT), wintypes.BOOL]
         user32.InvalidateRect.restype = wintypes.BOOL
 
-        background = gdi32.CreateSolidBrush(0x000C0909)
-        accent = gdi32.CreateSolidBrush(0x00B76184)
+        background = gdi32.CreateSolidBrush(0x00050409)
+        accent = gdi32.CreateSolidBrush(0x004229D8)
 
         def draw(hwnd: int) -> None:
             paint = PAINTSTRUCT()
@@ -233,8 +233,8 @@ class NativeSplash:
             gdi32.SetBkMode(hdc, 1)
             gdi32.SetTextColor(hdc, 0x00F7F5F5)
             title_rect = wintypes.RECT(34, 70, rect.right - 34, 150)
-            user32.DrawTextW(hdc, "ZENLESS", -1, ctypes.byref(title_rect), 0x00000001 | 0x00000020)
-            gdi32.SetTextColor(hdc, 0x00C97294)
+            user32.DrawTextW(hdc, "RUBRA", -1, ctypes.byref(title_rect), 0x00000001 | 0x00000020)
+            gdi32.SetTextColor(hdc, 0x004229D8)
             with self._lock:
                 stage = self._stage
             stage_rect = wintypes.RECT(34, 175, rect.right - 34, 235)
@@ -284,7 +284,7 @@ class NativeSplash:
         hwnd = user32.CreateWindowExW(
             0x00000008,
             class_name,
-            "Zenless",
+            "Rubra",
             0x80000000 | 0x10000000,
             x,
             y,

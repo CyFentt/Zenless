@@ -1188,7 +1188,7 @@ class ZenlessCore:
         options = task.get("options") or {}
         return {
             "id": task["id"],
-            "title": (prompt.splitlines()[0] or "Zenless task")[:100],
+            "title": (prompt.splitlines()[0] or "Rubra task")[:100],
             "status": status_map.get(raw_status, "NEW"),
             "stage": str(task.get("stage", Stage.NEW.value)),
             "createdAt": _milliseconds(task["created_at"]),

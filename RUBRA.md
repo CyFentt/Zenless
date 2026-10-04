@@ -12,8 +12,14 @@ Rubra uses a compact dark interface with a restrained red accent. The UI is inte
 
     Rubra/
       Rubra.exe
+      app/
+        main.py
+        zenless/
+        assets/
+        frontend/dist/
       data/
       runtime/
+        python/
         node/
         tools/
         local-ai/
@@ -21,7 +27,6 @@ Rubra uses a compact dark interface with a restrained red accent. The UI is inte
         npm/
         plugins/
         sources/
-      frontend/
 
 Deleting the Rubra folder removes Rubra state, downloaded models, browser profiles, source mirrors and portable tools. Roblox Studio and Microsoft WebView2 remain platform dependencies.
 

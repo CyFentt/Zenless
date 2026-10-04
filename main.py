@@ -64,34 +64,33 @@ def main() -> int:
             toolchain.ensure_default()
             os.environ.update(toolchain.environment())
 
+        return run_web_app(
+            data_root=_data_root(),
+            resource_root=_resource_root(),
+            diagnostics=diagnostics,
+            smoke_test="--smoke-test" in sys.argv,
+            provision="--no-provision" not in sys.argv,
+            boot_status=splash.update,
+            ui_ready=splash.close,
+        )
+    except Exception as exc:
+        diagnostics.report(
+            severity="CRITICAL",
+            source="startup",
+            component="bootstrap",
+            message=str(exc),
+            exc=exc,
+            impact="Rubra could not finish startup.",
+            recovery_action="Review data/startup-error.log and retry startup.",
+        )
+        (_data_root() / "startup-error.log").write_text(traceback.format_exc(), encoding="utf-8")
         try:
-            return run_web_app(
-                data_root=_data_root(),
-                resource_root=_resource_root(),
-                diagnostics=diagnostics,
-                smoke_test="--smoke-test" in sys.argv,
-                provision="--no-provision" not in sys.argv,
-                boot_status=splash.update,
-                ui_ready=splash.close,
-            )
-        except Exception as exc:
-            diagnostics.report(
-                severity="CRITICAL",
-                source="startup",
-                component="web-app",
-                message=str(exc),
-                exc=exc,
-                impact="Rubra could not open the WebView2 interface.",
-                recovery_action="Review startup-error.log; automatic provisioning can be retried.",
-            )
-            (_data_root() / "startup-error.log").write_text(traceback.format_exc(), encoding="utf-8")
-            try:
-                import ctypes
+            import ctypes
 
-                ctypes.windll.user32.MessageBoxW(0, f"Rubra failed to start:\n{exc}", "Rubra", 0x10)
-            except Exception:
-                pass
-            return 1
+            ctypes.windll.user32.MessageBoxW(0, f"Rubra failed to start:\n{exc}", "Rubra", 0x10)
+        except Exception:
+            pass
+        return 1
     finally:
         if splash is not None:
             splash.close()

@@ -87,13 +87,14 @@ def run_web_app(
             if smoke_test:
                 threading.Timer(6.0, window.destroy).start()
 
+        icon = resource_root / "assets" / "zenless.ico"
         webview.start(
             after_start,
             gui="edgechromium",
             debug=False,
             private_mode=False,
             storage_path=str(data_root / "ui-profile"),
-            icon=str(resource_root / "assets" / "zenless.ico"),
+            icon=str(icon) if icon.is_file() else None,
         )
         return 0
     finally:
