@@ -194,7 +194,7 @@ class WebBackendTests(unittest.TestCase):
                 events=EventBus(),
                 play_test_seconds=1,
             )
-            self.assertEqual(qa.select_profile("job-high-risk", []).name, "DEEP")
+            self.assertEqual(qa.select_profile("job-high-risk", []).name, "EXHAUSTIVE")
 
     @staticmethod
     def _request(
