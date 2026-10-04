@@ -226,6 +226,10 @@ class LocalWebBridge:
         app.router.add_post("/api/jobs/{job_id}/test/stop", self._stop_test)
         app.router.add_get("/api/jobs/{job_id}/test/state", self._test_state)
 
+        app.router.add_get("/api/project/index", self._sync_handler(self.core.project_index_status))
+        app.router.add_post("/api/project/index", self._reindex_project)
+        app.router.add_get("/api/project/search", self._search_project)
+
         app.router.add_get("/api/settings", self._sync_handler(self.core.settings))
         app.router.add_patch("/api/settings", self._update_settings)
         app.router.add_get("/api/settings/models", self._sync_handler(self.core.model_catalog))
@@ -402,6 +406,21 @@ class LocalWebBridge:
 
     async def _test_state(self, request: web.Request) -> web.Response:
         return self._json(self.core.test_state(request.match_info["job_id"]))
+
+    async def _reindex_project(self, request: web.Request) -> web.Response:
+        body = await self._optional_json_body(request)
+        return self._json(self.core.reindex_project(incremental=bool(body.get("incremental", True))))
+
+    async def _search_project(self, request: web.Request) -> web.Response:
+        query = str(request.query.get("q") or "").strip()
+        if not query:
+            raise CoreError("EMPTY_SEARCH", "Search query is empty.")
+        semantic = str(request.query.get("semantic") or "1").casefold() not in {"0", "false", "off"}
+        try:
+            limit = max(1, min(30, int(request.query.get("limit") or 12)))
+        except ValueError:
+            limit = 12
+        return self._json(self.core.search_project(query, semantic=semantic, limit=limit))
 
     async def _update_settings(self, request: web.Request) -> web.Response:
         return self._json(self.core.update_settings(await self._json_body(request)))
