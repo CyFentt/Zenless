@@ -78,12 +78,16 @@ class ToolchainManager:
             self.runtime_root / "tools" / "lune",
             self.runtime_root / "tools" / "ripgrep",
             self.runtime_root / "tools" / "jq",
+            self.runtime_root / "tools" / "uv",
             self.runtime_root / "npm" / "node_modules" / ".bin",
         ]
         env["PATH"] = os.pathsep.join([str(path) for path in roots if path.exists()] + [env.get("PATH", "")])
         env["NPM_CONFIG_CACHE"] = str(self.runtime_root / "npm-cache")
         env["NPM_CONFIG_PREFIX"] = str(self.runtime_root / "npm-prefix")
         env["RUBRA_HOME"] = str(self.portable_root)
+        env["UV_CACHE_DIR"] = str(self.runtime_root / "uv-cache")
+        env["UV_PYTHON_INSTALL_DIR"] = str(self.runtime_root / "python")
+        env["HF_HOME"] = str(self.runtime_root / "model-cache" / "huggingface")
         return env
 
     def path(self, item_id: str, executable: str = "") -> Path | None:
