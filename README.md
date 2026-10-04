@@ -1,47 +1,99 @@
-# Zenless
+# Rubra
 
-Zenless is a local Windows application that coordinates Studio development through authenticated browser sessions without API keys. Login, MFA, CAPTCHA, and consent remain manual.
+Rubra is a portable Windows workspace for autonomous Roblox Studio development. It coordinates existing Roblox tooling, Studio MCP capabilities, authenticated web AI sessions, local models, indexing, review, and evidence-based QA behind one compact desktop interface.
+
+The project is derived from the existing Zenless codebase. Rubra does not replace established tools when an upstream project already provides the required capability; pinned tools and source mirrors are composed under the portable runtime instead.
+
+## Workflow
 
 ```text
-request
-  -> read Studio state
-  -> create a proposal
-  -> run an independent review
-  -> request user approval
-  -> apply verified Studio changes
-  -> run bounded QA and repair
-  -> perform a final review
+objective
+  -> inspect Studio and indexed project context
+  -> load task-specific Roblox skills
+  -> optional local scout and Gemini research
+  -> ChatGPT implementation plan
+  -> DeepSeek independent review
+  -> approval policy
+  -> Studio MCP mutation with read-back
+  -> static + runtime + security + visual QA
+  -> automatic repair and regression reruns
+  -> independent final review
   -> complete or block
 ```
 
-## Usage
+## Portable runtime
 
-1. Open the current Studio project in Edit mode and connect a compatible MCP server.
-2. Run `Zenless.exe`.
-3. Use Settings > Links to authenticate the Builder, Reviewer, and 3D Generator when required.
-4. Submit a complete objective in Chat and approve each relevant write gate.
+Mutable Rubra state stays next to the executable:
 
-Persistent data is stored under `%LOCALAPPDATA%\Zenless`, including the local database, rotating logs, private browser profiles, validated attachments, snapshots, evidence, and generated assets.
+```text
+Rubra/
+  Rubra.exe
+  data/
+  runtime/
+    node/
+    tools/
+    npm/
+    sources/
+    local-ai/
+    models/
+    index/
+    model-cache/
+```
 
-## Guarantees
+Deleting the Rubra folder removes Rubra state, browser profiles, downloaded models, indexes, pinned source mirrors, and portable tooling. Roblox Studio and the Microsoft WebView2 runtime are platform dependencies and are not removed.
 
-- The HTTP and WebSocket bridge binds only to loopback with an ephemeral port, a per-process token, strict host and origin validation, and request IDs.
-- The Core is authoritative. The UI requests actions but cannot apply changes or declare success.
-- Mutations require a current read, snapshot, SHA-256 precondition, idempotent operation, application, read-back, and verification.
-- Recovery never repeats an uncertain write automatically.
-- Browser deltas are forwarded through WebSocket while completed responses alone become durable state.
-- Visual First uses six versioned orthographic views with explicit approval and controlled regeneration.
-- 3D generation discovers available capabilities and keeps geometry and texture stages separate.
-- QA records its profile, seed, cases, evidence, output, and result. Missing capabilities are skipped or blocked, never reported as successful.
-- Shutdown is cooperative across the bridge, browser controllers, Studio connection, queues, and database.
+On first launch Rubra provisions its pinned runtime automatically. Downloads with a published digest are SHA-256 verified before extraction and archive traversal is rejected.
 
-## Limits
+## AI roles
 
-- Browser automation depends on current provider interfaces and may require selector updates.
-- The managed browser fallback is provisioned only when needed.
-- Local 3D import depends on capabilities exposed by the connected Studio server.
-- Multiplayer, virtual input, and device emulation run only when the connected Studio server exposes them.
-- The release is a single-file executable and does not include a separate installer.
+- ChatGPT: primary builder and implementation agent.
+- DeepSeek: independent reviewer and final-review agent.
+- Gemini: routed research and visual second-opinion agent.
+- Hunyuan: 3D generation when the provider surface exposes the required capability.
+- Local Scout: bundled Qwen3 4B through llama.cpp for inexpensive planning and QA scenario generation.
+
+Authentication uses normal provider pages in Rubra's managed browser profile. Rubra does not bypass CAPTCHA, MFA, consent, or provider authentication.
+
+## Roblox toolchain
+
+The portable runtime composes established projects including Rojo, Rokit, Selene, StyLua, Luau Language Server, Lune, Tripwire, mcp-code-search, TestEZ, Fusion, Matter, Zap, ProfileStore, Promise, Blender MCP, ZeroScript references, Roblox development skills, Wally, run-in-roblox, Remodel, darklua, and Roblox Studio MCP implementations.
+
+Source mirrors are pinned to exact commits in `assets/toolchain.json`. They remain subject to their upstream licenses.
+
+## Project indexing
+
+Set the project folder in Settings. Rubra uses the pinned mcp-code-search implementation for AST-aware semantic and keyword retrieval. Index data, embedding caches, and Python/uv state remain inside `runtime/`.
+
+The index is context, not authority. Studio read-back and live test evidence remain authoritative for the active place.
+
+## Verification
+
+Rubra separates evidence channels instead of treating a model response as a test result. Depending on task risk and effort, verification can include:
+
+- StyLua formatting checks.
+- Selene linting when project configuration exists.
+- Rojo builds.
+- Luau Language Server analysis.
+- Lune project tests when a runner exists.
+- Studio Play output.
+- Roblox Studio MCP playtest subagent when exposed.
+- Tripwire remote/client-trust security analysis.
+- viewport screenshots with independent visual review.
+- device-emulation and bounded input checks.
+- opt-in multiplayer harnesses.
+- post-mutation script read-back and final independent review.
+
+Missing optional capabilities are reported as skipped or unavailable. They are not reported as passed.
+
+Continuous verification repeats repair and regression checks while progress is possible, with a hard safety cap to prevent a non-progressing loop.
+
+## Approval modes
+
+`ASK` requires manual write approval. `SAFE AUTO` can skip a local code gate only after an approved high-confidence review and when policy classifies every action as low or medium risk. `FULL AUTO` skips local approval gates but does not bypass blocked actions, destructive-operation policy, authentication, or external service permissions.
+
+## Generated source policy
+
+Generated game source is English-only, uses professional names, and omits explanatory/TODO comments. Rubra avoids suffix noise such as `v2`, `v3`, and `final2`.
 
 ## Development
 
@@ -57,28 +109,14 @@ npm --prefix frontend run test
 npm --prefix frontend run build
 ```
 
-`tests/live_studio_smoke.py` starts Play only after Studio confirms Edit mode and always requests Stop in `finally`. It requires a real connected instance.
-
-Build the release with:
+Build the Windows executable with:
 
 ```powershell
 .\build.ps1
 ```
 
-The build runs Ruff, Pyright, pytest, dependency installation, ESLint, TypeScript, Vitest, a production Vite build with mocks disabled, and PyInstaller. The only release artifact is `dist\Zenless.exe`.
+The package target is `dist\Rubra.exe` using `Rubra.spec`.
 
-## Source layout
+See `RUBRA.md`, `ARCHITECTURE.md`, `QA_ARCHITECTURE.md`, `NOTICE.md`, and `LICENSE`.
 
-- `frontend/`: canonical React and TypeScript source plus the transport contract.
-- `zenless/core.py`: authoritative application state and UI adapters.
-- `zenless/web_bridge.py`: authenticated local REST and WebSocket transport.
-- `zenless/orchestrator.py`: pipeline, approval gates, mutation, and final review.
-- `zenless/agent_gateway.py`: browser route selection by capability.
-- `zenless/studio_mcp.py`: Studio protocol client.
-- `zenless/store.py`: local database, idempotent operations, and recovery.
-- `zenless/qa_breaker.py`: QA planning, execution, and evidence.
-- `Zenless.spec`: console-free single-file Windows package.
-
-See [ARCHITECTURE.md](ARCHITECTURE.md), [QA_ARCHITECTURE.md](QA_ARCHITECTURE.md), [frontend/BACKEND_CONTRACT.md](frontend/BACKEND_CONTRACT.md), and [RELEASE_NOTES.md](RELEASE_NOTES.md).
-
-Licensed under GPL-3.0. See `NOTICE.md` for required legal notices.
+Rubra is distributed under GPL-3.0.
