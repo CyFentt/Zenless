@@ -121,7 +121,7 @@ class LocalAIService:
             "--no-webui",
         ]
         if use_gpu:
-            command.extend(["--n-gpu-layers", "99"])
+            command.extend(["--n-gpu-layers", "24"])
         environment = dict(os.environ)
         environment["LLAMA_CACHE"] = str(self.runtime_root / "model-cache" / "llama")
         process = subprocess.Popen(
