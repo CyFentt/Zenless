@@ -32,7 +32,7 @@ export class RealZenlessSocket implements ZenlessSocket {
     this.setStatus(this.reconnectAttempts > 0 ? 'RECONNECTING' : 'CONNECTING');
 
     try {
-      const token = safeLocalStorage('zenless_token');
+      const token = safeLocalStorage('rubra_token');
       const separator = this.wsBase.includes('?') ? '&' : '?';
       const url = `${this.wsBase.replace(/\/$/, '')}/ws${token ? `${separator}token=${encodeURIComponent(token)}` : ''}`;
       this.ws = new WebSocket(url);
