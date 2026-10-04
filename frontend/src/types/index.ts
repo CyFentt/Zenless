@@ -411,6 +411,7 @@ export interface ModelCatalog {
 export interface Settings {
   models: ModelSettings;
   autoApprove: boolean;
+  approvalMode: ApprovalMode;
   maxRevisions: number;
   projectRoot: string;
   semanticIndex: boolean;
