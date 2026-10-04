@@ -25,7 +25,7 @@ import type {
   ViewTile,
 } from '@/types';
 
-const API_BASE = (import.meta.env.VITE_ZENLESS_API_BASE?.trim() || '').replace(/\/$/, '');
+const API_BASE = (import.meta.env.VITE_RUBRA_API_BASE?.trim() || '').replace(/\/$/, '');
 const DEFAULT_TIMEOUT = 15000;
 
 interface RequestOptions {
@@ -64,7 +64,7 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
   const headers: Record<string, string> = {};
   if (opts.rawBody === undefined) headers['Content-Type'] = 'application/json';
   const token = getStoredToken();
-  if (token) headers['X-Zenless-Token'] = token;
+  if (token) headers['X-Rubra-Token'] = token;
   const requestId = crypto.randomUUID?.() ?? `req_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   headers['X-Request-Id'] = requestId;
   if (opts.idempotencyKey) headers['Idempotency-Key'] = opts.idempotencyKey;
@@ -116,7 +116,7 @@ function mergeSignals(a: AbortSignal, b: AbortSignal): AbortSignal {
   return controller.signal;
 }
 
-const TOKEN_KEY = 'zenless_token';
+const TOKEN_KEY = 'rubra_token';
 function operationKey(scope: string): string {
   const id = crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
   return `${scope}-${id}`;
