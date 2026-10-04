@@ -175,6 +175,9 @@ class TaskOptions:
     max_revisions: int = 3
     max_test_fixes: int = 3
     continuous_verification: bool = True
+    effort_level: str = "auto"
+    research_mode: str = "auto"
+    smart_routing: bool = True
     risk_level: str = "medium"
 
     def to_dict(self) -> dict[str, Any]:
@@ -203,6 +206,9 @@ class TaskOptions:
             max_revisions=bounded_int("Max Revisions", 3),
             max_test_fixes=bounded_int("Max Test Fixes", 3),
             continuous_verification=bool(raw.get("Continuous Verification", True)),
+            effort_level=cls._effort(raw.get("Effort", "auto")),
+            research_mode=cls._research(raw.get("Research", "auto")),
+            smart_routing=bool(raw.get("Smart Routing", True)),
             risk_level=cls._risk(raw.get("Risk", raw.get("Risk Level", "medium"))),
         )
 
@@ -233,6 +239,9 @@ class TaskOptions:
             max_revisions=bounded_int("revisions", 3),
             max_test_fixes=bounded_int("fixAttempts", 3),
             continuous_verification=bool(source.get("continuousVerification", True)),
+            effort_level=cls._effort(source.get("effort", "auto")),
+            research_mode=cls._research(source.get("research", "auto")),
+            smart_routing=bool(source.get("smartRouting", True)),
             risk_level=cls._risk(source.get("risk", "medium")),
         )
 
@@ -240,6 +249,18 @@ class TaskOptions:
     def _risk(value: Any) -> str:
         normalized = str(value).strip().casefold()
         return normalized if normalized in {"low", "medium", "high"} else "medium"
+
+    @staticmethod
+    def _effort(value: Any) -> str:
+        normalized = str(value or "auto").strip().casefold()
+        aliases = {"minimum": "min", "medium": "med", "maximum": "max"}
+        normalized = aliases.get(normalized, normalized)
+        return normalized if normalized in {"auto", "min", "med", "max"} else "auto"
+
+    @staticmethod
+    def _research(value: Any) -> str:
+        normalized = str(value or "auto").strip().casefold()
+        return normalized if normalized in {"auto", "on", "off"} else "auto"
 
     @staticmethod
     def _approval_mode(value: Any, fallback: str = "ask") -> str:
