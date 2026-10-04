@@ -46,6 +46,7 @@ from .studio_mcp import MCPError, StudioMCPClient
 EventCallback = Callable[[PipelineEvent], None]
 QACallback = Callable[[str, str, threading.Event, list[dict[str, Any]], bool], str]
 ProjectSearchCallback = Callable[[str], dict[str, Any]]
+LocalAICallback = Callable[[str], str]
 
 
 class AgentTransport(Protocol):
@@ -104,6 +105,7 @@ class ZenlessOrchestrator:
         brain: ZenlessBrain | None = None,
         qa_callback: QACallback | None = None,
         project_search_callback: ProjectSearchCallback | None = None,
+        local_ai_callback: LocalAICallback | None = None,
     ) -> None:
         self.store = store
         self.bridge = bridge
@@ -115,6 +117,7 @@ class ZenlessOrchestrator:
         self.brain = brain or ZenlessBrain()
         self.qa_callback = qa_callback
         self.project_search_callback = project_search_callback
+        self.local_ai_callback = local_ai_callback
         self._run_lock = threading.Lock()
         self._tasks: dict[str, threading.Thread] = {}
         self._cancel: dict[str, threading.Event] = {}
@@ -368,6 +371,21 @@ class ZenlessOrchestrator:
                     context["semantic_project_root"] = str(indexed.get("projectRoot") or "")
             except Exception as exc:
                 context["semantic_project_index_unavailable"] = str(exc)
+        if self.local_ai_callback is not None:
+            local_prompt = (
+                "Analyze this Roblox Studio task as a local scout before the stronger web agents run. "
+                "Identify likely architecture boundaries, risk areas, files or DataModel scopes to inspect, "
+                "and concrete verification targets. Do not write implementation code.\n\n"
+                f"OBJECTIVE:\n{objective}\n\n"
+                f"BRAIN:\n{json.dumps(context.get('brain', {}), ensure_ascii=False)}\n\n"
+                f"INDEX EVIDENCE:\n{str(context.get('semantic_project_index', ''))[:12000]}"
+            )
+            try:
+                local_note = self.local_ai_callback(local_prompt)
+                if local_note:
+                    context["local_scout"] = local_note[:16000]
+            except Exception as exc:
+                context["local_scout_unavailable"] = str(exc)
         if self.bridge.wait_for_provider("gemini", timeout=0.5):
             self._emit(task_id, Stage.COLLECTING_CONTEXT, "Gemini is performing an independent research pass.")
             try:
