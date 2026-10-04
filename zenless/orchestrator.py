@@ -498,7 +498,7 @@ class ZenlessOrchestrator:
                     continue
                 break
         else:
-            self._record_auto_approval(task_id, "changes:auto", options.approval_mode)
+            self._record_auto_approval(task_id, "changes:auto", self._effective_approval_mode(options))
 
         self._emit(task_id, Stage.APPLYING, "Applying the approved changes through the Studio bridge.")
         apply_evidence = self._apply_actions(task_id, target.studio_id, mutating)
@@ -547,7 +547,7 @@ class ZenlessOrchestrator:
                     if decision != "approve":
                         raise TaskBlocked("The correction was not approved." + (f" {note}" if note else ""))
                 else:
-                    self._record_auto_approval(task_id, f"repair:{fix_count}:auto", options.approval_mode)
+                    self._record_auto_approval(task_id, f"repair:{fix_count}:auto", self._effective_approval_mode(options))
                 self._bind_mutation_preconditions(task_id, target.studio_id, repair_actions)
                 apply_evidence.extend(self._apply_actions(task_id, target.studio_id, repair_actions))
                 proposal = repair
@@ -804,8 +804,8 @@ class ZenlessOrchestrator:
                         json.dumps(qa, ensure_ascii=False),
                     )
                     continue
-                if options.approval_mode == "full_auto":
-                    self._record_auto_approval(task_id, f"visual:{version}:auto", options.approval_mode)
+                if self._effective_approval_mode(options) == "full_auto":
+                    self._record_auto_approval(task_id, f"visual:{version}:auto", self._effective_approval_mode(options))
                     visual["status"] = "APPROVED"
                     self.store.update_context_section(task_id, "visual", visual)
                     break
@@ -846,7 +846,7 @@ class ZenlessOrchestrator:
                 )
                 detail = json.dumps(response, ensure_ascii=False)
                 if options.approval_mode == "full_auto":
-                    self._record_auto_approval(task_id, f"3d:{model_version}:auto", options.approval_mode)
+                    self._record_auto_approval(task_id, f"3d:{model_version}:auto", self._effective_approval_mode(options))
                     response["status"] = "APPROVED"
                     self.store.update_context_section(task_id, "model", response)
                     break
@@ -1500,7 +1500,7 @@ class ZenlessOrchestrator:
                 if decision != "approve":
                     raise TaskBlocked("Final correction was not approved: " + note)
             else:
-                self._record_auto_approval(task_id, f"final-repair:{revisions}:auto", options.approval_mode)
+                self._record_auto_approval(task_id, f"final-repair:{revisions}:auto", self._effective_approval_mode(options))
             self._emit(task_id, Stage.APPLYING, "Applying the approved final review correction.")
             mutation_evidence.extend(self._apply_actions(task_id, studio_id, repair_actions))
             proposal = repair
@@ -1656,13 +1656,19 @@ class ZenlessOrchestrator:
             return 12
         return 8
 
+    @staticmethod
+    def _effective_approval_mode(options: TaskOptions) -> str:
+        if not options.require_approval and options.approval_mode == "ask":
+            return "full_auto"
+        return options.approval_mode
+
     def _requires_change_approval(
         self,
         options: TaskOptions,
         actions: list[ProposalAction],
         review: ReviewResult | None,
     ) -> bool:
-        mode = options.approval_mode
+        mode = self._effective_approval_mode(options)
         if mode == "full_auto":
             return False
         if mode == "ask":
