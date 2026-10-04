@@ -276,6 +276,7 @@ export const mockSettings: Settings = {
   models: {
     chatgpt: { model: 'chatgpt-default', reasoning: true },
     deepseek: { model: 'deepseek-default', reasoning: true },
+    gemini: { model: 'gemini-default', reasoning: true },
     hunyuan: { version: 'hunyuan-current', quality: 'standard' },
     smartRouting: true,
   },
@@ -294,6 +295,9 @@ export const mockModelCatalog: ModelCatalog = {
   deepseek: { models: [
     { id: 'deepseek-default', label: 'Default', available: true },
     { id: 'deepseek-reasoning', label: 'Reasoning', available: true },
+  ] },
+  gemini: { models: [
+    { id: 'gemini-default', label: 'Default', available: true },
   ] },
   hunyuan: {
     versions: [{ id: 'hunyuan-current', label: 'Current', available: true }],
