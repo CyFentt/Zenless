@@ -15,6 +15,7 @@ from .agent_gateway import AgentGateway
 from .browser_bridge import BridgeError
 from .diagnostics import DiagnosticEvent, ErrorBus
 from .event_bus import EventBus
+from .local_ai import LocalAIError, LocalAIService
 from .managed_browser import ManagedBrowserController
 from .models import PipelineEvent, Stage, TaskOptions
 from .orchestrator import OrchestratorError, ZenlessOrchestrator
@@ -85,6 +86,7 @@ class ZenlessCore:
         "maxRevisions": 3,
         "projectRoot": "",
         "semanticIndex": True,
+        "localAI": True,
         "bridgePort": 0,
     }
 
@@ -106,6 +108,7 @@ class ZenlessCore:
         self.storage = StorageManager(self.data_root)
         self.portable_root = Path(os.environ.get("RUBRA_HOME") or self.data_root.parent).expanduser().resolve()
         self.project_index = ProjectIndexService(self.portable_root)
+        self.local_ai = LocalAIService(self.portable_root)
         self.tool_registry = ToolRegistry(self.portable_root, self.resource_root)
         self._closing = threading.Event()
         self._startup_thread: threading.Thread | None = None
@@ -178,6 +181,7 @@ class ZenlessCore:
             events=self.events,
             tripwire=self.tripwire,
             capture_root=self.data_root / "qa-captures",
+            local_ai_callback=self._local_ai_complete,
         )
         self.orchestrator = ZenlessOrchestrator(
             store=self.store,
@@ -187,6 +191,7 @@ class ZenlessCore:
             event_callback=self._on_pipeline_event,
             qa_callback=self.qa.run_for_orchestrator,
             project_search_callback=self._project_search_for_orchestrator,
+            local_ai_callback=self._local_ai_complete,
         )
         self._diagnostic_unsubscribe = self.diagnostics.subscribe(self._on_diagnostic)
 
@@ -214,6 +219,7 @@ class ZenlessCore:
         if self.tripwire is not None:
             self.tripwire.close()
         self.project_index.close()
+        self.local_ai.close()
         with self._provider_lock:
             threads = tuple(self._provider_threads.values())
         for thread in threads:
@@ -809,6 +815,10 @@ class ZenlessCore:
                 raise CoreError("INVALID_PROJECT_ROOT", str(exc), status=400) from exc
         if "semanticIndex" in patch:
             current["semanticIndex"] = bool(patch["semanticIndex"])
+        if "localAI" in patch:
+            current["localAI"] = bool(patch["localAI"])
+            if not current["localAI"]:
+                self.local_ai.close()
         if "models" in patch and isinstance(patch["models"], dict):
             current["models"] = self._merge_models(current["models"], patch["models"])
         self.store.set_setting("ui.settings", current)
@@ -913,6 +923,16 @@ class ZenlessCore:
         if not bool(settings.get("semanticIndex", True)):
             return {"available": False, "result": ""}
         return self.search_project(query, semantic=True, limit=12)
+
+    def _local_ai_complete(self, prompt: str) -> str:
+        settings = self.settings()
+        if not bool(settings.get("localAI", True)) or not self.local_ai.available:
+            return ""
+        try:
+            return self.local_ai.complete(prompt, max_tokens=700, temperature=0.1, timeout=120)
+        except LocalAIError as exc:
+            self._report("local-ai", "inference", exc, "Rubra will continue with web providers and deterministic routing.")
+            return ""
 
     def _index_project_background(self) -> None:
         settings = self.settings()
