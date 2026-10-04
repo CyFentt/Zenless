@@ -349,7 +349,57 @@ class QABreaker:
                 outcomes.append(play_outcome)
                 self._enforce_bound(started_at, profile, cancel_event)
 
-                if profile.name in {"STANDARD", "DEEP"}:
+                if profile.name in {"STANDARD", "DEEP", "EXHAUSTIVE"}:
+                    outcomes.append(
+                        self._run_case(
+                            run_id,
+                            job_id,
+                            "official-playtest-subagent",
+                            "Official Roblox playtest subagent",
+                            "ROBLOX_SUBAGENT",
+                            lambda: self._run_official_playtest_subagent(job_id, studio_id),
+                            failures,
+                            logs,
+                            seed,
+                            skip_is_ok=True,
+                        )
+                    )
+                    self._enforce_bound(started_at, profile, cancel_event)
+
+                    outcomes.append(
+                        self._run_case(
+                            run_id,
+                            job_id,
+                            "tripwire-security",
+                            "Tripwire server-authority security scan",
+                            "SECURITY",
+                            lambda: self._run_tripwire_security(job_id),
+                            failures,
+                            logs,
+                            seed,
+                            skip_is_ok=True,
+                        )
+                    )
+                    self._enforce_bound(started_at, profile, cancel_event)
+
+                if self._needs_visual_review(job_id, profile):
+                    outcomes.append(
+                        self._run_case(
+                            run_id,
+                            job_id,
+                            "visual-evidence",
+                            "Viewport visual review",
+                            "VISUAL",
+                            lambda: self._run_visual_review(job_id, studio_id, seed),
+                            failures,
+                            logs,
+                            seed,
+                            skip_is_ok=True,
+                        )
+                    )
+                    self._enforce_bound(started_at, profile, cancel_event)
+
+                if profile.name in {"STANDARD", "DEEP", "EXHAUSTIVE"}:
                     outcomes.append(
                         self._run_case(
                             run_id,
@@ -366,7 +416,7 @@ class QABreaker:
                     )
                     self._enforce_bound(started_at, profile, cancel_event)
 
-                if profile.name == "DEEP":
+                if profile.name in {"DEEP", "EXHAUSTIVE"}:
                     outcomes.append(
                         self._run_case(
                             run_id,
@@ -480,9 +530,15 @@ class QABreaker:
             "Confirm Studio starts in Edit mode",
             "Start Play, collect Output, Stop, and reject runtime errors",
         ]
-        if profile.name in {"STANDARD", "DEEP"}:
-            scenarios.append("Execute a bounded no-op VirtualInput transport smoke in Client mode")
-        if profile.name == "DEEP":
+        if profile.name in {"STANDARD", "DEEP", "EXHAUSTIVE"}:
+            scenarios.extend([
+                "Run the official Roblox playtest subagent when available",
+                "Run Tripwire security analysis against the configured project source",
+                "Execute a bounded no-op VirtualInput transport smoke in Client mode",
+            ])
+        if self._needs_visual_review(job_id, profile):
+            scenarios.append("Capture the Studio viewport and obtain an independent visual review")
+        if profile.name in {"DEEP", "EXHAUSTIVE"}:
             scenarios.extend(
                 [
                     "Apply and read back a temporary device profile, capture it, then restore Studio",
