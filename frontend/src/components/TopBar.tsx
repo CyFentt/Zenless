@@ -2,6 +2,8 @@ import { useStore } from '@/store';
 import { StatusDot } from './StatusDot';
 
 export function TopBar() {
+  const projectRoot = useStore((s) => s.settings?.projectRoot);
+  const projectName = projectRoot?.split(/[\\/]/).filter(Boolean).pop() || "Select a project";
   const jobs = useStore((s) => s.jobs);
   const currentJobId = useStore((s) => s.currentJobId);
   const connections = useStore((s) => s.connections);
@@ -25,11 +27,11 @@ export function TopBar() {
   };
 
   return (
-    <header className="h-8 shrink-0 bg-ink-900 border-b border-ink-600 flex items-center justify-between px-3 text-2xs uppercase tracking-wider">
+    <header className="h-12 shrink-0 bg-ink-900 border-b border-ink-600 flex items-center justify-between px-3 text-2xs uppercase tracking-wider">
       <div className="flex items-center gap-3">
         <span className="text-ink-300">PROJECT</span>
         <span className="text-ink-50">/</span>
-        <span className="text-ink-0 font-medium">ARENA</span>
+        <span className="text-ink-0 font-medium">{projectName}</span>
         {currentJob && (
           <>
             <span className="text-ink-600">·</span>

@@ -9,6 +9,24 @@ AVAILABLE = {"script_read", "multi_edit", "execute_luau", "start_stop_play", "sk
 
 
 class PolicyTests(unittest.TestCase):
+    def test_playtest_subagent_cannot_bypass_the_internal_qa_lifecycle(self) -> None:
+        available = AVAILABLE | {"subagent"}
+        self.assertTrue(classify_action(ProposalAction("subagent", {"type": "explore"}), available).allowed)
+        self.assertFalse(classify_action(ProposalAction("subagent", {"type": "playtest"}), available).allowed)
+        self.assertFalse(classify_action(ProposalAction("subagent", {"prompt": "Run Play"}), available).allowed)
+
+    def test_later_deletion_does_not_downgrade_a_critical_action(self) -> None:
+        action = ProposalAction("multi_edit", {
+            "file_path": "game.ServerScriptService.Main",
+            "edits": [
+                {"old_string": "return true", "new_string": "workspace:ClearAllChildren()"},
+                {"old_string": "local old = 1", "new_string": ""},
+            ],
+        })
+        decision = classify_action(action, AVAILABLE)
+        self.assertFalse(decision.allowed)
+        self.assertEqual(decision.risk, "critical")
+
     def test_read_only_action_is_low_risk(self) -> None:
         result = classify_action(ProposalAction("script_read", {"target_file": "game.A"}), AVAILABLE)
         self.assertTrue(result.allowed)

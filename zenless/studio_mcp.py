@@ -31,6 +31,7 @@ class MCPToolResult:
     is_error: bool
     content_types: tuple[str, ...]
     images: tuple[dict[str, str], ...] = ()
+    structured_content: dict[str, Any] | list[Any] | None = None
 
     def compact(self, limit: int = 12_000) -> str:
         text = self.text.strip()
@@ -44,6 +45,19 @@ class StudioTarget:
     studio_id: str
     label: str
     raw: dict[str, Any]
+
+
+def select_studio_target(studios: list[StudioTarget], studio_id: str = "") -> StudioTarget:
+    if studio_id:
+        for studio in studios:
+            if studio.studio_id == studio_id:
+                return studio
+        raise MCPError("The Studio instance assigned to this task is no longer connected.")
+    if not studios:
+        raise MCPError("No Studio instance is connected.")
+    if len(studios) != 1:
+        raise MCPError("Multiple Studio instances are connected. Keep only the intended place open before starting a task.")
+    return studios[0]
 
 
 def find_studio_mcp(explicit_path: str = "") -> Path:
@@ -64,7 +78,7 @@ def find_studio_mcp(explicit_path: str = "") -> Path:
     versions = Path(local_app_data) / "Roblox" / "Versions"
     paired: list[Path] = []
     fallback: list[Path] = []
-    for candidate in versions.glob("version-*\\StudioMCP.exe"):
+    for candidate in versions.glob("version-*/StudioMCP.exe"):
         fallback.append(candidate)
         version_dir = candidate.parent
         if (version_dir / "RobloxStudioBeta.exe").is_file() or (version_dir / "RobloxStudio.exe").is_file():
@@ -156,17 +170,28 @@ class StudioMCPClient:
                 raise
 
     def refresh_tools(self) -> list[MCPTool]:
-        response = self.request("tools/list", {}, timeout=self.startup_timeout)
         discovered: dict[str, MCPTool] = {}
-        for raw in response.get("tools", []):
-            if not isinstance(raw, dict) or not isinstance(raw.get("name"), str):
-                continue
-            tool = MCPTool(
-                name=raw["name"],
-                description=str(raw.get("description", "")),
-                input_schema=raw.get("inputSchema", {"type": "object"}),
-            )
-            discovered[tool.name] = tool
+        params: dict[str, Any] = {}
+        cursors: set[str] = set()
+        for _ in range(64):
+            response = self.request("tools/list", params, timeout=self.startup_timeout)
+            for raw in response.get("tools", []):
+                if not isinstance(raw, dict) or not isinstance(raw.get("name"), str):
+                    continue
+                schema = raw.get("inputSchema", {"type": "object"})
+                if not isinstance(schema, dict):
+                    raise MCPError(f"Invalid input schema for {raw['name']}.")
+                tool = MCPTool(name=raw["name"], description=str(raw.get("description", "")), input_schema=schema)
+                discovered[tool.name] = tool
+            cursor = response.get("nextCursor")
+            if cursor is None:
+                break
+            if not isinstance(cursor, str) or not cursor or cursor in cursors:
+                raise MCPError("MCP tool pagination returned an invalid or repeated cursor.")
+            cursors.add(cursor)
+            params = {"cursor": cursor}
+        else:
+            raise MCPError("MCP tool pagination exceeded 64 pages.")
         if not discovered:
             raise MCPError(f"{self.client_name} started but did not advertise any tools.")
         self.tools = discovered
@@ -178,11 +203,15 @@ class StudioMCPClient:
         result = self.call_tool("list_roblox_studios", {}, timeout=30)
         if result.is_error:
             raise MCPError(result.text or "Failed to list Studio instances.")
-        try:
-            payload = json.loads(result.text)
-        except json.JSONDecodeError:
-            payload = {}
-        raw_studios = payload.get("studios", []) if isinstance(payload, dict) else []
+        payload = result.structured_content
+        if payload is None:
+            try:
+                payload = json.loads(result.text)
+            except json.JSONDecodeError as exc:
+                raise MCPError("Studio discovery returned invalid JSON.") from exc
+        raw_studios = payload.get("studios", []) if isinstance(payload, dict) else payload
+        if not isinstance(raw_studios, list):
+            raise MCPError("Studio discovery returned an invalid instance list.")
         studios: list[StudioTarget] = []
         for index, raw in enumerate(raw_studios):
             if not isinstance(raw, dict):
@@ -254,12 +283,18 @@ class StudioMCPClient:
                 text_parts.append(f"[MCP image: {mime}]")
             elif item_type == "resource":
                 text_parts.append("[MCP resource returned]")
+        structured = raw_result.get("structuredContent")
+        if not isinstance(structured, (dict, list)):
+            structured = None
+        if structured is not None and not text_parts:
+            text_parts.append(json.dumps(structured, ensure_ascii=False))
         return MCPToolResult(
             tool_name=name,
             text="\n".join(text_parts),
             is_error=bool(raw_result.get("isError", False)),
             content_types=tuple(content_types),
             images=tuple(images),
+            structured_content=structured,
         )
 
     def request(self, method: str, params: dict[str, Any], *, timeout: float) -> dict[str, Any]:
@@ -344,6 +379,8 @@ class StudioMCPClient:
                 message = json.loads(line)
             except json.JSONDecodeError:
                 continue
+            if not isinstance(message, dict):
+                continue
             request_id = message.get("id")
             if isinstance(request_id, int):
                 with self._pending_lock:
@@ -354,7 +391,10 @@ class StudioMCPClient:
                     except queue.Full:
                         pass
             elif self.notification_callback is not None:
-                self.notification_callback(message)
+                try:
+                    self.notification_callback(message)
+                except Exception as exc:
+                    self.stderr_tail.append(f"MCP notification handler failed: {exc}")
         failure = {"error": {"message": "StudioMCP closed the connection."}}
         with self._pending_lock:
             pending = list(self._pending.values())

@@ -197,9 +197,9 @@ class ToolchainManager:
         node = self.path("node", "node.exe")
         if node is None:
             return
-        npm = node.parent / "npm.cmd"
+        npm = node.parent / "node_modules" / "npm" / "bin" / "npm-cli.js"
         if not npm.is_file():
-            return
+            raise ToolchainError("The portable Node installation is missing npm-cli.js.")
         prefix = self.runtime_root / "npm"
         prefix.mkdir(parents=True, exist_ok=True)
         package_json = prefix / "package.json"
@@ -216,19 +216,25 @@ class ToolchainManager:
                 results.append(InstallResult(item_id, "ready", "Portable npm package ready", str(prefix)))
                 continue
             marker.parent.mkdir(parents=True, exist_ok=True)
-            completed = subprocess.run(
-                [str(npm), "install", "--prefix", str(prefix), "--no-audit", "--no-fund", "--save-exact", package],
-                env=self.environment(),
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=900,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-                check=False,
-            )
+            try:
+                completed = subprocess.run(
+                    [str(node), str(npm), "install", "--prefix", str(prefix), "--no-audit", "--no-fund", "--save-exact", package],
+                    env=self.environment(),
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=900,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                    check=False,
+                )
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                results.append(InstallResult(item_id, "failed", str(exc)))
+                if item.get("critical"):
+                    raise ToolchainError(f"npm install failed for {package}: {exc}") from exc
+                continue
             if completed.returncode != 0:
                 results.append(InstallResult(item_id, "failed", completed.stdout[-3000:]))
                 if item.get("critical"):

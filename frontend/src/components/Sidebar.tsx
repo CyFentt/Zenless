@@ -1,5 +1,8 @@
+import { useState } from "react";
 import {
   Home,
+  PanelLeftClose,
+  PanelLeftOpen,
   MessageSquare,
   FileCode,
   Box,
@@ -29,6 +32,9 @@ const NAV: NavItem[] = [
 ];
 
 export function Sidebar() {
+  const [collapsed, setCollapsed] = useState(false);
+  const jobs = useStore((s) => s.jobs);
+  const setCurrentJobId = useStore((s) => s.setCurrentJobId);
   const activePage = useStore((s) => s.activePage);
   const setActivePage = useStore((s) => s.setActivePage);
   const connections = useStore((s) => s.connections);
@@ -37,11 +43,15 @@ export function Sidebar() {
   const anyError = Object.values(connections).some((v) => v === "ERR");
 
   return (
-    <nav className="w-12 shrink-0 bg-ink-900 border-r border-ink-600 flex flex-col items-center py-3 gap-1">
-      <div className="mb-4">
-        <span className="text-xs font-bold tracking-[0.2em] text-ink-0">R</span>
+    <nav aria-label="Main navigation" className={`${collapsed ? "w-[72px]" : "w-52"} shrink-0 bg-ink-900 border-r border-ink-600 flex flex-col items-center py-3 gap-1`}>
+      <div className="mb-4 flex items-center gap-2">
+        <img src="/rubra.png" alt="Rubra" className="w-9 h-9 object-contain" />
+        {!collapsed && <span className="text-sm tracking-[0.2em] font-semibold text-ink-0">RUBRA</span>}
       </div>
-      <div className="flex flex-col gap-0.5 flex-1">
+      <button aria-label={collapsed ? "Expand navigation" : "Collapse navigation"} onClick={() => setCollapsed(!collapsed)} className="mb-3 p-2 text-ink-100 hover:text-zen-redBright">
+        {collapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
+      </button>
+      <div className="flex flex-col gap-0.5 w-full px-3">
         {NAV.map((item) => {
           const Icon = item.icon;
           const isActive = activePage === item.id;
@@ -49,22 +59,30 @@ export function Sidebar() {
             <Tooltip key={item.id} content={item.label}>
               <button
                 onClick={() => setActivePage(item.id)}
-                className={`relative flex items-center justify-center w-10 h-10 transition-colors duration-150 ${
+                className={`relative flex items-center gap-3 px-3 w-full h-10 transition-colors duration-150 ${
                   isActive
-                    ? "text-ink-0 bg-ink-700"
+                    ? "text-zen-redBright bg-zen-red/10"
                     : "text-ink-300 hover:text-ink-50 hover:bg-ink-800"
                 }`}
                 aria-label={item.label}
                 aria-current={isActive ? "page" : undefined}
               >
-                {isActive && <span className="absolute left-0 top-0 bottom-0 w-px bg-ink-0" />}
-                <Icon size={16} strokeWidth={1.5} />
+                {isActive && <span className="absolute left-0 top-0 bottom-0 w-0.5 bg-zen-redBright" />}
+                <Icon size={16} strokeWidth={1.5} className="shrink-0" />
+                {!collapsed && <span className="text-xs tracking-wider">{item.label}</span>}
               </button>
             </Tooltip>
           );
         })}
       </div>
 
+      <div className="flex-1 w-full min-h-0 overflow-y-auto scrollbar-zen px-3 mt-6">
+        {!collapsed && <>
+          <p className="text-2xs uppercase tracking-widest text-ink-100 mb-3">Recent tasks</p>
+          {jobs.slice(0, 8).map((job) => <button key={job.id} onClick={() => { setCurrentJobId(job.id); setActivePage("build"); }} className="block w-full text-left truncate py-2 text-xs text-ink-100 hover:text-ink-0" title={job.title}>{job.title}</button>)}
+          {jobs.length === 0 && <p className="text-xs text-ink-150">No tasks yet</p>}
+        </>}
+      </div>
       <div className="pt-2 border-t border-ink-700 w-full flex justify-center">
         <Tooltip content={allReady ? "READY" : anyError ? "ERROR" : "CONNECTING"}>
           <span className="flex items-center justify-center py-2">

@@ -38,7 +38,7 @@ export class ApplicationRuntime {
     } catch (error) {
       if (!this.active) return;
       frontendDiagnostics.capture(error, 'runtime', 'Application startup failed');
-      useStore.getState().setBootError('The local application state could not be loaded. Details are available in Settings > Logs.');
+      useStore.getState().setBootError('The local application state could not be loaded. Retry startup. If the error persists, inspect data/logs in the Rubra folder.');
     }
   }
 
@@ -64,7 +64,7 @@ export class ApplicationRuntime {
     } catch (error) {
       if (this.active) {
         frontendDiagnostics.capture(error, 'runtime', 'State hydration failed');
-        useStore.getState().setBootError('The local application state could not be loaded. Details are available in Settings > Logs.');
+        useStore.getState().setBootError('The local application state could not be loaded. Retry startup. If the error persists, inspect data/logs in the Rubra folder.');
       }
     } finally {
       this.hydration = null;

@@ -4,11 +4,41 @@ import threading
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import Mock
 
-from zenless.studio_mcp import MCPTool, MCPToolResult, StudioMCPClient
+from zenless.studio_mcp import MCPError, MCPTool, MCPToolResult, StudioMCPClient, StudioTarget, select_studio_target
 
 
 class StudioMCPConcurrencyTests(unittest.TestCase):
+    def test_discovery_loads_all_pages_before_replacing_the_catalog(self) -> None:
+        client = StudioMCPClient(Path("unused.exe"))
+        client.request = Mock(side_effect=[
+            {"tools": [{"name": "first"}], "nextCursor": "page-2"},
+            {"tools": [{"name": "second"}]},
+        ])
+        self.assertEqual([tool.name for tool in client.refresh_tools()], ["first", "second"])
+        self.assertEqual(client.request.call_args_list[1].args[1], {"cursor": "page-2"})
+        client.request = Mock(return_value={"tools": [{"name": "incomplete"}], "nextCursor": "loop"})
+        with self.assertRaisesRegex(MCPError, "repeated cursor"):
+            client.refresh_tools()
+        self.assertEqual(set(client.tools), {"first", "second"})
+
+    def test_structured_tool_results_support_studio_discovery(self) -> None:
+        client = StudioMCPClient(Path("unused.exe"))
+        client.tools["list_roblox_studios"] = MCPTool("list_roblox_studios", "", {"type": "object"})
+        client.request = Mock(return_value={
+            "content": [], "structuredContent": {"studios": [{"studio_id": "target", "name": "Game"}]},
+        })
+        self.assertEqual(client.list_studios()[0].studio_id, "target")
+
+    def test_studio_selection_preserves_task_target_and_rejects_ambiguity(self) -> None:
+        first, second = StudioTarget("one", "Game one", {}), StudioTarget("two", "Game two", {})
+        self.assertEqual(select_studio_target([first, second], "two"), second)
+        with self.assertRaisesRegex(MCPError, "Multiple Studio"):
+            select_studio_target([first, second])
+        with self.assertRaisesRegex(MCPError, "no longer connected"):
+            select_studio_target([first], "two")
+
     def test_tool_calls_are_serialized(self) -> None:
         client = StudioMCPClient(Path("unused-StudioMCP.exe"))
         client.tools["slow"] = MCPTool("slow", "test", {"type": "object", "properties": {}})

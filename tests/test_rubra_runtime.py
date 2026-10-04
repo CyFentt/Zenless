@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from zenless.local_ai import LocalAIService
 from zenless.project_index import ProjectIndexService
@@ -13,6 +15,34 @@ from zenless.toolchain import ToolchainManager
 
 
 class RubraRuntimeTests(unittest.TestCase):
+    def test_optional_npm_timeout_does_not_stop_later_packages(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rubra spaced path ") as folder:
+            root = Path(folder)
+            (root / "assets").mkdir()
+            (root / "assets/toolchain.json").write_text(json.dumps({"npm": [
+                {"id": "optional", "package": "optional@1.0.0"},
+                {"id": "next", "package": "next@1.0.0"},
+            ]}))
+            node = root / "runtime/node/node.exe"
+            npm = node.parent / "node_modules/npm/bin/npm-cli.js"
+            npm.parent.mkdir(parents=True)
+            node.write_bytes(b"node")
+            npm.write_text("npm")
+            manager = ToolchainManager(resource_root=root, portable_root=root)
+            results = []
+            with (
+                patch.object(manager, "path", return_value=node),
+                patch("zenless.toolchain.subprocess.run", side_effect=[
+                    subprocess.TimeoutExpired("npm", 900),
+                    subprocess.CompletedProcess([], 0, "installed"),
+                ]) as execute,
+            ):
+                manager._ensure_npm_packages(results)
+            self.assertEqual([result.state for result in results], ["failed", "ready"])
+            self.assertEqual(execute.call_args.args[0][:2], [str(node), str(npm)])
+            self.assertFalse((root / "runtime/npm/.rubra-packages/optional").exists())
+            self.assertTrue((root / "runtime/npm/.rubra-packages/next").exists())
+
     def test_project_metadata_is_scoped_to_known_nonsecret_manifests(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)

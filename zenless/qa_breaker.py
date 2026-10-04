@@ -18,7 +18,7 @@ from .orchestrator import AgentTransport, OrchestratorError, TaskCancelled
 from .protocol import ProtocolError, extract_json_object
 from .static_quality import StaticQualityRunner
 from .store import SQLiteStore
-from .studio_mcp import MCPError, MCPToolResult, StudioMCPClient, validate_json_schema
+from .studio_mcp import MCPError, MCPToolResult, StudioMCPClient, select_studio_target, validate_json_schema
 
 MULTIPLAYER_HARNESS_PROTOCOL = "ZENLESS_QA_MULTIPLAYER_V1"
 MAX_STUDIO_TEST_CLIENTS = 8
@@ -519,11 +519,11 @@ class QABreaker:
             if not self.studio.running:
                 self.studio.start()
             studios = self.studio.list_studios()
-            if not studios:
-                raise MCPError("No Roblox Studio instance is connected to StudioMCP.")
+            task = self.store.load_task(job_id) or {}
+            target = select_studio_target(studios, str(task.get("studio_id") or ""))
             self.run(
                 job_id,
-                studio_id=studios[0].studio_id,
+                studio_id=target.studio_id,
                 profile_name=profile,
                 evidence=[],
                 cancel_event=cancel,
@@ -680,6 +680,8 @@ class QABreaker:
         tool = self.studio.tools.get("subagent")
         if tool is None:
             return "SKIPPED", expected, "The current official Studio MCP does not expose subagent"
+        if "start_stop_play" not in self.studio.tools:
+            return "SKIPPED", expected, "Playtest cleanup is unavailable"
         properties = tool.input_schema.get("properties")
         required = tool.input_schema.get("required", [])
         if not isinstance(properties, dict):
@@ -702,7 +704,8 @@ class QABreaker:
         instruction = (
             "Playtest the implemented objective in the active Studio session. Exercise the main success path, "
             "one realistic edge case, and any relevant UI or interaction. Report observed failures only from real "
-            "Studio evidence. Do not mutate persistent source. Objective: "
+            'Studio evidence. Do not mutate persistent source. Return JSON with "passed" (boolean), '
+            '"summary" (observed evidence), and "failures" (array). Objective: '
             + objective
             + "\nRubra QA scenarios:\n- "
             + "\n- ".join(scenarios[:8])
@@ -720,20 +723,29 @@ class QABreaker:
         if unresolved:
             return "SKIPPED", expected, "Unsupported required subagent fields: " + ", ".join(map(str, unresolved))
         try:
-            result = self.studio.call_tool("subagent", arguments, studio_id=studio_id, timeout=180)
+            try:
+                result = self.studio.call_tool("subagent", arguments, studio_id=studio_id, timeout=180)
+            finally:
+                cleanup = self._call_validated("start_stop_play", {"is_start": False}, studio_id=studio_id, timeout=60)
+                if cleanup.is_error:
+                    raise MCPError("Playtest cleanup failed: " + cleanup.compact(3000))
         except MCPError as exc:
             return "FAILED", expected, str(exc)
         if result.is_error:
             return "FAILED", expected, result.compact(6000)
         text = result.compact(8000)
-        normalized = text.casefold()
-        explicit_failure = any(
-            token in normalized
-            for token in ('"passed":false', '"success":false', "verdict: fail", "status: failed", "test failed")
-        )
-        if explicit_failure:
+        report = result.structured_content
+        if not isinstance(report, dict):
+            try:
+                report = extract_json_object(result.text)
+            except ProtocolError:
+                report = {}
+        if report.get("passed") is False or report.get("success") is False or report.get("failures"):
             return "FAILED", expected, text
-        return "PASSED", expected, text or "Playtest subagent completed"
+        summary = report.get("summary")
+        if report.get("passed") is True and isinstance(summary, str) and summary.strip():
+            return "PASSED", expected, text
+        return "SKIPPED", expected, "The playtest returned no explicit verification result.\n" + text
 
     def _run_static_quality(self, job_id: str) -> tuple[str, str, str]:
         expected = "Pinned external Roblox quality tools report no gating failures"
@@ -749,6 +761,8 @@ class QABreaker:
         failed = [item for item in checks if item.status == "FAILED"]
         if failed:
             return "FAILED", expected, "\n\n".join(lines)[-16000:]
+        if not any(item.status == "PASSED" for item in checks):
+            return "SKIPPED", expected, "\n\n".join(lines)[-16000:] or "No static checks ran."
         return "PASSED", expected, "\n\n".join(lines)[-16000:]
 
     def _run_tripwire_security(self, job_id: str) -> tuple[str, str, str]:
@@ -785,6 +799,9 @@ class QABreaker:
             return "FAILED", expected, str(exc)
         if review.is_error or review.text.lstrip().startswith("Error:"):
             return "FAILED", expected, review.compact(6000)
+        for result in (remotes, trust):
+            if result is not None and (result.is_error or result.text.lstrip().startswith("Error:")):
+                return "FAILED", expected, result.compact(6000)
         match = re.search(r"Security review:\s*\d+ server remote handler\(s\),\s*(\d+) finding\(s\)\.", review.text)
         if match is None:
             return "FAILED", expected, "Tripwire returned an unrecognized security report:\n" + review.compact(5000)

@@ -15,6 +15,7 @@ from zenless.qa_breaker import (
     QABreaker,
 )
 from zenless.qa_breaker import TestProfile as QAProfile
+from zenless.static_quality import StaticCheck
 from zenless.store import SQLiteStore
 from zenless.studio_mcp import MCPError, MCPTool, MCPToolResult
 
@@ -127,6 +128,55 @@ class _CapabilityStudio:
 
 
 class QACapabilityTests(unittest.TestCase):
+    def test_static_checks_all_skipped_are_not_reported_as_passed(self) -> None:
+        qa = self._qa(_CapabilityStudio())
+        self.store.set_setting("ui.settings", {"projectRoot": self.temp.name})
+        with patch.object(qa.static_quality, "run", return_value=[StaticCheck("StyLua", "SKIPPED", "Unavailable")]):
+            self.assertEqual(qa._run_static_quality("job")[0], "SKIPPED")
+
+    def test_playtest_requires_explicit_evidence_and_always_requests_cleanup(self) -> None:
+        for text, expected in [
+            ('{"passed": false, "summary": "Character fell through floor"}', "FAILED"),
+            ('{"passed": true, "summary": "Spawn and movement observed", "failures": []}', "PASSED"),
+            ("Unable to run this scenario", "SKIPPED"),
+            ("", "SKIPPED"),
+        ]:
+            with self.subTest(text=text):
+                studio = _CapabilityStudio()
+                studio.tools["subagent"] = _tool("subagent", {
+                    "type": {"type": "string", "enum": ["explore", "playtest"]},
+                    "prompt": {"type": "string"},
+                }, ["type", "prompt"])
+                original_call = studio.call_tool
+
+                def call(name: str, arguments: dict[str, Any], **kwargs: Any) -> MCPToolResult:
+                    if name == "subagent":
+                        return MCPToolResult(name, text, False, ("text",))
+                    return original_call(name, arguments, **kwargs)
+
+                qa = self._qa(studio)
+                with patch.object(studio, "call_tool", side_effect=call):
+                    self.assertEqual(qa._run_official_playtest_subagent("job", "studio-1", ["Move"])[0], expected)
+                self.assertEqual(studio.calls[-1], ("start_stop_play", {"is_start": False}, "studio-1"))
+
+    def test_playtest_timeout_still_stops_play(self) -> None:
+        studio = _CapabilityStudio()
+        studio.tools["subagent"] = _tool("subagent", {
+            "type": {"type": "string", "enum": ["playtest"]},
+            "prompt": {"type": "string"},
+        }, ["type", "prompt"])
+        original_call = studio.call_tool
+
+        def call(name: str, arguments: dict[str, Any], **kwargs: Any) -> MCPToolResult:
+            if name == "subagent":
+                raise MCPError("Timed out")
+            return original_call(name, arguments, **kwargs)
+
+        qa = self._qa(studio)
+        with patch.object(studio, "call_tool", side_effect=call):
+            self.assertEqual(qa._run_official_playtest_subagent("job", "studio-1", ["Move"])[0], "FAILED")
+        self.assertEqual(studio.calls[-1][1], {"is_start": False})
+
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
         self.store = SQLiteStore(Path(self.temp.name) / "qa.db")

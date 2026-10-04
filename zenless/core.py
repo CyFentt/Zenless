@@ -24,7 +24,7 @@ from .project_index import ProjectIndexError, ProjectIndexService
 from .qa_breaker import QABreaker
 from .storage import StorageManager
 from .store import SQLiteStore
-from .studio_mcp import MCPError, MCPToolResult, StudioMCPClient, find_studio_mcp
+from .studio_mcp import MCPError, MCPToolResult, StudioMCPClient, find_studio_mcp, select_studio_target
 from .tool_registry import ToolRegistry
 from .webview2_browser import WebView2BrowserController
 
@@ -717,9 +717,7 @@ class ZenlessCore:
             if not self.studio.running:
                 self.studio.start()
             studios = self.studio.list_studios()
-            if not studios:
-                raise MCPError("No Studio instance is connected.")
-            target = studios[0]
+            target = select_studio_target(studios)
             result = self.studio.call_tool(
                 "search_game_tree",
                 {"datamodel_type": "Edit", "max_depth": 5, "head_limit": 500},
@@ -807,13 +805,9 @@ class ZenlessCore:
         stored = self.store.get_setting("ui.settings", {})
         result = json.loads(json.dumps(self.DEFAULT_SETTINGS))
         if isinstance(stored, dict):
-            result.update({key: value for key, value in stored.items() if key in result})
+            result.update({key: value for key, value in stored.items() if key in result and key != "models"})
             if isinstance(stored.get("models"), dict):
-                for provider, value in stored["models"].items():
-                    if provider in result["models"] and isinstance(value, dict):
-                        result["models"][provider].update(value)
-                if "smartRouting" in stored["models"]:
-                    result["models"]["smartRouting"] = bool(stored["models"]["smartRouting"])
+                result["models"] = self._merge_models(result["models"], stored["models"])
         return result
 
     def update_settings(self, patch: dict[str, Any]) -> dict[str, Any]:
@@ -996,6 +990,8 @@ class ZenlessCore:
                 exc,
                 "The embedded browser remains available; the managed browser will be prepared during login if needed.",
             )
+        self._set_boot("UI", "READY")
+        self.events.publish("BOOT_COMPLETE", {})
         self._refresh_provider_states()
         index_thread = threading.Thread(target=self._index_project_background, name="Rubra-Project-Index", daemon=True)
         index_thread.start()
@@ -1004,8 +1000,6 @@ class ZenlessCore:
             self._set_boot("STUDIO", "READY")
         except CoreError:
             self._set_boot("STUDIO", "OFF")
-        self._set_boot("UI", "READY")
-        self.events.publish("BOOT_COMPLETE", {})
 
     def _login_worker(self, provider: str) -> None:
         self._set_connection(provider, "LOGIN")

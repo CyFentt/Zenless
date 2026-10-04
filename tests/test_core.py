@@ -14,6 +14,18 @@ from zenless.store import SQLiteStore
 
 
 class CoreTests(unittest.TestCase):
+    def test_partial_legacy_model_settings_keep_defaults_and_new_providers(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            core = object.__new__(ZenlessCore)
+            core.store = SQLiteStore(Path(folder) / "state.db")
+            core.store.set_setting("ui.settings", {"models": {"chatgpt": {"model": "chosen"}}})
+            settings = core.settings()
+            self.assertEqual(settings["models"]["chatgpt"]["model"], "chosen")
+            for provider in ("deepseek", "gemini", "hunyuan"):
+                self.assertEqual(settings["models"][provider], core.DEFAULT_SETTINGS["models"][provider])
+            settings["models"]["gemini"]["model"] = "modified"
+            self.assertNotEqual(core.settings()["models"]["gemini"]["model"], "modified")
+
     def test_task_options_are_bounded_and_typed(self) -> None:
         options = TaskOptions.from_ui(
             {

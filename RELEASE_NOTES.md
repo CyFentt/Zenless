@@ -1,24 +1,19 @@
-# Rubra 2.0.1
+# Rubra 2.0.2 prerelease
 
-Rubra now ships as a Windows x64 package with its own Python runtime and the production React interface. `Rubra-Setup.exe` extracts the application into a new folder. `Rubra-Windows.zip` contains the same application for manual extraction. Open `Rubra.exe` from the extracted folder; a global Python installation is unnecessary.
+The installer defaults to `%LOCALAPPDATA%\Programs\Rubra`, creates a Start menu shortcut and registers an uninstaller. Updates preserve application data and downloaded tools. Uninstall removes program files while keeping data. The ZIP remains portable.
 
-The distribution composes the official Python embeddable package, the existing application, pinned Windows wheels and NSIS. Published dependency digests are checked before extraction. The package includes upstream Python and dependency licenses, source commit metadata and SHA-256 checksums.
+The supplied ruby icon is included in the launcher, installer and desktop window. The interface follows the OpenCode Studio navigation structure with a collapsible sidebar, recent tasks and a spacious workspace, using angular controls and black, red and white. Green and amber indicate success and pending/warning states.
 
-Startup failures during toolchain setup now produce the same startup log and error dialog as interface failures. An absent optional icon no longer reaches WebView2. The portable WebView2 helper uses the bundled console interpreter with hidden execution and pipes for its protocol. Remaining startup and provider window titles use Rubra branding.
+A startup defect exposed the native window through the JavaScript API, causing pywebview to recursively inspect native objects. The window reference is now private and only the folder picker is exposed; a regression test runs the real pywebview API discovery. UI readiness no longer waits for Studio discovery. Failed hydration offers a retry instead of directing users to inaccessible settings. Legacy partial provider settings are merged with current defaults.
 
-This package includes the previous Rubra work: isolated project indexes with incremental refresh and credential-file exclusions, a pinned mcp-code-search adapter, serialized local AI startup with Vulkan-to-CPU fallback, the restored Changes/Context/History workspace and diff viewer, provider login error handling and the authenticated local application bridge.
+Additional fixes cover MCP pagination and structured content, ambiguous Studio selection, complete script readback verification, sequential edits, creation preconditions, playtest cleanup and evidence, skipped static checks, optional tool installation failures, provider status routing and WebSocket reconnection.
 
-## Requirements and use
+## Requirements
 
-- Windows 10 or later, x64, and a writable application folder.
-- Internet access for the first launch, provider authentication and tool/model downloads.
-- Roblox Studio with the current Studio MCP capability and an open place.
-- Microsoft WebView2. Startup can provision the Microsoft runtime when it is missing.
+Windows 10 or later, x64; Internet access for first-launch tool downloads and provider login; Microsoft WebView2; Roblox Studio with MCP enabled and the intended place open. Close Rubra before updating. An older portable folder can be retained separately; this installer does not silently migrate it.
 
-Select a new folder during setup. Existing folders are refused to protect saved state. After extracting, open `Rubra.exe`, complete provider authentication and select the project folder in Settings. Keep the entire application folder together. Deleting it removes Rubra state and portable tools; Roblox Studio and Microsoft WebView2 remain installed.
+## Validation
 
-## Validation status
+Ruff and Pyright pass. Backend: 98 passed, one Windows-only test skipped. Frontend: ESLint, TypeScript and 56 tests pass; production build succeeds. Windows package structure is checked separately by `scripts/verify_portable.py`.
 
-The Linux-side checks pass: Ruff, Pyright, 82 backend tests, ESLint, TypeScript, 53 frontend tests and the production Vite build. One WebView2 integration test is skipped because it requires Windows. Package checks cover all 21 installed Python dependencies and 63 Windows binaries, including x64 Python extensions. The package uses the production frontend with demo mode disabled.
-
-Windows application execution, WebView2 rendering, real provider logins and live Roblox Studio round trips have not been verified in this environment. GitHub Actions cannot start because the repository account has a billing lock. Wine cannot run because the execution environment denies its required Unix socket. This release is a prerelease until Windows validation is completed; it does not claim that the full live workflow has passed.
+Windows execution, real provider authentication and live Roblox round trips remain unverified in this Linux environment. The screenshot symptoms informed the fixes but are not proof of a successful Windows retest. GitHub Actions was blocked by the repository account billing lock during the previous validation attempt. This build remains a prerelease.

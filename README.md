@@ -64,7 +64,7 @@ Source mirrors are pinned to exact commits in `assets/toolchain.json`. They rema
 
 ## Project indexing
 
-Set the project folder in Settings. Rubra uses the pinned mcp-code-search implementation for AST-aware semantic and keyword retrieval. Index data, embedding caches, and Python/uv state remain inside `runtime/`.
+Set the project folder in Settings. Rubra uses the pinned mcp-code-search implementation for semantic and keyword retrieval (Luau uses text chunks). Index data, embedding caches, and Python/uv state remain inside `runtime/`.
 
 The index is context, not authority. Studio read-back and live test evidence remain authoritative for the active place.
 

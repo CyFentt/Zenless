@@ -4,6 +4,7 @@ SilentInstall silent
 AutoCloseWindow true
 ManifestDPIAware true
 Name "Rubra"
+Icon "${ICON}"
 OutFile "${OUTPUT}"
 VIProductVersion "${VERSION}.0"
 VIAddVersionKey "ProductName" "Rubra"

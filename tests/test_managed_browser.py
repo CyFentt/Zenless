@@ -183,6 +183,16 @@ class _CapabilityTransport:
 
 
 class AgentGatewayCapabilityTests(unittest.TestCase):
+    def test_status_follows_the_selected_playwright_route(self) -> None:
+        embedded = _CapabilityTransport({})
+        managed = _CapabilityTransport({})
+        embedded.provider_status = lambda: {"chatgpt": {"state": "Login Required", "transport": "webview2"}}
+        managed.provider_status = lambda: {"chatgpt": {"state": "Ready", "transport": "playwright"}}
+        gateway = AgentGateway(managed=managed, embedded=embedded)
+        gateway._routes["chatgpt"] = "playwright"
+        self.assertEqual(gateway.provider_status()["chatgpt"]["state"], "Ready")
+        self.assertEqual(gateway.provider_status()["chatgpt"]["transport"], "playwright")
+
     def test_routes_only_missing_capability_to_playwright_and_preserves_streaming(self) -> None:
         embedded = _CapabilityTransport({"send_text": True, "geometry": False, "max_image_inputs": 1})
         managed = _CapabilityTransport({"send_text": True, "geometry": True, "max_image_inputs": 6})

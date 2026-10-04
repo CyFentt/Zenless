@@ -60,5 +60,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=["assets/zenless.ico"] if Path("assets/zenless.ico").is_file() else None,
+    icon=["assets/rubra.ico"] if Path("assets/rubra.ico").is_file() else None,
 )

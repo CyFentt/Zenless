@@ -165,14 +165,14 @@ def build(cache: Path, makensis: str, allow_dirty: bool) -> None:
     }
     (package / "release.json").write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
     prefix = "/" if os.name == "nt" else "-"
-    run([makensis, f"{prefix}V2", f"{prefix}DVERSION={version}", f"{prefix}DOUTPUT={package / 'Rubra.exe'}",
+    run([makensis, f"{prefix}V2", f"{prefix}DVERSION={version}", f"{prefix}DOUTPUT={package / 'Rubra.exe'}", f"{prefix}DICON={ROOT / 'assets' / 'rubra.ico'}",
          str(ROOT / "packaging" / "launcher.nsi")])
     archive = dist / "Rubra-Windows.zip"
     with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as output:
         for path in sorted(package.rglob("*")):
             if path.is_file():
                 output.write(path, path.relative_to(dist).as_posix())
-    run([makensis, f"{prefix}V2", f"{prefix}DVERSION={version}", f"{prefix}DPACKAGE={package}",
+    run([makensis, f"{prefix}V2", f"{prefix}DVERSION={version}", f"{prefix}DPACKAGE={package}", f"{prefix}DICON={ROOT / 'assets' / 'rubra.ico'}",
          f"{prefix}DOUTPUT={dist / 'Rubra-Setup.exe'}", str(ROOT / "packaging" / "setup.nsi")])
     assets = [archive, dist / "Rubra-Setup.exe"]
     checksums = dist / "SHA256SUMS.txt"

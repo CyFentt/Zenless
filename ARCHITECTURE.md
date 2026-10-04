@@ -21,7 +21,7 @@ The frontend is a state projection. It cannot declare a provider ready, fabricat
 
 ## Startup and shutdown
 
-Immutable resources resolve from the checkout in development or the packaged resource root. Mutable data resolves to `%LOCALAPPDATA%\Zenless` unless a controlled test overrides it.
+Immutable resources resolve from the checkout in development or the packaged resource root. Mutable data resolves to `data/` beside the launcher, unless `RUBRA_DATA_ROOT` overrides it. The installer defaults to `%LOCALAPPDATA%\Programs\Rubra`.
 
 Public boot stages represent observed startup state. The application shell opens only after both backend UI readiness and a complete frontend snapshot. Shutdown cancels active work, stops QA, closes browser routes and Studio connections, maintains the database, and stops the bridge.
 
@@ -80,4 +80,4 @@ Visual First produces six separate versioned orthographic PNG files. Determinist
 
 ## Packaging
 
-`Zenless.spec` creates one console-free Windows executable containing the production frontend and required resources. Mock Mode is disabled in release builds and unused GUI toolkits are excluded.
+`scripts/build_portable.py` composes the pinned Windows embeddable Python runtime, Windows wheels, production frontend and NSIS launcher/installer. `Rubra.spec` is an optional PyInstaller build. Mock Mode is disabled in release builds and unused GUI toolkits are excluded.

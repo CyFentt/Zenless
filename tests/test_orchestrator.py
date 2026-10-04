@@ -8,6 +8,7 @@ import unittest
 import zlib
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 from zenless.browser_bridge import BridgeError
 from zenless.models import ProposalAction, ReviewResult, Stage, TaskOptions
@@ -16,7 +17,7 @@ from zenless.store import SQLiteStore
 from zenless.studio_mcp import MCPError, MCPTool, MCPToolResult, StudioTarget
 
 
-def proposal(*, replacement: str = "local value = 2", read_only: bool = False) -> str:
+def proposal(*, replacement: str = "local value = 2", original: str = "local value = 1", read_only: bool = False) -> str:
     actions: list[dict[str, Any]]
     if read_only:
         actions = [{"tool": "script_search", "arguments": {"query": "Main"}, "reason": "inspect"}]
@@ -26,7 +27,7 @@ def proposal(*, replacement: str = "local value = 2", read_only: bool = False) -
                 "tool": "multi_edit",
                 "arguments": {
                     "file_path": "game.ServerScriptService.Main",
-                    "edits": [{"old_string": "local value = 1", "new_string": replacement}],
+                    "edits": [{"old_string": original, "new_string": replacement}],
                 },
                 "reason": "verified change",
                 "risk": "medium",
@@ -188,7 +189,11 @@ class FakeStudio:
         if name == "script_read":
             return MCPToolResult(name, self.source, False, ("text",))
         if name == "multi_edit":
-            self.source = str(arguments["edits"][0]["new_string"])
+            for edit in arguments["edits"]:
+                old, new = edit["old_string"], edit["new_string"]
+                if old and self.source.count(old) != 1:
+                    return MCPToolResult(name, "Source range not found or ambiguous", True, ("text",))
+                self.source = self.source.replace(old, new, 1) if old else new
             return MCPToolResult(name, "edited", False, ("text",))
         if name == "search_game_tree":
             return MCPToolResult(name, "[]", False, ("text",))
@@ -198,6 +203,86 @@ class FakeStudio:
 
 
 class OrchestratorTests(unittest.TestCase):
+    def test_sequential_edits_to_one_script_use_predicted_preconditions(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            studio = FakeStudio()
+            orchestrator, store = self.make_system(folder, FakeBridge({}), studio)
+            store.create_task("sequence", "Edit", TaskOptions())
+            store.update_task("sequence", stage=Stage.APPLYING, status="running")
+            actions = [ProposalAction("multi_edit", {
+                "file_path": "game.ServerScriptService.Main",
+                "edits": [{"old_string": f"local value = {old}", "new_string": f"local value = {new}"}],
+            }) for old, new in [(1, 2), (2, 3)]]
+            orchestrator._bind_mutation_preconditions("sequence", "studio-1", actions)
+            evidence = orchestrator._apply_actions("sequence", "studio-1", actions)
+            self.assertEqual(studio.source, "local value = 3")
+            self.assertEqual(sum(item.get("verified", False) for item in evidence), 2)
+
+    def test_new_script_requires_confirmed_absence_and_complete_readback(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            studio = FakeStudio()
+            original_call = studio.call_tool
+            created = False
+
+            def call(name: str, arguments: dict[str, Any], **kwargs: Any) -> MCPToolResult:
+                nonlocal created
+                if name == "script_read" and not created:
+                    return MCPToolResult(name, "game.ServerScriptService.NewScript not found", True, ("text",))
+                if name == "multi_edit":
+                    created = True
+                return original_call(name, arguments, **kwargs)
+
+            orchestrator, store = self.make_system(folder, FakeBridge({}), studio)
+            store.create_task("new", "Create", TaskOptions())
+            store.update_task("new", stage=Stage.APPLYING, status="running")
+            action = ProposalAction("multi_edit", {
+                "file_path": "game.ServerScriptService.NewScript", "className": "Script",
+                "edits": [{"old_string": "", "new_string": "local ready = true"}],
+            })
+            with patch.object(studio, "call_tool", side_effect=call):
+                orchestrator._bind_mutation_preconditions("new", "studio-1", [action])
+                self.assertFalse(action.arguments["_zenless_expected_exists"])
+                evidence = orchestrator._apply_actions("new", "studio-1", [action])
+            self.assertTrue(created)
+            self.assertTrue(evidence[-1]["verified"])
+            self.assertEqual(studio.source, "local ready = true")
+
+    def test_read_failure_is_not_treated_as_a_missing_script(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            studio = FakeStudio()
+            orchestrator, store = self.make_system(folder, FakeBridge({}), studio)
+            store.create_task("unreadable", "Create", TaskOptions())
+            action = ProposalAction("multi_edit", {
+                "file_path": "game.ServerScriptService.NewScript",
+                "edits": [{"old_string": "", "new_string": "local ready = true"}],
+            })
+            with patch.object(studio, "call_tool", return_value=MCPToolResult("script_read", "Connection unavailable", True, ("text",))):
+                with self.assertRaisesRegex(OrchestratorError, "Could not read back"):
+                    orchestrator._bind_mutation_preconditions("unreadable", "studio-1", [action])
+
+    def test_readback_rejects_unexpected_source_even_when_replacement_is_present(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            studio = FakeStudio()
+            orchestrator, store = self.make_system(folder, FakeBridge({}), studio)
+            store.create_task("corrupt", "Edit", TaskOptions())
+            store.update_task("corrupt", stage=Stage.APPLYING, status="running")
+            action = ProposalAction("multi_edit", {
+                "file_path": "game.ServerScriptService.Main",
+                "edits": [{"old_string": "local value = 1", "new_string": "local value = 2"}],
+            })
+            orchestrator._bind_mutation_preconditions("corrupt", "studio-1", [action])
+            original_call = studio.call_tool
+
+            def call(name: str, arguments: dict[str, Any], **kwargs: Any) -> MCPToolResult:
+                result = original_call(name, arguments, **kwargs)
+                if name == "multi_edit":
+                    studio.source += "\nunexpected()"
+                return result
+
+            with patch.object(studio, "call_tool", side_effect=call):
+                with self.assertRaisesRegex(OrchestratorError, "READ_BACK_MISMATCH"):
+                    orchestrator._apply_actions("corrupt", "studio-1", [action])
+
     def make_system(
         self,
         folder: str,
@@ -381,7 +466,7 @@ class OrchestratorTests(unittest.TestCase):
                     "chatgpt": [
                         proposal(),
                         proposal(replacement="local value = 3"),
-                        proposal(replacement="local value = 4"),
+                        proposal(replacement="local value = 4", original="local value = 3"),
                     ],
                     "deepseek": [review("revise"), review(), review(), review()],
                 }

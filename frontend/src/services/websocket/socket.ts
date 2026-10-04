@@ -23,7 +23,7 @@ export class RealZenlessSocket implements ZenlessSocket {
   constructor(private wsBase: string) {}
 
   connect() {
-    if (this.ws && (this.status === 'CONNECTING' || this.status === 'CONNECTED')) return;
+    if (this.ws) return;
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -33,9 +33,10 @@ export class RealZenlessSocket implements ZenlessSocket {
 
     try {
       const token = safeLocalStorage('rubra_token');
-      const separator = this.wsBase.includes('?') ? '&' : '?';
-      const url = `${this.wsBase.replace(/\/$/, '')}/ws${token ? `${separator}token=${encodeURIComponent(token)}` : ''}`;
-      this.ws = new WebSocket(url);
+      const url = new URL(this.wsBase);
+      url.pathname = `${url.pathname.replace(/\/$/, '')}/ws`;
+      if (token) url.searchParams.set('token', token);
+      this.ws = new WebSocket(url.toString());
     } catch (error) {
       frontendDiagnostics.capture(error, 'websocket', 'Failed to create WebSocket');
       this.ws = null;
@@ -44,12 +45,15 @@ export class RealZenlessSocket implements ZenlessSocket {
       return;
     }
 
-    this.ws.onopen = () => {
+    const socket = this.ws;
+    socket.onopen = () => {
+      if (this.ws !== socket) return;
       this.reconnectAttempts = 0;
       this.setStatus('CONNECTED');
     };
 
-    this.ws.onmessage = (event) => {
+    socket.onmessage = (event) => {
+      if (this.ws !== socket) return;
       try {
         const parsed: unknown = JSON.parse(String(event.data));
         if (!isZenlessEventShape(parsed)) {
@@ -62,15 +66,17 @@ export class RealZenlessSocket implements ZenlessSocket {
       }
     };
 
-    this.ws.onclose = () => {
+    socket.onclose = () => {
+      if (this.ws !== socket) return;
       this.ws = null;
       this.setStatus('DISCONNECTED');
       if (this.shouldReconnect) this.scheduleReconnect();
     };
 
-    this.ws.onerror = () => {
+    socket.onerror = () => {
+      if (this.ws !== socket) return;
       frontendDiagnostics.report('warning', 'websocket', 'WebSocket transport error');
-      this.ws?.close();
+      socket.close();
     };
   }
 
@@ -83,6 +89,9 @@ export class RealZenlessSocket implements ZenlessSocket {
     }
     if (this.ws) {
       this.ws.onclose = null;
+      this.ws.onopen = null;
+      this.ws.onmessage = null;
+      this.ws.onerror = null;
       this.ws.close();
       this.ws = null;
     }

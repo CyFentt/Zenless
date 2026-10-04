@@ -27,7 +27,10 @@ export function SplashScreen() {
             </div>
           ))}
         </div>
-        {bootError && <p role="alert" className="max-w-xs text-center text-2xs text-zen-warnBright">{bootError}</p>}
+        {bootError && <div className="flex flex-col items-center gap-4">
+          <p role="alert" className="max-w-xs text-center text-xs text-zen-errBright">{bootError}</p>
+          <button className="border border-zen-red px-5 py-2 text-xs text-ink-0 hover:bg-zen-red/20" onClick={() => window.location.reload()}>Retry startup</button>
+        </div>}
       </div>
     </div>
   );

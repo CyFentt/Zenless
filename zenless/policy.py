@@ -69,6 +69,10 @@ def classify_action(action: ProposalAction, available_tools: set[str]) -> Policy
         return PolicyDecision(False, "critical", (f"{action.tool} cannot be proposed by a web agent",))
     if not isinstance(action.arguments, dict):
         return PolicyDecision(False, "blocked", ("Arguments are not a JSON object",))
+    if action.tool == "subagent":
+        kinds = [action.arguments[key] for key in ("type", "subagent_type", "agent_type", "kind") if key in action.arguments]
+        if not kinds or any(kind != "explore" for kind in kinds):
+            return PolicyDecision(False, "blocked", ("Only explore subagents may run as read-only actions; playtests are controlled internally",))
 
     serialized = json.dumps(action.arguments, ensure_ascii=False, default=str)
     if len(serialized.encode("utf-8")) > 512_000:
@@ -101,7 +105,8 @@ def classify_action(action: ProposalAction, available_tools: set[str]) -> Policy
             if not isinstance(old, str) or not isinstance(new, str) or old == new:
                 reasons.append("Edit requires distinct old_string and new_string values")
             if isinstance(old, str) and old and new == "":
-                risk = "high"
+                if risk != "critical":
+                    risk = "high"
                 reasons.append("Edit removes existing content")
 
     if reasons:

@@ -124,6 +124,8 @@ class AgentGateway:
                 result[provider] = dict(extension[provider])
             elif route == "webview2" and provider in embedded:
                 result[provider] = dict(embedded[provider])
+            elif route == "playwright" and provider in managed:
+                result[provider] = dict(managed[provider])
             else:
                 result[provider] = dict(
                     embedded.get(provider) or managed.get(provider) or extension.get(provider) or {}

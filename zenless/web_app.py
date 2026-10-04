@@ -12,13 +12,13 @@ from .web_bridge import LocalWebBridge
 
 class DesktopAPI:
     def __init__(self) -> None:
-        self.window: Any = None
+        self._window: Any = None
 
-    def bind(self, window: Any) -> None:
-        self.window = window
+    def _bind(self, window: Any) -> None:
+        self._window = window
 
     def select_project_folder(self, current: str = "") -> str:
-        window = self.window
+        window = self._window
         if window is None:
             return ""
         try:
@@ -79,7 +79,7 @@ def run_web_app(
         )
         if window is None:
             raise RuntimeError("The embedded browser did not create the main window.")
-        desktop_api.bind(window)
+        desktop_api._bind(window)
 
         def after_start() -> None:
             if ui_ready is not None:
@@ -87,7 +87,7 @@ def run_web_app(
             if smoke_test:
                 threading.Timer(6.0, window.destroy).start()
 
-        icon = resource_root / "assets" / "zenless.ico"
+        icon = resource_root / "assets" / "rubra.ico"
         webview.start(
             after_start,
             gui="edgechromium",

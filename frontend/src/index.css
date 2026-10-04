@@ -1,5 +1,3 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
-
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -72,3 +70,7 @@ div:focus-visible, button:focus-visible, input:focus-visible, a:focus-visible {
 :root { color-scheme: dark; --rubra-accent: #c51f2c; --rubra-accent-bright: #ff3344; }
 ::selection { background: rgba(197,31,44,.45); color: #fff; }
 button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visible { outline: 1px solid var(--rubra-accent-bright); outline-offset: 2px; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}

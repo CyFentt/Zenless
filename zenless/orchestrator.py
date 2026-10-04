@@ -41,7 +41,7 @@ from .prompts import (
 from .protocol import ProtocolError, extract_json_object
 from .skills import SkillLibrary
 from .store import SQLiteStore, now_iso
-from .studio_mcp import MCPError, StudioMCPClient
+from .studio_mcp import MCPError, StudioMCPClient, select_studio_target
 
 EventCallback = Callable[[PipelineEvent], None]
 QACallback = Callable[[str, str, threading.Event, list[dict[str, Any]], bool], str]
@@ -349,9 +349,8 @@ class ZenlessOrchestrator:
         if not self.studio.running:
             self.studio.start()
         studios = self.studio.list_studios()
-        if not studios:
-            raise OrchestratorError("No Studio instance is connected.")
-        target = studios[0]
+        task = self.store.load_task(task_id) or {}
+        target = select_studio_target(studios, str(task.get("studio_id") or ""))
         self.store.update_task(task_id, studio_id=target.studio_id)
         analysis = self.brain.analyze(
             objective,
@@ -1178,17 +1177,21 @@ class ZenlessOrchestrator:
                 arguments = self._prepare_arguments(action.tool, action.arguments)
                 expected_hash = str(action.arguments.get("_zenless_expected_sha256") or "")
                 before_hash = ""
+                expected_source = ""
                 if action.tool == "multi_edit":
                     if not expected_hash:
                         raise OrchestratorError("MUTATION_PRECONDITION_MISSING: multi_edit has no expected hash.")
-                    source = self._read_script_source(studio_id, arguments)
+                    expected_exists = action.arguments.get("_zenless_expected_exists", True)
+                    exists, source = self._read_script_state(studio_id, arguments, allow_missing=not expected_exists)
                     before_hash = self._source_hash(source)
-                    if before_hash != expected_hash:
+                    if exists != expected_exists or before_hash != expected_hash:
                         raise OrchestratorError(
                             "STUDIO_CHANGED: the script changed after the proposal, so the write was blocked "
                             f"(expected {expected_hash[:12]}, current {before_hash[:12]})."
                         )
-                    self._snapshot_script(task_id, arguments, run_dir, index, source)
+                    expected_source = self._edited_source(source, arguments)
+                    if exists:
+                        self._snapshot_script(task_id, arguments, run_dir, index, source)
                 self._emit(
                     task_id,
                     Stage.APPLYING,
@@ -1211,7 +1214,7 @@ class ZenlessOrchestrator:
                     raise OrchestratorError(f"Studio bridge failed at {action.tool}: {result.compact(6000)}")
                 if action.tool == "multi_edit":
                     operation_evidence.extend(
-                        self._verify_script(task_id, studio_id, arguments, expected_hash, operation_id)
+                        self._verify_script(task_id, studio_id, arguments, expected_hash, operation_id, expected_source)
                     )
                 self.store.finish_operation(
                     operation_id,
@@ -1237,12 +1240,21 @@ class ZenlessOrchestrator:
         studio_id: str,
         actions: list[ProposalAction],
     ) -> None:
+        predicted: dict[str, tuple[bool, str]] = {}
         for action in actions:
             if action.tool != "multi_edit":
                 continue
             arguments = self._prepare_arguments(action.tool, action.arguments)
-            source = self._read_script_source(studio_id, arguments)
+            target = str(arguments.get("file_path") or "")
+            edits = arguments.get("edits", [])
+            creation = len(edits) == 1 and isinstance(edits[0], dict) and edits[0].get("old_string") == ""
+            if target in predicted:
+                exists, source = predicted[target]
+            else:
+                exists, source = self._read_script_state(studio_id, arguments, allow_missing=creation)
+            predicted[target] = (True, self._edited_source(source, arguments))
             action.arguments["_zenless_expected_sha256"] = self._source_hash(source)
+            action.arguments["_zenless_expected_exists"] = exists
             task = self.store.load_task(task_id) or {}
             current_stage = Stage(str(task.get("stage") or Stage.REVIEWING.value))
             self._emit(
@@ -1253,7 +1265,12 @@ class ZenlessOrchestrator:
             )
 
     def _read_script_source(self, studio_id: str, arguments: dict[str, Any]) -> str:
-        if arguments.get("className") or "script_read" not in self.studio.tools:
+        return self._read_script_state(studio_id, arguments)[1]
+
+    def _read_script_state(
+        self, studio_id: str, arguments: dict[str, Any], *, allow_missing: bool = False
+    ) -> tuple[bool, str]:
+        if "script_read" not in self.studio.tools:
             raise OrchestratorError("MUTATION_PRECONDITION_UNAVAILABLE: script_read is required before multi_edit.")
         target = str(arguments.get("file_path", "")).strip()
         if not target:
@@ -1265,8 +1282,32 @@ class ZenlessOrchestrator:
             timeout=90,
         )
         if result.is_error:
+            if allow_missing and target in result.text and re.search(
+                r"\b(?:not found|does not exist|doesn't exist)\b", result.text, re.IGNORECASE
+            ):
+                return False, ""
             raise OrchestratorError(f"Could not read back {target}: {result.compact(3000)}")
-        return result.text
+        structured = result.structured_content
+        source = structured.get("source") if isinstance(structured, dict) else None
+        return True, source if isinstance(source, str) else result.text
+
+    @staticmethod
+    def _edited_source(source: str, arguments: dict[str, Any]) -> str:
+        for edit in arguments.get("edits", []):
+            old, new = edit.get("old_string"), edit.get("new_string")
+            if not isinstance(old, str) or not isinstance(new, str):
+                raise OrchestratorError("INVALID_EDIT: old_string and new_string must be strings.")
+            if not old:
+                if source:
+                    raise OrchestratorError("INVALID_EDIT: empty old_string requires a new or empty script.")
+                source = new
+                continue
+            matches = source.count(old)
+            replace_all = edit.get("replace_all") is True
+            if matches == 0 or (matches > 1 and not replace_all):
+                raise OrchestratorError("INVALID_EDIT: old_string must identify an existing, unambiguous source range.")
+            source = source.replace(old, new) if replace_all else source.replace(old, new, 1)
+        return source
 
     @staticmethod
     def _source_hash(source: str) -> str:
@@ -1292,18 +1333,12 @@ class ZenlessOrchestrator:
         arguments: dict[str, Any],
         expected_hash: str,
         operation_id: str,
+        expected_source: str,
     ) -> list[dict[str, Any]]:
         target = str(arguments.get("file_path", ""))
         source = self._read_script_source(studio_id, arguments)
-        missing: list[str] = []
-        for edit in arguments.get("edits", []):
-            if not isinstance(edit, dict):
-                continue
-            replacement = str(edit.get("new_string") or "")
-            if replacement and replacement not in source:
-                missing.append(replacement[:160])
-        if missing:
-            raise OrchestratorError(f"READ_BACK_MISMATCH: {target} is missing {len(missing)} expected replacement(s).")
+        if source != expected_source:
+            raise OrchestratorError(f"READ_BACK_MISMATCH: {target} does not match the complete expected source.")
         post_hash = self._source_hash(source)
         if post_hash == expected_hash and any(
             isinstance(edit, dict) and edit.get("old_string") != edit.get("new_string")
