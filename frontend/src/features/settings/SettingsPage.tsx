@@ -88,8 +88,16 @@ function GeneralTab({ settings, onChange }: { settings: Settings | null; onChang
   return (
     <div className="p-4 max-w-md space-y-4 animate-fade-in">
       <Section title="BEHAVIOR">
-        <Row label="Auto Approve" hint="Automatically approve low-risk changes">
-          <Toggle checked={settings.autoApprove} onChange={(value) => void persist({ autoApprove: value })} />
+        <Row label="Default Approval" hint="ASK requires confirmation. SAFE AUTO skips only reviewed low-risk write gates. FULL AUTO skips local approval gates without bypassing policy blocks.">
+          <Select
+            value={settings.approvalMode}
+            options={[
+              { id: 'ASK', label: 'ASK' },
+              { id: 'SAFE_AUTO', label: 'SAFE AUTO' },
+              { id: 'FULL_AUTO', label: 'FULL AUTO' },
+            ]}
+            onChange={(value) => void persist({ approvalMode: value as Settings['approvalMode'] })}
+          />
         </Row>
         <Row label="Max Revisions" hint="Maximum revision attempts per job">
           <input
