@@ -79,6 +79,8 @@ class ToolchainManager:
             self.runtime_root / "tools" / "ripgrep",
             self.runtime_root / "tools" / "jq",
             self.runtime_root / "tools" / "uv",
+            self.runtime_root / "tools" / "pesde",
+            self.runtime_root / "tools" / "darklua",
             self.runtime_root / "npm" / "node_modules" / ".bin",
         ]
         env["PATH"] = os.pathsep.join([str(path) for path in roots if path.exists()] + [env.get("PATH", "")])
