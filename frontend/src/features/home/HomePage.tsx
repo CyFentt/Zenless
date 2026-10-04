@@ -7,6 +7,7 @@ import type { AgentId } from "@/types";
 const AGENT_LABELS: Record<AgentId, string> = {
   chatgpt: "Builder",
   deepseek: "Reviewer",
+  gemini: "Research",
   hunyuan: "3D Generator",
   studio: "Editor",
 };
