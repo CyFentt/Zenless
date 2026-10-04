@@ -23,10 +23,10 @@ jobs:
     timeout-minutes: 45
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
 
       - name: Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v5
         with:
           python-version: "3.14"
           cache: pip
@@ -35,7 +35,7 @@ jobs:
             requirements-dev.txt
 
       - name: Node
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v4
         with:
           node-version: "24"
           cache: npm
@@ -75,14 +75,14 @@ jobs:
       - name: Production frontend
         working-directory: frontend
         env:
-          VITE_ZENLESS_MOCK: "false"
+          VITE_RUBRA_MOCK: "false"
         run: npm run build
 
       - name: PyInstaller
         run: python -m PyInstaller --clean --noconfirm Rubra.spec
 
       - name: Upload Rubra
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v4
         with:
           name: Rubra-Windows
           path: dist/Rubra.exe
