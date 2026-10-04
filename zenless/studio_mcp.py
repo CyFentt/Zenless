@@ -56,6 +56,10 @@ def find_studio_mcp(explicit_path: str = "") -> Path:
     if not local_app_data:
         raise MCPError("The LOCALAPPDATA environment variable is unavailable.")
 
+    launcher = Path(local_app_data) / "Roblox" / "mcp.bat"
+    if launcher.is_file():
+        return launcher
+
     versions = Path(local_app_data) / "Roblox" / "Versions"
     paired: list[Path] = []
     fallback: list[Path] = []
@@ -66,7 +70,7 @@ def find_studio_mcp(explicit_path: str = "") -> Path:
             paired.append(candidate)
     candidates = paired or fallback
     if not candidates:
-        raise MCPError("StudioMCP.exe was not found. Update Studio and enable Assistant > MCP Servers.")
+        raise MCPError("Studio MCP was not found. Update Studio and enable Assistant > MCP Servers.")
     return max(candidates, key=lambda path: path.stat().st_mtime)
 
 
@@ -101,8 +105,9 @@ class StudioMCPClient:
             if self.process is not None:
                 self.close()
             creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            command = ["cmd.exe", "/d", "/s", "/c", str(self.executable)] if self.executable.suffix.casefold() in {".bat", ".cmd"} else [str(self.executable)]
             self.process = subprocess.Popen(
-                [str(self.executable)],
+                command,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -123,7 +128,7 @@ class StudioMCPClient:
                     {
                         "protocolVersion": MCP_PROTOCOL_VERSION,
                         "capabilities": {},
-                        "clientInfo": {"name": "Zenless", "version": "2.0.0"},
+                        "clientInfo": {"name": "Rubra", "version": "1.0.0"},
                     },
                     timeout=25,
                 )
