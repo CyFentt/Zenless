@@ -11,7 +11,7 @@ import time
 import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from .event_bus import EventBus
 from .orchestrator import AgentTransport, OrchestratorError, TaskCancelled
@@ -202,6 +202,7 @@ class QABreaker:
         play_test_seconds: float = 6.0,
         tripwire: StudioMCPClient | None = None,
         capture_root: Path | None = None,
+        local_ai_callback: Callable[[str], str] | None = None,
     ) -> None:
         self.store = store
         self.studio = studio
@@ -210,6 +211,7 @@ class QABreaker:
         self.tripwire = tripwire
         self.capture_root = (capture_root or Path.cwd() / "qa-captures").resolve()
         self.capture_root.mkdir(parents=True, exist_ok=True)
+        self.local_ai_callback = local_ai_callback
         self.play_test_seconds = max(1.0, min(20.0, play_test_seconds))
         self._run_lock = threading.Lock()
         self._manual_lock = threading.Lock()
@@ -546,6 +548,7 @@ class QABreaker:
                     "Run the opt-in StudioTestService multiplayer harness when its exact protocol marker exists",
                 ]
             )
+        scenarios.extend(self._ai_scenarios(job_id, feature, changed_tools, risk_areas))
         return TestPlan(
             profile=profile.name,
             feature=feature,
@@ -562,18 +565,30 @@ class QABreaker:
         changed_tools: list[str],
         risks: list[str],
     ) -> list[str]:
-        if not self.bridge.wait_for_provider("chatgpt", timeout=0.5):
-            return []
         prompt = (
-            "You are the QA planner for the user's Roblox project. "
-            "Generate up to four legitimate deterministic scenarios without exploits or code. "
+            "You are the QA planner for a legitimate Roblox Studio development task. "
+            "Generate up to four deterministic, reproducible scenarios that target likely regressions, "
+            "server/client boundaries, state cleanup, and edge cases. Do not include exploits. "
             'Respond only with JSON {"scenarios":["..."]}.\n'
             f"Objective: {feature}\nChanges: {changed_tools}\nRisks: {risks}"
         )
+        if self.local_ai_callback is not None:
+            try:
+                local_raw = self.local_ai_callback(prompt)
+                if local_raw:
+                    payload = extract_json_object(local_raw)
+                    scenarios = payload.get("scenarios", [])
+                    result = [str(item).strip()[:300] for item in scenarios if str(item).strip()][:4]
+                    if result:
+                        return result
+            except Exception:
+                pass
+        if not self.bridge.wait_for_provider("chatgpt", timeout=0.5):
+            return []
         try:
             raw = self.bridge.send_prompt("chatgpt", prompt, task_id=job_id, timeout=120)
             payload = extract_json_object(raw)
-        except MCPError, OrchestratorError, ProtocolError, RuntimeError, ValueError:
+        except (MCPError, OrchestratorError, ProtocolError, RuntimeError, ValueError):
             return []
         scenarios = payload.get("scenarios", [])
         return [str(item).strip()[:300] for item in scenarios if str(item).strip()][:4]
