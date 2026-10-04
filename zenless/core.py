@@ -381,9 +381,18 @@ class ZenlessCore:
                     "The current job is still running. Pause, complete, or cancel it before sending another request.",
                     status=409,
                 )
-        task_options = TaskOptions.from_api(options)
+        effective_options = dict(options or {})
+        current_settings = self.settings()
+        model_settings = current_settings.get("models") if isinstance(current_settings.get("models"), dict) else {}
+        effective_options.setdefault("smartRouting", bool(model_settings.get("smartRouting", True)))
+        effective_options.setdefault("revisions", int(current_settings.get("maxRevisions", 3)))
+        effective_options.setdefault(
+            "approvalMode",
+            "FULL_AUTO" if bool(current_settings.get("autoApprove", False)) else "ASK",
+        )
+        task_options = TaskOptions.from_api(effective_options)
         self._preflight_providers(task_options)
-        job = self.create_job(objective, options=options, attachments=attachments)
+        job = self.create_job(objective, options=effective_options, attachments=attachments)
         user_messages = [message for message in self.messages(job["id"]) if message["role"] == "user"]
         message_id = user_messages[-1]["id"] if user_messages else uuid.uuid4().hex
         return {"messageId": message_id, "jobId": job["id"]}
@@ -404,6 +413,8 @@ class ZenlessCore:
             required.append("deepseek")
         if options.create_3d_asset:
             required.append("hunyuan")
+        if options.research_mode == "on":
+            required.append("gemini")
         for provider in required:
             if self.connections()[provider] == "READY":
                 continue
