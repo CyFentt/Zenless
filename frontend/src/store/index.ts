@@ -35,6 +35,7 @@ import { AGENT_NAMES } from '@/types';
 const CANONICAL_AGENTS: AgentInfo[] = [
   { id: 'chatgpt', name: 'ChatGPT', status: 'CONNECTING' },
   { id: 'deepseek', name: 'DeepSeek', status: 'CONNECTING' },
+  { id: 'gemini', name: 'Gemini', status: 'CONNECTING' },
   { id: 'hunyuan', name: 'Hunyuan', status: 'CONNECTING' },
   { id: 'studio', name: 'Roblox Studio', status: 'CONNECTING' },
 ];
@@ -170,6 +171,7 @@ export const useStore = create<AppState>((set) => ({
     browser: 'OFF',
     chatgpt: 'OFF',
     deepseek: 'OFF',
+    gemini: 'OFF',
     hunyuan: 'OFF',
     studio: 'OFF',
   },
