@@ -21,6 +21,7 @@ import type {
   StudioState,
   TaskOptions,
   TestState,
+  ToolDescriptor,
   ViewTile,
 } from '@/types';
 
@@ -163,6 +164,7 @@ export class RealZenlessAPI implements ZenlessAPI {
   getStatus(): Promise<{ ready: boolean }> { return request('/api/status'); }
   getConnections(): Promise<ConnectionInfo> { return request('/api/connections'); }
   getAgents(): Promise<AgentInfo[]> { return request('/api/agents'); }
+  getTools(): Promise<ToolDescriptor[]> { return request('/api/tools'); }
   loginProvider(provider: ProviderId): Promise<{ ok: boolean }> {
     return request(`/api/providers/${encodeURIComponent(provider)}/login`, { method: 'POST', timeout: 30000 });
   }
