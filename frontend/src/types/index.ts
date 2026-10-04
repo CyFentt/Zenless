@@ -408,7 +408,24 @@ export interface Settings {
   models: ModelSettings;
   autoApprove: boolean;
   maxRevisions: number;
+  projectRoot: string;
+  semanticIndex: boolean;
   bridgePort: number;
+}
+
+export interface ProjectIndexStatus {
+  configured: boolean;
+  projectRoot: string;
+  running: boolean;
+  result: string;
+  error?: string;
+}
+
+export interface ProjectSearchResult {
+  projectRoot: string;
+  query: string;
+  result: string;
+  available: boolean;
 }
 
 export type DiagnosticSeverity = "critical" | "error" | "warning" | "info";
