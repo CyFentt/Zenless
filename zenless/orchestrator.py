@@ -359,6 +359,7 @@ class ZenlessOrchestrator:
             create_3d=options.create_3d_asset,
         )
         context = self._collect_context(task_id, target.studio_id, analysis)
+        research_enabled = self._should_research(options, analysis)
         skill_selection = self.skills.select(objective)
         if skill_selection.text:
             context["rubra_skills"] = skill_selection.text
@@ -371,7 +372,7 @@ class ZenlessOrchestrator:
                     context["semantic_project_root"] = str(indexed.get("projectRoot") or "")
             except Exception as exc:
                 context["semantic_project_index_unavailable"] = str(exc)
-        if self.local_ai_callback is not None:
+        if research_enabled and self.local_ai_callback is not None:
             local_prompt = (
                 "Analyze this Roblox Studio task as a local scout before the stronger web agents run. "
                 "Identify likely architecture boundaries, risk areas, files or DataModel scopes to inspect, "
@@ -386,14 +387,22 @@ class ZenlessOrchestrator:
                     context["local_scout"] = local_note[:16000]
             except Exception as exc:
                 context["local_scout_unavailable"] = str(exc)
-        if self.bridge.wait_for_provider("gemini", timeout=0.5):
-            self._emit(task_id, Stage.COLLECTING_CONTEXT, "Gemini is performing an independent research pass.")
-            try:
-                research = self._send_agent_prompt("gemini", research_prompt(objective, context), task_id=task_id, timeout=240)
-                context["gemini_research"] = research[:30000]
-                self.store.append_message(task_id, "Gemini", "researcher", research)
-            except BridgeError as exc:
-                context["gemini_research_unavailable"] = str(exc)
+        if research_enabled:
+            if self.bridge.wait_for_provider("gemini", timeout=0.5):
+                self._emit(task_id, Stage.COLLECTING_CONTEXT, "Gemini is performing an independent research pass.")
+                try:
+                    research = self._send_agent_prompt(
+                        "gemini",
+                        research_prompt(objective, context),
+                        task_id=task_id,
+                        timeout=240,
+                    )
+                    context["gemini_research"] = research[:30000]
+                    self.store.append_message(task_id, "Gemini", "researcher", research)
+                except BridgeError as exc:
+                    context["gemini_research_unavailable"] = str(exc)
+            elif options.research_mode == "on":
+                raise BridgeError("Gemini requires login because Research is explicitly enabled.")
         self.store.update_task(task_id, context_json=context)
 
         if not self.bridge.wait_for_provider("chatgpt", timeout=2):
@@ -416,6 +425,8 @@ class ZenlessOrchestrator:
             context,
             target.studio_id,
             cancel_event,
+            options,
+            analysis,
         )
         proposal, review = self._review_and_revise(
             task_id,
@@ -590,17 +601,21 @@ class ZenlessOrchestrator:
         context: dict[str, Any],
         studio_id: str,
         cancel_event: threading.Event,
+        options: TaskOptions,
+        analysis: BrainAnalysis,
     ) -> tuple[AgentProposal, list[dict[str, Any]]]:
         tools = self._tool_catalog()
         evidence: list[dict[str, Any]] = []
         seen_reads: set[str] = set()
         proposal: AgentProposal | None = None
-        for research_round in range(1, 3):
+        total_rounds = self._builder_rounds(options, analysis)
+        read_limit = self._builder_read_limit(options)
+        for research_round in range(1, total_rounds + 1):
             self._check_control(task_id, cancel_event)
             self._emit(
                 task_id,
                 Stage.CREATING,
-                f"Builder is creating the strategic plan (round {research_round}/2).",
+                f"Builder is creating the strategic plan (round {research_round}/{total_rounds}).",
             )
             prompt = principal_prompt(objective, context, tools, evidence, research_round)
             raw = self._send_agent_prompt("chatgpt", prompt, task_id=task_id)
@@ -613,7 +628,7 @@ class ZenlessOrchestrator:
             if not reads:
                 break
             unique_reads: list[ProposalAction] = []
-            for action in reads[:8]:
+            for action in reads[:read_limit]:
                 key = json.dumps([action.tool, action.arguments], ensure_ascii=False, sort_keys=True, default=str)
                 if key in seen_reads:
                     continue
@@ -621,7 +636,7 @@ class ZenlessOrchestrator:
                 unique_reads.append(action)
             self._emit(task_id, Stage.COLLECTING_CONTEXT, "Running the reads requested by the builder.")
             evidence.extend(self._execute_read_actions(task_id, studio_id, unique_reads))
-            if research_round == 2:
+            if research_round == total_rounds:
                 proposal.actions = [action for action in proposal.actions if not is_read_only(action.tool)]
         if proposal is None:
             raise OrchestratorError("The builder did not produce a proposal.")
@@ -1609,6 +1624,37 @@ class ZenlessOrchestrator:
         if not output.strip():
             return False
         return bool(re.search(r"(?im)(\bexception\b|\btraceback\b|stack begin|(^|\s)error[:\s])", output))
+
+    @staticmethod
+    def _should_research(options: TaskOptions, analysis: BrainAnalysis) -> bool:
+        if options.research_mode == "off":
+            return False
+        if options.research_mode == "on":
+            return True
+        if not options.smart_routing:
+            return False
+        complex_intents = {"debug", "test", "visual", "3d", "audit"}
+        return bool(complex_intents.intersection(analysis.intents)) or len(analysis.keywords) >= 5
+
+    @staticmethod
+    def _builder_rounds(options: TaskOptions, analysis: BrainAnalysis) -> int:
+        if options.effort_level == "min":
+            return 1
+        if options.effort_level == "med":
+            return 2
+        if options.effort_level == "max":
+            return 3
+        if options.risk_level == "high" or any(intent in {"audit", "debug", "3d"} for intent in analysis.intents):
+            return 3
+        return 2
+
+    @staticmethod
+    def _builder_read_limit(options: TaskOptions) -> int:
+        if options.effort_level == "min":
+            return 4
+        if options.effort_level == "max":
+            return 12
+        return 8
 
     def _requires_change_approval(
         self,
