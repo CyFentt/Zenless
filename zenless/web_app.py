@@ -40,13 +40,13 @@ def run_web_app(
         import webview
 
         window = webview.create_window(
-            "Zenless",
+            "Rubra",
             url=url,
             width=1420,
             height=880,
             min_size=(1000, 650),
             resizable=True,
-            background_color="#060608",
+            background_color="#090405",
             text_select=True,
         )
         if window is None:
