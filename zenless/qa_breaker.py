@@ -380,7 +380,7 @@ class QABreaker:
                             "official-playtest-subagent",
                             "Official Roblox playtest subagent",
                             "ROBLOX_SUBAGENT",
-                            lambda: self._run_official_playtest_subagent(job_id, studio_id),
+                            lambda: self._run_official_playtest_subagent(job_id, studio_id, plan.scenarios),
                             failures,
                             logs,
                             seed,
@@ -664,7 +664,12 @@ class QABreaker:
         )
         return any(term in prompt for term in visual_terms)
 
-    def _run_official_playtest_subagent(self, job_id: str, studio_id: str) -> tuple[str, str, str]:
+    def _run_official_playtest_subagent(
+        self,
+        job_id: str,
+        studio_id: str,
+        scenarios: list[str],
+    ) -> tuple[str, str, str]:
         expected = "Roblox playtest subagent executes a focused scenario and returns evidence"
         tool = self.studio.tools.get("subagent")
         if tool is None:
@@ -691,7 +696,10 @@ class QABreaker:
         instruction = (
             "Playtest the implemented objective in the active Studio session. Exercise the main success path, "
             "one realistic edge case, and any relevant UI or interaction. Report observed failures only from real "
-            "Studio evidence. Do not mutate persistent source. Objective: " + objective
+            "Studio evidence. Do not mutate persistent source. Objective: "
+            + objective
+            + "\nRubra QA scenarios:\n- "
+            + "\n- ".join(scenarios[:8])
         )
         for candidate in ("prompt", "task", "instruction", "instructions", "objective", "query"):
             schema = properties.get(candidate)
