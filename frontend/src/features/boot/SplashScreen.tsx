@@ -8,7 +8,7 @@ export function SplashScreen() {
     <div className="flex flex-col items-center justify-center h-screen bg-ink-950 animate-fade-in">
       <div className="flex flex-col items-center gap-12">
         <div className="flex flex-col items-center gap-1">
-          <span className="text-lg font-bold tracking-[0.4em] text-ink-0">ZENLESS</span>
+          <span className="text-lg font-bold tracking-[0.4em] text-ink-0">RUBRA</span>
           <span className="w-12 h-px bg-ink-600" />
         </div>
         <div className="flex flex-col gap-1.5 w-56">
