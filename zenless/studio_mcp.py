@@ -85,12 +85,14 @@ class StudioMCPClient:
         env: dict[str, str] | None = None,
         client_name: str = "Rubra",
         client_version: str = "1.0.0",
+        startup_timeout: float = 25.0,
     ) -> None:
         self.executable = executable
         self.args = tuple(args)
         self.env = dict(env) if env is not None else None
         self.client_name = client_name
         self.client_version = client_version
+        self.startup_timeout = max(5.0, min(900.0, float(startup_timeout)))
         self.notification_callback = notification_callback
         self.process: subprocess.Popen[str] | None = None
         self.tools: dict[str, MCPTool] = {}
@@ -145,7 +147,7 @@ class StudioMCPClient:
                         "capabilities": {},
                         "clientInfo": {"name": self.client_name, "version": self.client_version},
                     },
-                    timeout=25,
+                    timeout=self.startup_timeout,
                 )
                 self.notify("notifications/initialized", {})
                 self.refresh_tools()
@@ -154,7 +156,7 @@ class StudioMCPClient:
                 raise
 
     def refresh_tools(self) -> list[MCPTool]:
-        response = self.request("tools/list", {}, timeout=25)
+        response = self.request("tools/list", {}, timeout=self.startup_timeout)
         discovered: dict[str, MCPTool] = {}
         for raw in response.get("tools", []):
             if not isinstance(raw, dict) or not isinstance(raw.get("name"), str):
