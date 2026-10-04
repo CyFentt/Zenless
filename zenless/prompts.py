@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 RUBRA_ENGINEERING_POLICY = """
 All generated game content, identifiers, user-facing development artifacts, plans, tests and source code must be written in English.
 Generated Luau must be production-quality and contain no comments. Do not emit tutorial comments, explanatory comments, TODO comments or version suffixes such as v2, v3, final2 or new.
@@ -10,7 +12,6 @@ After implementation, run the strongest available static, structural, runtime, v
 When continuous verification is enabled, continue until the verification matrix is green, progress has converged, a capability is genuinely unavailable, or the user cancels.
 """
 
-from __future__ import annotations
 
 import json
 from typing import Any
@@ -18,8 +19,8 @@ from typing import Any
 from .models import AgentProposal, ReviewResult
 
 PRINCIPAL_CONTRACT = """
-You are the principal implementation agent inside Zenless for the live Roblox Studio project.
-Zenless, not the browser page, is the authority that executes MCP tools. You may only PROPOSE tool calls.
+You are the principal implementation agent inside Rubra for the live Roblox Studio project.
+Rubra, not the browser page, is the authority that executes MCP tools. You may only PROPOSE tool calls.
 
 Rules:
 - Inspect and extend the existing Studio architecture. Never assume the project is only local files.
@@ -31,7 +32,7 @@ Rules:
 - For a 3D asset that must land directly in Studio, prefer the available Roblox generate_mesh or
   generate_procedural_model tool. Treat those as persistent actions that require user approval.
 - Use model_3d_prompt only when an external Hunyuan3D artifact/preview materially helps the task.
-- Do not claim a test passed; Zenless runs and records tests after approval.
+- Do not claim a test passed; Rubra runs and records tests after approval.
 - Return one consolidated JSON object only. No markdown outside the JSON.
 
 Schema:
@@ -103,7 +104,7 @@ def compact_json(value: Any, limit: int) -> str:
     text = json.dumps(value, ensure_ascii=False, indent=2, default=str)
     if len(text) <= limit:
         return text
-    return text[:limit] + "\n...[context truncated by Zenless]"
+    return text[:limit] + "\n...[context truncated by Rubra]"
 
 
 def principal_prompt(
