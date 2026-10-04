@@ -89,16 +89,33 @@ function GeneralTab({ settings, onChange }: { settings: Settings | null; onChang
       </Section>
       <Section title="PROJECT">
         <Row label="Folder" hint="Rojo or local project folder used for semantic code indexing">
-          <input
-            value={projectDraft}
-            onChange={(event) => setProjectDraft(event.target.value)}
-            onBlur={() => {
-              if (projectDraft.trim() !== settings.projectRoot) void persist({ projectRoot: projectDraft.trim() });
-            }}
-            spellCheck={false}
-            placeholder="C:\\path\\to\\game"
-            className="w-64 h-6 px-2 text-2xs font-mono text-ink-50 bg-ink-800 border border-ink-600 focus:border-zen-red"
-          />
+          <div className="flex items-center gap-1">
+            <input
+              value={projectDraft}
+              onChange={(event) => setProjectDraft(event.target.value)}
+              onBlur={() => {
+                if (projectDraft.trim() !== settings.projectRoot) void persist({ projectRoot: projectDraft.trim() });
+              }}
+              spellCheck={false}
+              placeholder="Project folder"
+              className="w-52 h-6 px-2 text-2xs font-mono text-ink-50 bg-ink-800 border border-ink-600 focus:border-zen-red"
+            />
+            <button
+              onClick={() => {
+                const picker = window.pywebview?.api?.select_project_folder;
+                if (!picker) return;
+                void picker(projectDraft).then((value) => {
+                  const selected = value.trim();
+                  if (!selected) return;
+                  setProjectDraft(selected);
+                  void persist({ projectRoot: selected });
+                });
+              }}
+              className="h-6 px-2 text-2xs uppercase tracking-wider border border-ink-600 text-ink-100 hover:border-zen-red hover:text-ink-0 transition-colors"
+            >
+              BROWSE
+            </button>
+          </div>
         </Row>
         <Row label="Semantic Index" hint="AST-aware local semantic and keyword index powered by mcp-code-search">
           <Toggle checked={settings.semanticIndex} onChange={(value) => void persist({ semanticIndex: value })} />
