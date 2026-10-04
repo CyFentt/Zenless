@@ -109,7 +109,7 @@ function ModelsTab({ settings, catalog, onChange }: { settings: Settings | null;
     }
   };
 
-  const selectModel = async (provider: 'chatgpt' | 'deepseek' | 'hunyuan', value: string) => {
+  const selectModel = async (provider: 'chatgpt' | 'deepseek' | 'gemini' | 'hunyuan', value: string) => {
     try {
       await getApi().setModel(provider, value);
       const nextModels: ModelSettings = provider === 'hunyuan'
@@ -177,6 +177,7 @@ function LinksTab({ connections }: { connections: ConnectionInfo }) {
     { key: 'browser', name: 'Browser' },
     { key: 'chatgpt', name: 'Builder', provider: 'chatgpt' },
     { key: 'deepseek', name: 'Reviewer', provider: 'deepseek' },
+    { key: 'gemini', name: 'Research', provider: 'gemini' },
     { key: 'hunyuan', name: '3D Generator', provider: 'hunyuan' },
     { key: 'studio', name: 'Studio' },
   ];
