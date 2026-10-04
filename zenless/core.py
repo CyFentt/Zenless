@@ -27,6 +27,7 @@ from .webview2_browser import WebView2BrowserController
 PROVIDER_LABELS = {
     "chatgpt": "Builder",
     "deepseek": "Reviewer",
+    "gemini": "Research & Visual Review",
     "hunyuan": "3D Generator",
 }
 
@@ -73,6 +74,7 @@ class ZenlessCore:
         "models": {
             "chatgpt": {"model": "auto", "reasoning": True},
             "deepseek": {"model": "auto", "reasoning": True},
+            "gemini": {"model": "auto", "reasoning": True},
             "hunyuan": {"version": "auto", "quality": "standard"},
             "smartRouting": True,
         },
@@ -109,6 +111,7 @@ class ZenlessCore:
             "browser": "CONNECTING",
             "chatgpt": "OFF",
             "deepseek": "OFF",
+            "gemini": "OFF",
             "hunyuan": "OFF",
             "studio": "CONNECTING",
         }
@@ -229,6 +232,13 @@ class ZenlessCore:
                 "reasoning": bool(models["deepseek"]["reasoning"]),
             },
             {
+                "id": "gemini",
+                "name": PROVIDER_LABELS["gemini"],
+                "status": connections["gemini"],
+                "model": models["gemini"]["model"],
+                "reasoning": bool(models["gemini"]["reasoning"]),
+            },
+            {
                 "id": "hunyuan",
                 "name": PROVIDER_LABELS["hunyuan"],
                 "status": connections["hunyuan"],
@@ -239,7 +249,7 @@ class ZenlessCore:
         ]
 
     def login_provider(self, provider: str) -> bool:
-        if provider not in {"chatgpt", "deepseek", "hunyuan"}:
+        if provider not in {"chatgpt", "deepseek", "gemini", "hunyuan"}:
             raise CoreError("UNKNOWN_PROVIDER", "Unknown provider.", status=404)
         with self._provider_lock:
             existing = self._provider_threads.get(provider)
@@ -340,7 +350,7 @@ class ZenlessCore:
 
     def cancel_generation(self, job_id: str) -> bool:
         result = self.cancel_job(job_id)
-        for provider in ("chatgpt", "deepseek", "hunyuan"):
+        for provider in ("chatgpt", "deepseek", "gemini", "hunyuan"):
             try:
                 if self.bridge.wait_for_provider(provider, timeout=0.1):
                     self.bridge.request(provider, "cancel", {}, task_id=job_id, timeout=5)
