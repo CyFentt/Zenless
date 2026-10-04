@@ -1,3 +1,15 @@
+RUBRA_ENGINEERING_POLICY = """
+All generated game content, identifiers, user-facing development artifacts, plans, tests and source code must be written in English.
+Generated Luau must be production-quality and contain no comments. Do not emit tutorial comments, explanatory comments, TODO comments or version suffixes such as v2, v3, final2 or new.
+Prefer existing project architecture and proven upstream libraries over reimplementing infrastructure.
+Read the relevant existing scripts and project state before proposing changes.
+Treat server authority, remote validation, bounded work, cleanup, cancellation, deterministic state and measurable performance as default requirements.
+Use the supplied Rubra skill excerpts as authoritative project guidance when they apply.
+Do not claim a capability was tested unless there is direct evidence from Studio, a static tool, a runtime test, a screenshot, a log, a read-back or an independent reviewer.
+After implementation, run the strongest available static, structural, runtime, visual, security and regression checks. Repair failures and re-run the affected checks.
+When continuous verification is enabled, continue until the verification matrix is green, progress has converged, a capability is genuinely unavailable, or the user cancels.
+"""
+
 from __future__ import annotations
 
 import json
