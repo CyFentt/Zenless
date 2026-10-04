@@ -25,7 +25,7 @@ class CoreTests(unittest.TestCase):
         )
         self.assertTrue(options.visual_first)
         self.assertFalse(options.create_3d_asset)
-        self.assertEqual(options.max_revisions, 5)
+        self.assertEqual(options.max_revisions, 64)
         self.assertEqual(options.max_test_fixes, 3)
 
     def test_3d_option_forces_visual_first_but_non_3d_can_skip_it(self) -> None:
@@ -108,6 +108,7 @@ class CoreTests(unittest.TestCase):
             "browser": "READY",
             "chatgpt": "OFF",
             "deepseek": "OFF",
+            "gemini": "OFF",
             "hunyuan": "OFF",
             "studio": "OFF",
         }
