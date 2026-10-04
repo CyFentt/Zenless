@@ -77,6 +77,10 @@ export class MockZenlessAPI implements ZenlessAPI {
     await delay(80);
     return clone(this.agents);
   }
+  async getTools() {
+    await delay(40);
+    return [];
+  }
   async loginProvider(provider: ProviderId) {
     await delay(50);
     this.connections[provider] = "READY";
