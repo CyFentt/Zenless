@@ -11,8 +11,8 @@
   }
   html, body, #root {
     height: 100%;
-    background: #050505;
-    color: #f2f2f2;
+    background: #090405;
+    color: #f5f1f1;
     font-family: 'Inter', system-ui, sans-serif;
   }
   body {
@@ -68,3 +68,7 @@ div:focus-visible, button:focus-visible, input:focus-visible, a:focus-visible {
   outline: 1px solid #333;
   outline-offset: 1px;
 }
+
+:root { color-scheme: dark; --rubra-accent: #c51f2c; --rubra-accent-bright: #ff3344; }
+::selection { background: rgba(197,31,44,.45); color: #fff; }
+button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visible { outline: 1px solid var(--rubra-accent-bright); outline-offset: 2px; }
