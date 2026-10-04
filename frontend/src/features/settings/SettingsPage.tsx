@@ -67,8 +67,21 @@ function GeneralTab({ settings, onChange }: { settings: Settings | null; onChang
     try {
       const next = await getApi().updateSettings(patch);
       onChange(next);
+      return next;
     } catch (error) {
       frontendDiagnostics.capture(error, 'settings', 'Failed to update general settings');
+      return null;
+    }
+  };
+
+  const runIndex = async () => {
+    setIndexState('INDEXING');
+    try {
+      await getApi().reindexProject(true);
+      setIndexState('READY');
+    } catch (error) {
+      setIndexState('ERROR');
+      frontendDiagnostics.capture(error, 'settings', 'Project indexing failed');
     }
   };
 
@@ -106,11 +119,12 @@ function GeneralTab({ settings, onChange }: { settings: Settings | null; onChang
               onClick={() => {
                 const picker = window.pywebview?.api?.select_project_folder;
                 if (!picker) return;
-                void picker(projectDraft).then((value) => {
+                void picker(projectDraft).then(async (value) => {
                   const selected = value.trim();
                   if (!selected) return;
                   setProjectDraft(selected);
-                  void persist({ projectRoot: selected });
+                  const saved = await persist({ projectRoot: selected });
+                  if (saved) await runIndex();
                 });
               }}
               className="h-6 px-2 text-2xs uppercase tracking-wider border border-ink-600 text-ink-100 hover:border-zen-red hover:text-ink-0 transition-colors"
@@ -128,15 +142,7 @@ function GeneralTab({ settings, onChange }: { settings: Settings | null; onChang
         <Row label="Index" hint="Incrementally index changed project files">
           <button
             disabled={!settings.projectRoot || indexState === 'INDEXING'}
-            onClick={() => {
-              setIndexState('INDEXING');
-              void getApi().reindexProject(true)
-                .then(() => setIndexState('READY'))
-                .catch((error) => {
-                  setIndexState('ERROR');
-                  frontendDiagnostics.capture(error, 'settings', 'Project indexing failed');
-                });
-            }}
+            onClick={() => void runIndex()}
             className="h-6 px-2 text-2xs uppercase tracking-wider border border-ink-600 text-ink-100 hover:border-zen-red hover:text-ink-0 disabled:opacity-40 transition-colors"
           >
             {indexState === 'INDEXING' ? 'INDEXING' : indexState === 'READY' ? 'READY' : indexState === 'ERROR' ? 'RETRY' : 'INDEX'}
