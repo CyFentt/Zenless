@@ -12,6 +12,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Protocol
 
+from .skills import SkillLibrary
 from .brain import BrainAnalysis, ZenlessBrain
 from .browser_bridge import BridgeError
 from .glb_viewer import GLBError, load_glb
@@ -105,6 +106,7 @@ class ZenlessOrchestrator:
         self.bridge = bridge
         self.studio = studio
         self.run_root = run_root
+        self.skills = SkillLibrary(run_root.parent.parent)
         self.event_callback = event_callback
         self.play_test_seconds = max(1.0, min(30.0, play_test_seconds))
         self.brain = brain or ZenlessBrain()
@@ -350,6 +352,10 @@ class ZenlessOrchestrator:
             create_3d=options.create_3d_asset,
         )
         context = self._collect_context(task_id, target.studio_id, analysis)
+        skill_selection = self.skills.select(objective)
+        if skill_selection.text:
+            context["rubra_skills"] = skill_selection.text
+            context["rubra_skill_sources"] = list(skill_selection.names)
         self.store.update_task(task_id, context_json=context)
 
         if not self.bridge.wait_for_provider("chatgpt", timeout=2):
