@@ -66,13 +66,13 @@ class AgentGateway:
 
     def login(self, provider: str, *, timeout: float = 180.0) -> dict[str, Any]:
         if self._stopping.is_set():
-            raise BridgeError("Zenless is closing; provider login was cancelled.")
+            raise BridgeError("Rubra is closing; provider login was cancelled.")
         try:
             result = self.embedded.login(provider, timeout=timeout)
             route = "webview2"
         except BridgeError as embedded_error:
             if self._stopping.is_set():
-                raise BridgeError("Zenless is closing; provider login was cancelled.") from embedded_error
+                raise BridgeError("Rubra is closing; provider login was cancelled.") from embedded_error
             result = self.managed.login(provider, install_if_missing=True, timeout=timeout)
             route = "playwright"
         with self._route_lock:
