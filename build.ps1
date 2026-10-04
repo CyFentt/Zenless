@@ -2,7 +2,7 @@ $ErrorActionPreference = "Stop"
 
 $projectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $distRoot = Join-Path $projectRoot "dist"
-$previousMockMode = [Environment]::GetEnvironmentVariable("VITE_ZENLESS_MOCK", "Process")
+$previousMockMode = [Environment]::GetEnvironmentVariable("VITE_RUBRA_MOCK", "Process")
 
 Push-Location -LiteralPath $projectRoot
 try {
@@ -19,7 +19,7 @@ try {
     try {
         npm ci
         if ($LASTEXITCODE -ne 0) { throw "npm ci failed with exit code $LASTEXITCODE." }
-        $env:VITE_ZENLESS_MOCK = "false"
+        $env:VITE_RUBRA_MOCK = "false"
         npm run lint
         if ($LASTEXITCODE -ne 0) { throw "ESLint failed with exit code $LASTEXITCODE." }
         npm run typecheck
@@ -31,15 +31,15 @@ try {
     }
     finally {
         if ($null -eq $previousMockMode) {
-            Remove-Item Env:VITE_ZENLESS_MOCK -ErrorAction SilentlyContinue
+            Remove-Item Env:VITE_RUBRA_MOCK -ErrorAction SilentlyContinue
         }
         else {
-            $env:VITE_ZENLESS_MOCK = $previousMockMode
+            $env:VITE_RUBRA_MOCK = $previousMockMode
         }
         Pop-Location
     }
 
-    python -m PyInstaller --clean --noconfirm Zenless.spec
+    python -m PyInstaller --clean --noconfirm Rubra.spec
     if ($LASTEXITCODE -ne 0) {
         throw "PyInstaller failed with exit code $LASTEXITCODE."
     }
