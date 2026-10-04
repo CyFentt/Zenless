@@ -8,7 +8,7 @@ import { StatusDot, StatusBadge } from '@/components/StatusDot';
 import { Modal } from '@/components/Modal';
 import type { ConnectionInfo, Diagnostic, ModelCatalog, ModelSettings, ProviderId, Settings } from '@/types';
 
-type SettingsTab = 'general' | 'models' | 'links' | 'logs';
+type SettingsTab = 'general' | 'models' | 'links' | 'library' | 'logs';
 
 export function SettingsPage() {
   const [tab, setTab] = useState<SettingsTab>('general');
@@ -36,6 +36,7 @@ export function SettingsPage() {
           { id: 'general', label: 'GENERAL' },
           { id: 'models', label: 'MODELS' },
           { id: 'links', label: 'LINKS' },
+          { id: 'library', label: 'LIBRARY' },
           { id: 'logs', label: 'LOGS' },
         ]}
         active={tab}
@@ -45,6 +46,7 @@ export function SettingsPage() {
         {tab === 'general' && <GeneralTab settings={settings} onChange={setSettings} />}
         {tab === 'models' && <ModelsTab settings={settings} catalog={catalog} onChange={setSettings} />}
         {tab === 'links' && <LinksTab connections={connections} />}
+        {tab === 'library' && <LibraryTab />}
         {tab === 'logs' && <LogsTab />}
       </div>
     </div>
@@ -306,6 +308,33 @@ function LinksTab({ connections }: { connections: ConnectionInfo }) {
           <button disabled={loggingIn} onClick={() => void handleLogin()} className="w-full h-8 text-xs uppercase tracking-wider text-ink-0 bg-ink-700 border border-ink-500 hover:bg-ink-600 transition-colors disabled:opacity-50">{loggingIn ? 'OPENING' : 'LOGIN'}</button>
         </div>
       </Modal>
+    </div>
+  );
+}
+
+function LibraryTab() {
+  const tools = useStore((s) => s.tools);
+  const installed = tools.filter((tool) => tool.status === 'INSTALLED').length;
+
+  return (
+    <div className="p-4 max-w-2xl space-y-4 animate-fade-in">
+      <div className="flex items-center justify-between">
+        <span className="text-2xs uppercase tracking-widest text-ink-300">UPSTREAM TOOLCHAIN</span>
+        <span className="text-2xs font-mono text-ink-400">{installed}/{tools.length || 0}</span>
+      </div>
+      <div className="border-t border-ink-700">
+        {tools.length === 0 ? (
+          <div className="py-4 text-center text-2xs text-ink-400 uppercase">Toolchain not hydrated</div>
+        ) : tools.map((tool) => (
+          <div key={tool.id} className="grid grid-cols-[1fr_auto] gap-3 py-2 border-b border-ink-700">
+            <div className="min-w-0">
+              <div className="text-xs text-ink-100 truncate">{tool.name}</div>
+              <div className="text-2xs text-ink-400 truncate">{tool.description || tool.reason || tool.category}</div>
+            </div>
+            <StatusBadge status={tool.status === 'INSTALLED' ? 'READY' : 'OFF'} />
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
