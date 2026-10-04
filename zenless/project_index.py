@@ -73,7 +73,41 @@ class ProjectIndexService:
         result = client.call_tool(name, arguments, timeout=120)
         if result.is_error:
             raise ProjectIndexError(result.compact(6000))
-        return {"projectRoot": root, "query": value, "result": result.text, "available": True}
+        return {
+            "projectRoot": root,
+            "query": value,
+            "result": result.text,
+            "available": True,
+            "metadata": self.project_metadata(),
+        }
+
+    def project_metadata(self) -> dict[str, str]:
+        if not self._project_root:
+            return {}
+        root = Path(self._project_root)
+        names = (
+            "default.project.json",
+            "rokit.toml",
+            "aftman.toml",
+            "wally.toml",
+            "pesde.toml",
+            ".luaurc",
+            "selene.toml",
+            ".darklua.json",
+            ".darklua.json5",
+        )
+        result: dict[str, str] = {}
+        for name in names:
+            path = root / name
+            if not path.is_file():
+                continue
+            try:
+                if path.stat().st_size > 128 * 1024:
+                    continue
+                result[name] = path.read_text(encoding="utf-8", errors="replace")[:16000]
+            except OSError:
+                continue
+        return result
 
     def status(self) -> dict[str, Any]:
         if not self._project_root:
