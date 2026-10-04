@@ -1,0 +1,275 @@
+{
+  "schema": 1,
+  "platform": "windows-x64",
+  "artifacts": [
+    {
+      "id": "node",
+      "group": "runtime",
+      "name": "Node.js LTS 24.21.0",
+      "kind": "zip",
+      "url": "https://nodejs.org/dist/v24.21.0/node-v24.21.0-win-x64.zip",
+      "sha256": "158f7685b44de51f6c0df1d153526cbcd3e1bc739a8dfc607721cef75de9e541",
+      "target": "runtime/node",
+      "critical": true,
+      "flatten": true,
+      "marker": "node.exe"
+    },
+    {
+      "id": "rokit",
+      "group": "roblox",
+      "name": "Rokit 1.2.0",
+      "kind": "zip",
+      "url": "https://github.com/rojo-rbx/rokit/releases/download/v1.2.0/rokit-1.2.0-windows-x86_64.zip",
+      "sha256": "f9ba1704014ff67d51e8005f605955c7c26d2429a5312a9419dc477fc310e96d",
+      "target": "runtime/tools/rokit",
+      "critical": true,
+      "flatten": true,
+      "marker": "rokit.exe"
+    },
+    {
+      "id": "rojo",
+      "group": "roblox",
+      "name": "Rojo 7.7.1",
+      "kind": "zip",
+      "url": "https://github.com/rojo-rbx/rojo/releases/download/v7.7.1/rojo-7.7.1-windows-x86_64.zip",
+      "sha256": "d4dfa3493a1613a43fc87312d6dac660d7c8bf38e6a99aa5dcd0d26154ba0b82",
+      "target": "runtime/tools/rojo",
+      "critical": true,
+      "flatten": true,
+      "marker": "rojo.exe"
+    },
+    {
+      "id": "selene",
+      "group": "quality",
+      "name": "Selene 0.32.0",
+      "kind": "zip",
+      "url": "https://github.com/Kampfkarren/selene/releases/download/0.32.0/selene-0.32.0-windows.zip",
+      "sha256": "c8b693de81d0ddc11490d8e1170dd98d775c2b21431144bd8286f738ef416109",
+      "target": "runtime/tools/selene",
+      "critical": true,
+      "flatten": true,
+      "marker": "selene.exe"
+    },
+    {
+      "id": "stylua",
+      "group": "quality",
+      "name": "StyLua 2.5.2",
+      "kind": "zip",
+      "url": "https://github.com/JohnnyMorganz/StyLua/releases/download/v2.5.2/stylua-windows-x86_64.zip",
+      "sha256": "e77d0ea1226b8b389b43f702240091249a96eea25857281f90ea24d0eb9eb969",
+      "target": "runtime/tools/stylua",
+      "critical": true,
+      "flatten": true,
+      "marker": "stylua.exe"
+    },
+    {
+      "id": "luau-lsp",
+      "group": "quality",
+      "name": "Luau Language Server 1.70.1",
+      "kind": "zip",
+      "url": "https://github.com/JohnnyMorganz/luau-lsp/releases/download/1.70.1/luau-lsp-win64.zip",
+      "sha256": "64225b9738102a30de6ee09fb28e5a3827edc402ecf2a6364af570312468159f",
+      "target": "runtime/tools/luau-lsp",
+      "critical": true,
+      "flatten": true,
+      "marker": "luau-lsp.exe"
+    },
+    {
+      "id": "lune",
+      "group": "roblox",
+      "name": "Lune 0.10.5",
+      "kind": "zip",
+      "url": "https://github.com/lune-org/lune/releases/download/v0.10.5/lune-0.10.5-windows-x86_64.zip",
+      "sha256": "ad0305f5cc6d7ff20996644b40bf7de0de613812f431ca241456e16f9fc89cda",
+      "target": "runtime/tools/lune",
+      "critical": true,
+      "flatten": true,
+      "marker": "lune.exe"
+    },
+    {
+      "id": "ripgrep",
+      "group": "index",
+      "name": "ripgrep 15.2.0",
+      "kind": "zip",
+      "url": "https://github.com/BurntSushi/ripgrep/releases/download/15.2.0/ripgrep-15.2.0-x86_64-pc-windows-msvc.zip",
+      "sha256": "71b2fef860abe467217a538ff31de02f5258807c0129f771846f87bd029aafc5",
+      "target": "runtime/tools/ripgrep",
+      "critical": true,
+      "flatten": true,
+      "marker": "rg.exe"
+    },
+    {
+      "id": "jq",
+      "group": "runtime",
+      "name": "jq 1.8.2",
+      "kind": "raw",
+      "url": "https://github.com/jqlang/jq/releases/download/jq-1.8.2/jq-windows-amd64.exe",
+      "sha256": "a6fc67fedaf9128a3309a1e2ebb8b986aeccf70122ee46d2cb4849e423f0c627",
+      "target": "runtime/tools/jq/jq.exe",
+      "critical": false,
+      "marker": "jq.exe"
+    },
+    {
+      "id": "tripwire",
+      "group": "studio",
+      "name": "Tripwire 0.2.5",
+      "kind": "tar.gz",
+      "url": "https://github.com/aliboIly/Tripwire/releases/download/v0.2.5/tripwire-server-v0.2.5-x86_64-pc-windows-msvc.tar.gz",
+      "sha256": "930b2a97d3a109edf94d3eb858229f43f15e4088bf51a3b4a6b0805ee3771c0c",
+      "target": "runtime/tools/tripwire",
+      "critical": false,
+      "flatten": true,
+      "marker": "tripwire-server.exe"
+    },
+    {
+      "id": "tripwire-plugin",
+      "group": "studio",
+      "name": "Tripwire Studio plugin",
+      "kind": "raw",
+      "url": "https://github.com/aliboIly/Tripwire/releases/download/v0.2.5/Tripwire.rbxmx",
+      "sha256": "b0d965277b685e084a5357a30189ccd88d3df5a85ae01bedf6eba7666567857b",
+      "target": "runtime/plugins/Tripwire.rbxmx",
+      "critical": false,
+      "marker": "Tripwire.rbxmx"
+    },
+    {
+      "id": "llama-vulkan",
+      "group": "local-ai",
+      "name": "llama.cpp Vulkan b11378",
+      "kind": "zip",
+      "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11378/llama-b11378-bin-win-vulkan-x64.zip",
+      "sha256": "8a856ec574da8b0f69c61e1dd2f9ff894b751ffaac9e442aac4711e72c9fb8eb",
+      "target": "runtime/local-ai/llama-vulkan",
+      "critical": false,
+      "flatten": true,
+      "marker": "llama-server.exe"
+    },
+    {
+      "id": "llama-cpu",
+      "group": "local-ai",
+      "name": "llama.cpp CPU b11378",
+      "kind": "zip",
+      "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11378/llama-b11378-bin-win-cpu-x64.zip",
+      "sha256": "11bcb3aea659bce73f62305e3812764f935d90f44de1e70cd2b68aa3c9f41b8d",
+      "target": "runtime/local-ai/llama-cpu",
+      "critical": false,
+      "flatten": true,
+      "marker": "llama-server.exe"
+    },
+    {
+      "id": "qwen3-4b",
+      "group": "local-ai",
+      "name": "Qwen3 4B Q4_K_M",
+      "kind": "raw",
+      "url": "https://huggingface.co/Qwen/Qwen3-4B-GGUF/resolve/main/Qwen3-4B-Q4_K_M.gguf",
+      "sha256": "7485fe6f11af29433bc51cab58009521f205840f5b4ae3a32fa7f92e8534fdf5",
+      "target": "runtime/models/Qwen3-4B-Q4_K_M.gguf",
+      "critical": false,
+      "marker": "Qwen3-4B-Q4_K_M.gguf",
+      "hardware_auto": {
+        "min_ram_gb": 20,
+        "min_free_gb": 8
+      }
+    }
+  ],
+  "npm": [
+    {
+      "id": "chrrxs-mcp",
+      "name": "Roblox Studio MCP",
+      "package": "@chrrxs/robloxstudio-mcp@3.1.6",
+      "critical": false
+    }
+  ],
+  "sources": [
+    {
+      "id": "zeroscript",
+      "repo": "sebattfg/ZeroScript-Free",
+      "commit": "32dd8463580ac49fba5434bcc6fb2207aa14a45c",
+      "target": "runtime/sources/zeroscript"
+    },
+    {
+      "id": "robloxstudio-mcp",
+      "repo": "Chrrxs/robloxstudio-mcp",
+      "commit": "7b37e57742af7b13807ac8bf3be53c7c5aedefcc",
+      "target": "runtime/sources/robloxstudio-mcp"
+    },
+    {
+      "id": "roblox-studio-mcp-native",
+      "repo": "Meganugger/roblox-studio-mcp",
+      "commit": "e88a1dedc53aaf0f415745dad242c21e8f1f70ca",
+      "target": "runtime/sources/roblox-studio-mcp-native"
+    },
+    {
+      "id": "roblox-dev-skills",
+      "repo": "ohzw/roblox-dev-skills",
+      "commit": "8eb74886bc63f5dafead754a0d1fe3d92f828c48",
+      "target": "runtime/sources/roblox-dev-skills"
+    },
+    {
+      "id": "roblox-best-practices",
+      "repo": "andrian-syh/roblox-best-practices-skill",
+      "commit": "300a79db8b3182c051a14130fd3148db501ef46b",
+      "target": "runtime/sources/roblox-best-practices"
+    },
+    {
+      "id": "roblox-dev-skill",
+      "repo": "MSayib/roblox-dev-skill",
+      "commit": "fd4926f093dbdea137f0ed1d38aae4945b714785",
+      "target": "runtime/sources/roblox-dev-skill"
+    },
+    {
+      "id": "testez",
+      "repo": "Roblox/testez",
+      "commit": "26a5247631279154c74425b94583c189b8447d0f",
+      "target": "runtime/sources/testez"
+    },
+    {
+      "id": "fusion",
+      "repo": "dphfox/Fusion",
+      "commit": "2790f7b6272bdf7cd0bbfee259a2f9d79ea20810",
+      "target": "runtime/sources/fusion"
+    },
+    {
+      "id": "matter",
+      "repo": "matter-ecs/matter",
+      "commit": "f31981ba5dbc481f637c08e9fa3765419d566501",
+      "target": "runtime/sources/matter"
+    },
+    {
+      "id": "zap",
+      "repo": "red-blox/zap",
+      "commit": "8cd17ab78192217600eec6f688ed8f8aab18d707",
+      "target": "runtime/sources/zap"
+    },
+    {
+      "id": "profile-store",
+      "repo": "MadStudioRoblox/ProfileStore",
+      "commit": "45c9847cbcf1fc260369c50eb335aba7c35aecdd",
+      "target": "runtime/sources/profile-store"
+    },
+    {
+      "id": "promise",
+      "repo": "evaera/roblox-lua-promise",
+      "commit": "031d429c82ee458a849e79fa523523bd349d7695",
+      "target": "runtime/sources/promise"
+    },
+    {
+      "id": "blender-mcp",
+      "repo": "ahujasid/mcp-for-blender",
+      "commit": "60d2a31b4632a7bc178f3dd636f7e68dfb5c8ae4",
+      "target": "runtime/sources/blender-mcp"
+    },
+    {
+      "id": "code-search",
+      "repo": "ceaksan/mcp-code-search",
+      "commit": "00360fec4cc708c2ea8af0a6c94666d0fe26c84c",
+      "target": "runtime/sources/code-search"
+    },
+    {
+      "id": "roblox-ai-studio",
+      "repo": "Nixera-Studio/roblox-ai-studio",
+      "commit": "c88d2e57a5ca52381b49f488ee13a0fd7c3beae9",
+      "target": "runtime/sources/roblox-ai-studio"
+    }
+  ]
+}
