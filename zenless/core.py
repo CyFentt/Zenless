@@ -24,6 +24,7 @@ from .qa_breaker import QABreaker
 from .storage import StorageManager
 from .store import SQLiteStore
 from .studio_mcp import MCPError, MCPToolResult, StudioMCPClient, find_studio_mcp
+from .tool_registry import ToolRegistry
 from .webview2_browser import WebView2BrowserController
 
 PROVIDER_LABELS = {
@@ -105,6 +106,7 @@ class ZenlessCore:
         self.storage = StorageManager(self.data_root)
         self.portable_root = Path(os.environ.get("RUBRA_HOME") or self.data_root.parent).expanduser().resolve()
         self.project_index = ProjectIndexService(self.portable_root)
+        self.tool_registry = ToolRegistry(self.portable_root, self.resource_root)
         self._closing = threading.Event()
         self._startup_thread: threading.Thread | None = None
         self._provider_threads: dict[str, threading.Thread] = {}
@@ -220,6 +222,12 @@ class ZenlessCore:
     def connections(self) -> dict[str, str]:
         with self._connections_lock:
             return dict(self._connections)
+
+    def tools_payload(self) -> list[dict[str, Any]]:
+        return self.tool_registry.descriptors()
+
+    def tool_summary(self) -> dict[str, int]:
+        return self.tool_registry.summary()
 
     def agents(self) -> list[dict[str, Any]]:
         connections = self.connections()
