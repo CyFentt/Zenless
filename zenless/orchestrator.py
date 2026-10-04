@@ -32,6 +32,7 @@ from .prompts import (
     final_review_prompt,
     principal_prompt,
     repair_prompt,
+    research_prompt,
     review_prompt,
     revision_prompt,
     visual_master_prompt,
@@ -356,6 +357,14 @@ class ZenlessOrchestrator:
         if skill_selection.text:
             context["rubra_skills"] = skill_selection.text
             context["rubra_skill_sources"] = list(skill_selection.names)
+        if self.bridge.wait_for_provider("gemini", timeout=0.5):
+            self._emit(task_id, Stage.COLLECTING_CONTEXT, "Gemini is performing an independent research pass.")
+            try:
+                research = self._send_agent_prompt("gemini", research_prompt(objective, context), task_id=task_id, timeout=240)
+                context["gemini_research"] = research[:30000]
+                self.store.append_message(task_id, "Gemini", "researcher", research)
+            except BridgeError as exc:
+                context["gemini_research_unavailable"] = str(exc)
         self.store.update_task(task_id, context_json=context)
 
         if not self.bridge.wait_for_provider("chatgpt", timeout=2):
