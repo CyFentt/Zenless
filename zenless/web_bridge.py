@@ -178,6 +178,7 @@ class LocalWebBridge:
         app.router.add_get("/api/status", self._sync_handler(self.core.status))
         app.router.add_get("/api/connections", self._sync_handler(self.core.connections))
         app.router.add_get("/api/agents", self._sync_handler(self.core.agents))
+        app.router.add_get("/api/tools", self._sync_handler(self.core.tools_payload))
         app.router.add_post("/api/providers/{provider}/login", self._login_provider)
 
         app.router.add_get("/api/jobs", self._sync_handler(self.core.jobs))
