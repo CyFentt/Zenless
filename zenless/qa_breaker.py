@@ -268,7 +268,7 @@ class QABreaker:
             thread = threading.Thread(
                 target=self._manual_worker,
                 args=(job_id, profile, cancel),
-                name=f"Zenless-QA-{job_id[:8]}",
+                name=f"Rubra-QA-{job_id[:8]}",
                 daemon=True,
             )
             self._manual_cancel[job_id] = cancel
@@ -551,7 +551,6 @@ class QABreaker:
         scenarios = [
             "Validate approved mutation evidence",
             "Confirm Studio starts in Edit mode",
-            "Run pinned external static quality tools when a filesystem project is configured",
             "Run pinned external static quality tools when a filesystem project is configured",
             "Start Play, collect Output, Stop, and reject runtime errors",
         ]
