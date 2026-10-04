@@ -11,6 +11,8 @@ import type {
   ModelCatalog,
   ModelInfo,
   ProviderId,
+  ProjectIndexStatus,
+  ProjectSearchResult,
   Review,
   Settings,
   StudioNode,
@@ -78,6 +80,10 @@ export interface ZenlessAPI {
   startTest(jobId: string): Promise<{ ok: boolean }>;
   stopTest(jobId: string): Promise<{ ok: boolean }>;
   getTestState(jobId: string): Promise<TestState>;
+
+  getProjectIndexStatus(): Promise<ProjectIndexStatus>;
+  reindexProject(incremental?: boolean): Promise<{ projectRoot: string; result: string; indexed: boolean }>;
+  searchProject(query: string, semantic?: boolean, limit?: number): Promise<ProjectSearchResult>;
 
   getSettings(): Promise<Settings>;
   updateSettings(partial: Partial<Settings>): Promise<Settings>;
