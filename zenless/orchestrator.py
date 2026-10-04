@@ -466,7 +466,7 @@ class ZenlessOrchestrator:
             console_output = self._run_quality_test(task_id, target.studio_id, cancel_event, apply_evidence, False)
             fix_count = 0
             while self._console_has_errors(console_output):
-                if not options.auto_fix_errors or fix_count >= options.max_test_fixes:
+                if not options.auto_fix_errors or (not options.continuous_verification and fix_count >= options.max_test_fixes) or fix_count >= 64:
                     raise OrchestratorError(
                         "The play test returned errors and reached the correction limit.\n" + console_output[-6000:]
                     )
@@ -474,7 +474,7 @@ class ZenlessOrchestrator:
                 self._emit(
                     task_id,
                     Stage.REPAIRING,
-                    f"Builder is preparing correction {fix_count}/{options.max_test_fixes} from the actual output.",
+                    f"Builder is preparing correction {fix_count} from the actual output.",
                     "warning",
                 )
                 repair = self._request_repair(task_id, objective, proposal, console_output, apply_evidence)
