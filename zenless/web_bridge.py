@@ -63,7 +63,7 @@ class LocalWebBridge:
         self._ready.clear()
         self._stopped.clear()
         self._start_error = None
-        self._thread = threading.Thread(target=self._thread_main, name="Zenless-WebBridge", daemon=True)
+        self._thread = threading.Thread(target=self._thread_main, name="Rubra-WebBridge", daemon=True)
         self._thread.start()
         if not self._ready.wait(timeout):
             raise RuntimeError("The web bridge did not confirm startup.")
@@ -129,7 +129,7 @@ class LocalWebBridge:
         try:
             self._validate_local_request(request)
             if request.path.startswith("/api/") and request.path != "/api/session":
-                if not secrets.compare_digest(request.headers.get("X-Zenless-Token", ""), self.token):
+                if not secrets.compare_digest(request.headers.get("X-Rubra-Token", ""), self.token):
                     raise CoreError("UNAUTHORIZED", "Invalid local session.", status=401)
             response = await handler(request)
         except CoreError as exc:
