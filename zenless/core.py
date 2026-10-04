@@ -1202,7 +1202,7 @@ class ZenlessCore:
     @staticmethod
     def _merge_models(current: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:
         result = json.loads(json.dumps(current))
-        for provider in ("chatgpt", "deepseek", "hunyuan"):
+        for provider in ("chatgpt", "deepseek", "gemini", "hunyuan"):
             value = patch.get(provider)
             if isinstance(value, dict):
                 result[provider].update(value)
