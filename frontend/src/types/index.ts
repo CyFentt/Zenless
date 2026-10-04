@@ -2,9 +2,9 @@ export type ConnectionStatus = "READY" | "CONNECTING" | "LOGIN" | "OFF" | "ERR";
 export type SocketStatus = "CONNECTING" | "CONNECTED" | "RECONNECTING" | "DISCONNECTED";
 
 export type AgentId = "chatgpt" | "deepseek" | "gemini" | "hunyuan" | "studio";
-export type ProviderId = Extract<AgentId, "chatgpt" | "deepseek" | "hunyuan">;
+export type ProviderId = Extract<AgentId, "chatgpt" | "deepseek" | "gemini" | "hunyuan">;
 
-export type ProviderRole = "BUILDER" | "REVIEWER" | "VISUAL" | "THREED";
+export type ProviderRole = "BUILDER" | "REVIEWER" | "RESEARCH" | "VISUAL" | "THREED";
 
 export interface AgentInfo {
   id: AgentId;
@@ -26,6 +26,7 @@ export const PROVIDER_NAMES: Record<ProviderId, string> = {
 export const AGENT_NAMES: Record<AgentId, string> = {
   chatgpt: "ChatGPT",
   deepseek: "DeepSeek",
+  gemini: "Gemini",
   hunyuan: "Hunyuan",
   studio: "Roblox Studio",
 };
