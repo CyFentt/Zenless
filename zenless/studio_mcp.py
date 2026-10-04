@@ -30,6 +30,7 @@ class MCPToolResult:
     text: str
     is_error: bool
     content_types: tuple[str, ...]
+    images: tuple[dict[str, str], ...] = ()
 
     def compact(self, limit: int = 12_000) -> str:
         text = self.text.strip()
@@ -79,8 +80,17 @@ class StudioMCPClient:
         self,
         executable: Path,
         notification_callback: Callable[[dict[str, Any]], None] | None = None,
+        *,
+        args: tuple[str, ...] = (),
+        env: dict[str, str] | None = None,
+        client_name: str = "Rubra",
+        client_version: str = "1.0.0",
     ) -> None:
         self.executable = executable
+        self.args = tuple(args)
+        self.env = dict(env) if env is not None else None
+        self.client_name = client_name
+        self.client_version = client_version
         self.notification_callback = notification_callback
         self.process: subprocess.Popen[str] | None = None
         self.tools: dict[str, MCPTool] = {}
@@ -105,7 +115,10 @@ class StudioMCPClient:
             if self.process is not None:
                 self.close()
             creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-            command = ["cmd.exe", "/d", "/s", "/c", str(self.executable)] if self.executable.suffix.casefold() in {".bat", ".cmd"} else [str(self.executable)]
+            if self.executable.suffix.casefold() in {".bat", ".cmd"}:
+                command = ["cmd.exe", "/d", "/s", "/c", str(self.executable), *self.args]
+            else:
+                command = [str(self.executable), *self.args]
             self.process = subprocess.Popen(
                 command,
                 stdin=subprocess.PIPE,
@@ -116,9 +129,11 @@ class StudioMCPClient:
                 errors="replace",
                 bufsize=1,
                 creationflags=creation_flags,
+                env=self.env,
             )
-            self._reader = threading.Thread(target=self._read_stdout, name="Zenless-MCP-stdout", daemon=True)
-            self._stderr_reader = threading.Thread(target=self._read_stderr, name="Zenless-MCP-stderr", daemon=True)
+            safe_name = "".join(ch if ch.isalnum() else "-" for ch in self.client_name)[:32] or "MCP"
+            self._reader = threading.Thread(target=self._read_stdout, name=f"Rubra-{safe_name}-stdout", daemon=True)
+            self._stderr_reader = threading.Thread(target=self._read_stderr, name=f"Rubra-{safe_name}-stderr", daemon=True)
             self._reader.start()
             self._stderr_reader.start()
 
@@ -128,7 +143,7 @@ class StudioMCPClient:
                     {
                         "protocolVersion": MCP_PROTOCOL_VERSION,
                         "capabilities": {},
-                        "clientInfo": {"name": "Rubra", "version": "1.0.0"},
+                        "clientInfo": {"name": self.client_name, "version": self.client_version},
                     },
                     timeout=25,
                 )
@@ -151,7 +166,7 @@ class StudioMCPClient:
             )
             discovered[tool.name] = tool
         if not discovered:
-            raise MCPError("StudioMCP started but did not advertise any tools.")
+            raise MCPError(f"{self.client_name} started but did not advertise any tools.")
         self.tools = discovered
         return list(discovered.values())
 
@@ -221,6 +236,7 @@ class StudioMCPClient:
         content = raw_result.get("content", [])
         text_parts: list[str] = []
         content_types: list[str] = []
+        images: list[dict[str, str]] = []
         for item in content:
             if not isinstance(item, dict):
                 continue
@@ -229,7 +245,11 @@ class StudioMCPClient:
             if item_type == "text":
                 text_parts.append(str(item.get("text", "")))
             elif item_type == "image":
-                text_parts.append(f"[MCP image: {item.get('mimeType', 'unknown type')}]")
+                mime = str(item.get("mimeType") or item.get("mime_type") or "application/octet-stream")
+                data = str(item.get("data") or "")
+                if data:
+                    images.append({"mimeType": mime, "data": data})
+                text_parts.append(f"[MCP image: {mime}]")
             elif item_type == "resource":
                 text_parts.append("[MCP resource returned]")
         return MCPToolResult(
@@ -237,11 +257,12 @@ class StudioMCPClient:
             text="\n".join(text_parts),
             is_error=bool(raw_result.get("isError", False)),
             content_types=tuple(content_types),
+            images=tuple(images),
         )
 
     def request(self, method: str, params: dict[str, Any], *, timeout: float) -> dict[str, Any]:
         if not self.running or self.process is None or self.process.stdin is None:
-            raise MCPError("StudioMCP is not running.")
+            raise MCPError(f"{self.client_name} is not running.")
         with self._pending_lock:
             request_id = self._next_id
             self._next_id += 1
@@ -255,7 +276,7 @@ class StudioMCPClient:
             try:
                 response = response_queue.get(timeout=timeout)
             except queue.Empty as exc:
-                raise MCPError(f"StudioMCP exceeded {timeout:.0f}s while running {method}.") from exc
+                raise MCPError(f"{self.client_name} exceeded {timeout:.0f}s while running {method}.") from exc
         finally:
             with self._pending_lock:
                 self._pending.pop(request_id, None)
@@ -266,7 +287,7 @@ class StudioMCPClient:
                 message = error.get("message", error)
             else:
                 message = error
-            raise MCPError(f"StudioMCP rejected {method}: {message}")
+            raise MCPError(f"{self.client_name} rejected {method}: {message}")
         result = response.get("result", {})
         return result if isinstance(result, dict) else {"value": result}
 
@@ -298,7 +319,7 @@ class StudioMCPClient:
                         process.wait(timeout=2)
                     except subprocess.TimeoutExpired:
                         self.stderr_tail.append(
-                            "The child StudioMCP process did not stop in time; no forced kill was used."
+                            "The child MCP process did not stop in time; no forced kill was used."
                         )
             for stream in (process.stdout, process.stderr):
                 if stream is not None:
