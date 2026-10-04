@@ -106,7 +106,7 @@ class ZenlessOrchestrator:
         self.bridge = bridge
         self.studio = studio
         self.run_root = run_root
-        self.skills = SkillLibrary(run_root.parent.parent)
+        self.skills = SkillLibrary(run_root.parent)
         self.event_callback = event_callback
         self.play_test_seconds = max(1.0, min(30.0, play_test_seconds))
         self.brain = brain or ZenlessBrain()
