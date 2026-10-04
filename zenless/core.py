@@ -767,7 +767,7 @@ class ZenlessCore:
         if "autoApprove" in patch:
             current["autoApprove"] = bool(patch["autoApprove"])
         if "maxRevisions" in patch:
-            current["maxRevisions"] = max(1, min(5, int(patch["maxRevisions"])))
+            current["maxRevisions"] = max(1, min(64, int(patch["maxRevisions"])))
         if "models" in patch and isinstance(patch["models"], dict):
             current["models"] = self._merge_models(current["models"], patch["models"])
         self.store.set_setting("ui.settings", current)
@@ -781,6 +781,7 @@ class ZenlessCore:
         catalog: dict[str, Any] = {
             "chatgpt": {"models": [{"id": settings["chatgpt"]["model"], "label": settings["chatgpt"]["model"]}]},
             "deepseek": {"models": [{"id": settings["deepseek"]["model"], "label": settings["deepseek"]["model"]}]},
+            "gemini": {"models": [{"id": settings["gemini"]["model"], "label": settings["gemini"]["model"]}]},
             "hunyuan": {
                 "versions": [{"id": settings["hunyuan"]["version"], "label": settings["hunyuan"]["version"]}],
                 "qualities": [
@@ -789,7 +790,7 @@ class ZenlessCore:
                 ],
             },
         }
-        for provider in ("chatgpt", "deepseek", "hunyuan"):
+        for provider in ("chatgpt", "deepseek", "gemini", "hunyuan"):
             if self.connections()[provider] != "READY":
                 continue
             try:
@@ -808,7 +809,7 @@ class ZenlessCore:
         return json.loads(json.dumps(catalog))
 
     def set_model(self, provider: str, model: str) -> bool:
-        if provider not in {"chatgpt", "deepseek", "hunyuan"} or not model.strip():
+        if provider not in {"chatgpt", "deepseek", "gemini", "hunyuan"} or not model.strip():
             raise CoreError("INVALID_MODEL", "Invalid model or provider.")
         if model != "auto":
             if not self.bridge.wait_for_provider(provider, timeout=0.5):
