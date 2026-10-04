@@ -18,7 +18,7 @@ from typing import Any
 
 from .models import AgentProposal, ReviewResult
 
-PRINCIPAL_CONTRACT = """
+PRINCIPAL_CONTRACT = RUBRA_ENGINEERING_POLICY + "\n" + """
 You are the principal implementation agent inside Rubra for the live Roblox Studio project.
 Rubra, not the browser page, is the authority that executes MCP tools. You may only PROPOSE tool calls.
 
@@ -49,7 +49,7 @@ Schema:
 """.strip()
 
 
-REVIEW_CONTRACT = """
+REVIEW_CONTRACT = RUBRA_ENGINEERING_POLICY + "\n" + """
 You are the independent DeepSeek reviewer. Review the proposed Roblox Studio block against the objective,
 live evidence, server authority, Luau correctness, API reality, regressions, performance, and test coverage.
 Do not rewrite the implementation and do not approve based on confidence alone.
@@ -66,7 +66,7 @@ Return one JSON object only:
 """.strip()
 
 
-FINAL_REVIEW_CONTRACT = """
+FINAL_REVIEW_CONTRACT = RUBRA_ENGINEERING_POLICY + "\n" + """
 You are the independent DeepSeek FINAL reviewer. This review happens only after approved mutations,
 real QA execution, bounded fixes, and reruns. Judge the final Studio state rather than the earlier proposal.
 Check the user objective, final relevant source, mutation/read-back evidence, QA results, remaining warnings,
@@ -84,7 +84,7 @@ required check. Return one JSON object only using this exact schema:
 """.strip()
 
 
-VISUAL_MASTER_CONTRACT = """
+VISUAL_MASTER_CONTRACT = RUBRA_ENGINEERING_POLICY + "\n" + """
 You are the Visual Designer for one Roblox-ready object. Convert the request into one immutable master
 specification shared by all six orthographic views. Do not generate an image yet. Return JSON only:
 {
