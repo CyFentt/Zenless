@@ -225,13 +225,19 @@ class QABreaker:
     def select_profile(self, job_id: str, evidence: list[dict[str, Any]]) -> TestProfile:
         task = self.store.load_task(job_id) or {}
         prompt = str(task.get("prompt", "")).casefold()
-        risk = str((task.get("options") or {}).get("risk_level", "medium")).casefold()
+        stored_options = task.get("options") or {}
+        risk = str(stored_options.get("risk_level", "medium")).casefold()
+        effort = str(stored_options.get("effort_level", "auto")).casefold()
         tools = {str(item.get("tool", "")).casefold() for item in evidence}
         deep_terms = ("datastore", "persist", "currency", "remoteevent", "multiplayer", "ragdoll", "physics")
         smoke_terms = ("textlabel", "texto", "cor ", "label", "tooltip")
-        continuous = bool((task.get("options") or {}).get("continuous_verification", True))
+        continuous = bool(stored_options.get("continuous_verification", True))
+        if effort == "max":
+            return PROFILES["EXHAUSTIVE"]
         if risk == "high" and continuous:
             return PROFILES["EXHAUSTIVE"]
+        if effort == "med" and risk != "low":
+            return PROFILES["DEEP"]
         if risk == "high" or any(term in prompt for term in deep_terms) or any("remote" in tool for tool in tools):
             return PROFILES["DEEP"]
         if risk == "low" and len(evidence) <= 2 and any(term in prompt for term in smoke_terms):
