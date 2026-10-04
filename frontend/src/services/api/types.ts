@@ -82,7 +82,7 @@ export interface ZenlessAPI {
   getSettings(): Promise<Settings>;
   updateSettings(partial: Partial<Settings>): Promise<Settings>;
   getModels(): Promise<ModelCatalog>;
-  setModel(agent: 'chatgpt' | 'deepseek' | 'hunyuan', model: string): Promise<{ ok: boolean }>;
+  setModel(agent: 'chatgpt' | 'deepseek' | 'gemini' | 'hunyuan', model: string): Promise<{ ok: boolean }>;
   setSmartRouting(enabled: boolean): Promise<{ ok: boolean }>;
 
   getDiagnostics(): Promise<Diagnostic[]>;
