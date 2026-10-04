@@ -8,9 +8,10 @@ __pycache__/
 *.db
 *.db-shm
 *.db-wal
-build/
-dist/
+/build/
+/dist/
 artifacts/
 data/
 runtime/
 frontend/dist/
+.venv/

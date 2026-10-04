@@ -11,6 +11,8 @@ import type {
   ModelCatalog,
   ModelInfo,
   ProviderId,
+  ProjectIndexStatus,
+  ProjectSearchResult,
   Review,
   Settings,
   StudioNode,
@@ -354,6 +356,21 @@ export class MockZenlessAPI implements ZenlessAPI {
   async getTestState(_jobId: string) {
     await delay(50);
     return clone(this.testState);
+  }
+  async getProjectIndexStatus(): Promise<ProjectIndexStatus> {
+    return {
+      configured: Boolean(this.settings.projectRoot),
+      projectRoot: this.settings.projectRoot,
+      running: false,
+      indexed: false,
+      result: "",
+    };
+  }
+  async reindexProject(_incremental = true): Promise<{ projectRoot: string; result: string; indexed: boolean }> {
+    throw new Error("Project indexing requires the desktop backend.");
+  }
+  async searchProject(query: string, _semantic = true, _limit = 12): Promise<ProjectSearchResult> {
+    return { projectRoot: this.settings.projectRoot, query, result: "", available: false };
   }
   async getSettings() {
     await delay(50);

@@ -129,7 +129,9 @@ class StaticQualityRunner:
                 check=False,
             )
         except subprocess.TimeoutExpired as exc:
-            output = ((exc.stdout or "") + "\n" + (exc.stderr or ""))[-12000:]
+            stdout = exc.stdout.decode("utf-8", errors="replace") if isinstance(exc.stdout, bytes) else exc.stdout or ""
+            stderr = exc.stderr.decode("utf-8", errors="replace") if isinstance(exc.stderr, bytes) else exc.stderr or ""
+            output = (stdout + "\n" + stderr)[-12000:]
             return StaticCheck(name, "FAILED", "Timed out.\n" + output)
         except OSError as exc:
             return StaticCheck(name, "FAILED", str(exc))

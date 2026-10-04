@@ -420,6 +420,7 @@ export interface Settings {
 }
 
 export interface ProjectIndexStatus {
+  indexed?: boolean;
   configured: boolean;
   projectRoot: string;
   running: boolean;

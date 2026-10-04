@@ -84,7 +84,7 @@ class HardeningTests(unittest.TestCase):
         )
         self.assertIn("debug", analysis.intents)
         self.assertIn("3d", analysis.intents)
-        self.assertEqual(analysis.providers, ("chatgpt", "deepseek", "hunyuan"))
+        self.assertEqual(analysis.providers, ("chatgpt", "gemini", "deepseek", "hunyuan"))
         self.assertEqual(brain.deduplicate([{"a": 1}, {"a": 1}, {"a": 2}]), [{"a": 1}, {"a": 2}])
 
     @settings(max_examples=50, deadline=None)

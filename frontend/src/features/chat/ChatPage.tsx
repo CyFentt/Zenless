@@ -153,7 +153,7 @@ export function ChatPage() {
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
-                placeholder="Message Zenless"
+                placeholder="Message Rubra"
                 rows={1}
                 className="flex-1 bg-ink-800 border border-ink-600 text-sm text-ink-0 px-3 py-2 resize-none placeholder:text-ink-400 focus:border-ink-500 transition-colors scrollbar-zen"
                 style={{ minHeight: '36px', maxHeight: '120px' }}
@@ -215,13 +215,13 @@ function ChatMessageRow({ message, streaming, logging, onLogin }: { message: Cha
 function chatErrorAction(error: unknown): ChatMessage['action'] {
   if (!(error instanceof ApiError) || error.code !== 'PROVIDER_LOGIN_REQUIRED' || !error.details || typeof error.details !== 'object') return undefined;
   const provider = (error.details as { provider?: unknown }).provider;
-  return provider === 'chatgpt' || provider === 'deepseek' || provider === 'hunyuan' ? { type: 'LOGIN', provider } : undefined;
+  return provider === 'chatgpt' || provider === 'deepseek' || provider === 'gemini' || provider === 'hunyuan' ? { type: 'LOGIN', provider } : undefined;
 }
 
 function chatErrorMessage(error: unknown): string {
   const action = chatErrorAction(error);
   if (action) {
-    const labels: Record<ProviderId, string> = { chatgpt: 'Builder', deepseek: 'Reviewer', hunyuan: '3D Generator' };
+    const labels: Record<ProviderId, string> = { chatgpt: 'Builder', deepseek: 'Reviewer', gemini: 'Research', hunyuan: '3D Generator' };
     return `${labels[action.provider]} requires login.`;
   }
   return error instanceof Error && error.message.trim() ? error.message : 'The message could not be sent.';

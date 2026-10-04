@@ -16,8 +16,8 @@ from typing import Any, Callable
 from .event_bus import EventBus
 from .orchestrator import AgentTransport, OrchestratorError, TaskCancelled
 from .protocol import ProtocolError, extract_json_object
-from .store import SQLiteStore
 from .static_quality import StaticQualityRunner
+from .store import SQLiteStore
 from .studio_mcp import MCPError, MCPToolResult, StudioMCPClient, validate_json_schema
 
 MULTIPLAYER_HARNESS_PROTOCOL = "ZENLESS_QA_MULTIPLAYER_V1"

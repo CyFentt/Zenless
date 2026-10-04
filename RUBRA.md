@@ -54,3 +54,21 @@ ChatGPT is the default builder. DeepSeek is the independent reviewer. Gemini is 
 ## Security
 
 The local bridge binds only to loopback. Downloads with published digests are SHA-256 verified before extraction. Archive traversal is blocked. Browser profiles remain local. Rubra does not export provider cookies into private API tokens. Destructive live Open Cloud actions remain capability-gated.
+
+## Project indexing
+
+The existing mcp-code-search integration now starts through a bundled Rubra adapter using the pinned upstream lockfile. Each configured project receives its own storage namespace and MCP process. Switching or clearing the project closes the previous process, and project changes wait for in-flight searches to finish.
+
+Every search refreshes the incremental index before returning evidence. Indexing failures and missing completion confirmations block search rather than reusing stale results. Common credential files, external symlinks, junctions, binary assets and Rubra runtime/browser data are excluded. Project-level `.code-search.toml` cannot redirect storage or select a remote embedding provider. Embedded credentials inside otherwise allowed source files still require project hygiene.
+
+Luau files are explicitly identified as Luau and use the upstream text chunking fallback. This does not claim Luau AST analysis. Initial semantic indexing still requires the upstream dependencies and embedding model; Windows startup and full embedding inference require platform verification.
+
+## Local worker lifecycle
+
+Local scout requests and backend startup are serialized. Vulkan startup failures stop the failed process before trying CPU, and CPU fallback explicitly disables GPU layers. Server output goes to `data/logs/local-ai.log` instead of an undrained pipe. Startup diagnostics read a bounded log tail.
+
+## Build recovery
+
+The missing Changes/Context/History workspace and diff viewer were restored from Zenless commit `fae0baec35763c9a36bda20a48b11e5d21ae0adf`, then adapted to the current API. Build outputs are ignored only at their intended paths so the source workspace remains tracked. Gemini login handling and project-index demo contracts now match the backend. Demo mode reports indexing as unavailable and cannot fabricate index evidence.
+
+The packaging specification tolerates the absent optional vendor directory and icon while still requiring the production frontend and core assets. Static type checking targets the Windows application platform. WebView2 integration tests remain Windows-only.

@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import json
+from typing import Any
+
+from .models import AgentProposal, ReviewResult
+
 _RUBRA_POLICY_TEXT = """
 All generated game content, identifiers, user-facing development artifacts, plans, tests and source code must be written in English.
 Generated Luau must be production-quality and contain no comments. Do not emit tutorial comments, explanatory comments, TODO comments or version suffixes such as v2, v3, final2 or new.
@@ -15,10 +20,6 @@ When continuous verification is enabled, continue until the verification matrix 
 RUBRA_ENGINEERING_POLICY = _RUBRA_POLICY_TEXT.strip()
 
 
-import json
-from typing import Any
-
-from .models import AgentProposal, ReviewResult
 
 PRINCIPAL_CONTRACT = RUBRA_ENGINEERING_POLICY + "\n" + """
 You are the principal implementation agent inside Rubra for the live Roblox Studio project.

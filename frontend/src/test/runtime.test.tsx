@@ -73,7 +73,7 @@ describe('ApplicationRuntime', () => {
     expect(useStore.getState().booted).toBe(false);
     expect(socket.disconnects).toBe(0);
 
-    resolveConnections({ bridge: 'READY', browser: 'READY', chatgpt: 'LOGIN', deepseek: 'LOGIN', hunyuan: 'OFF', studio: 'READY' });
+    resolveConnections({ bridge: 'READY', browser: 'READY', chatgpt: 'LOGIN', deepseek: 'LOGIN', gemini: 'LOGIN', hunyuan: 'OFF', studio: 'READY' });
     resolveAgents([
       { id: 'chatgpt', name: 'External Name', status: 'LOGIN' },
       { id: 'deepseek', name: 'External Name', status: 'LOGIN' },

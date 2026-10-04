@@ -12,7 +12,6 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Protocol
 
-from .skills import SkillLibrary
 from .brain import BrainAnalysis, ZenlessBrain
 from .browser_bridge import BridgeError
 from .glb_viewer import GLBError, load_glb
@@ -40,6 +39,7 @@ from .prompts import (
     visual_view_prompt,
 )
 from .protocol import ProtocolError, extract_json_object
+from .skills import SkillLibrary
 from .store import SQLiteStore, now_iso
 from .studio_mcp import MCPError, StudioMCPClient
 

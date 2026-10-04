@@ -1,14 +1,16 @@
+from pathlib import Path
+
 a = Analysis(
     ["main.py"],
     pathex=[],
     binaries=[],
     datas=[
         ("assets", "assets"),
-        ("vendor", "vendor"),
         ("frontend/dist", "frontend/dist"),
         ("README.md", "."),
         ("NOTICE.md", "."),
         ("LICENSE", "."),
+        *([("vendor", "vendor")] if Path("vendor").is_dir() else []),
     ],
     hiddenimports=[
         "clr",
@@ -58,5 +60,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=["assets/zenless.ico"],
+    icon=["assets/zenless.ico"] if Path("assets/zenless.ico").is_file() else None,
 )

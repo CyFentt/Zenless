@@ -20,8 +20,9 @@ class LocalAIService:
         self.portable_root = portable_root.resolve()
         self.runtime_root = self.portable_root / "runtime"
         self.model_path = self.runtime_root / "models" / "Qwen3-4B-Q4_K_M.gguf"
-        self._process: subprocess.Popen[str] | None = None
+        self._process: subprocess.Popen[bytes] | None = None
         self._port = 0
+        self._log_path = self.portable_root / "data" / "logs" / "local-ai.log"
         self._lock = threading.RLock()
 
     @property
@@ -33,6 +34,17 @@ class LocalAIService:
         return self._process is not None and self._process.poll() is None and self._port > 0
 
     def complete(
+        self,
+        prompt: str,
+        *,
+        max_tokens: int = 700,
+        temperature: float = 0.15,
+        timeout: float = 120.0,
+    ) -> str:
+        with self._lock:
+            return self._complete(prompt, max_tokens=max_tokens, temperature=temperature, timeout=timeout)
+
+    def _complete(
         self,
         prompt: str,
         *,
@@ -83,6 +95,10 @@ class LocalAIService:
 
     def _ensure_started(self) -> None:
         with self._lock:
+            self._start()
+
+    def _start(self) -> None:
+        with self._lock:
             if self.running:
                 return
             if not self.model_path.is_file():
@@ -120,21 +136,19 @@ class LocalAIService:
             "1",
             "--no-webui",
         ]
-        if use_gpu:
-            command.extend(["--n-gpu-layers", "24"])
+        command.extend(["--n-gpu-layers", "24" if use_gpu else "0"])
         environment = dict(os.environ)
         environment["LLAMA_CACHE"] = str(self.runtime_root / "model-cache" / "llama")
-        process = subprocess.Popen(
-            command,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            env=environment,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        )
+        self._log_path.parent.mkdir(parents=True, exist_ok=True)
+        with self._log_path.open("wb") as output:
+            process = subprocess.Popen(
+                command,
+                stdin=subprocess.DEVNULL,
+                stdout=output,
+                stderr=subprocess.STDOUT,
+                env=environment,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
         with self._lock:
             self._process = process
             self._port = port
@@ -144,15 +158,15 @@ class LocalAIService:
             process = self._process
             self._process = None
             self._port = 0
-        if process is None:
-            return
-        if process.poll() is None:
-            process.terminate()
-            try:
-                process.wait(timeout=3)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait(timeout=2)
+            if process is None:
+                return
+            if process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=2)
 
     def _server_candidates(self) -> list[tuple[Path, bool]]:
         roots = [
@@ -176,11 +190,12 @@ class LocalAIService:
             process = self._process
             if process is None or process.poll() is not None:
                 output = ""
-                if process is not None and process.stdout is not None:
-                    try:
-                        output = process.stdout.read()[-3000:]
-                    except Exception:
-                        output = ""
+                try:
+                    with self._log_path.open("rb") as log:
+                        log.seek(max(0, self._log_path.stat().st_size - 3000))
+                        output = log.read(3000).decode("utf-8", errors="replace")
+                except OSError:
+                    pass
                 raise LocalAIError("Local model server exited during startup. " + output)
             try:
                 with urlopen(f"http://127.0.0.1:{self._port}/health", timeout=1.0) as response:

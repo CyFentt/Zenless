@@ -14,6 +14,7 @@ select = ["E4", "E7", "E9", "F", "I"]
 
 [tool.pyright]
 pythonVersion = "3.14"
+pythonPlatform = "Windows"
 typeCheckingMode = "basic"
 include = ["main.py", "zenless"]
 exclude = ["build", "dist", "artifacts", "tests", "zenless_studio.py"]

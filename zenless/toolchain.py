@@ -8,8 +8,8 @@ import subprocess
 import tarfile
 import tempfile
 import threading
-import urllib.request
 import urllib.parse
+import urllib.request
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path

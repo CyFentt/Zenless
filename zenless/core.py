@@ -108,7 +108,7 @@ class ZenlessCore:
         self.store = SQLiteStore(self.data_root / "zenless.db")
         self.storage = StorageManager(self.data_root)
         self.portable_root = Path(os.environ.get("RUBRA_HOME") or self.data_root.parent).expanduser().resolve()
-        self.project_index = ProjectIndexService(self.portable_root)
+        self.project_index = ProjectIndexService(self.portable_root, self.resource_root)
         self.local_ai = LocalAIService(self.portable_root)
         self.tool_registry = ToolRegistry(self.portable_root, self.resource_root)
         self._closing = threading.Event()
@@ -384,7 +384,9 @@ class ZenlessCore:
                 )
         effective_options = dict(options or {})
         current_settings = self.settings()
-        model_settings = current_settings.get("models") if isinstance(current_settings.get("models"), dict) else {}
+        model_settings = current_settings.get("models")
+        if not isinstance(model_settings, dict):
+            model_settings = {}
         effective_options.setdefault("smartRouting", bool(model_settings.get("smartRouting", True)))
         effective_options.setdefault("revisions", int(current_settings.get("maxRevisions", 3)))
         effective_options.setdefault(
@@ -911,10 +913,9 @@ class ZenlessCore:
         settings = self.settings()
         root = str(settings.get("projectRoot") or "").strip()
         try:
-            self.project_index.configure(root)
+            return self.project_index.status(project_root=root)
         except ProjectIndexError as exc:
             return {"configured": False, "projectRoot": root, "running": False, "result": "", "error": str(exc)}
-        return self.project_index.status()
 
     def reindex_project(self, *, incremental: bool = True) -> dict[str, Any]:
         settings = self.settings()
@@ -922,8 +923,7 @@ class ZenlessCore:
         if not root:
             raise CoreError("PROJECT_ROOT_REQUIRED", "Configure a project folder before indexing.", status=409)
         try:
-            self.project_index.configure(root)
-            return self.project_index.index(incremental=incremental)
+            return self.project_index.index(project_root=root, incremental=incremental)
         except ProjectIndexError as exc:
             raise CoreError("PROJECT_INDEX_FAILED", str(exc), status=503) from exc
 
@@ -933,8 +933,7 @@ class ZenlessCore:
         if not root:
             return {"projectRoot": "", "query": query, "result": "", "available": False}
         try:
-            self.project_index.configure(root)
-            return self.project_index.search(query, semantic=semantic, limit=limit)
+            return self.project_index.search(query, semantic=semantic, limit=limit, project_root=root)
         except ProjectIndexError as exc:
             raise CoreError("PROJECT_SEARCH_FAILED", str(exc), status=503) from exc
 
@@ -960,8 +959,7 @@ class ZenlessCore:
         if not root or not bool(settings.get("semanticIndex", True)):
             return
         try:
-            self.project_index.configure(root)
-            self.project_index.index(incremental=True)
+            self.project_index.index(project_root=root, incremental=True)
         except Exception as exc:
             self._report("index", "background", exc, "Project indexing is optional; configure a valid project folder or retry manually.")
 

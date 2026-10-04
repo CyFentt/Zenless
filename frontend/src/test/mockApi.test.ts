@@ -19,10 +19,10 @@ describe('MockZenlessAPI', () => {
     expect(conns.studio).toBeDefined();
   });
 
-  it('getAgents returns 4 agents', async () => {
+  it('getAgents returns the configured provider and Studio agents', async () => {
     const api = new MockZenlessAPI();
     const agents = await api.getAgents();
-    expect(agents).toHaveLength(4);
+    expect(agents.map((agent) => agent.id).sort()).toEqual(['chatgpt', 'deepseek', 'gemini', 'hunyuan', 'studio']);
     expect(agents.map((a) => a.id)).toContain('chatgpt');
     expect(agents.map((a) => a.id)).toContain('deepseek');
     expect(agents.map((a) => a.id)).toContain('hunyuan');
