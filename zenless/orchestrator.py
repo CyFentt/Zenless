@@ -486,6 +486,8 @@ class ZenlessOrchestrator:
                     self.store.update_task(task_id, proposal_json=proposal.to_dict())
                     continue
                 break
+        else:
+            self._record_auto_approval(task_id, "changes:auto", options.approval_mode)
 
         self._emit(task_id, Stage.APPLYING, "Applying the approved changes through the Studio bridge.")
         apply_evidence = self._apply_actions(task_id, target.studio_id, mutating)
@@ -521,7 +523,8 @@ class ZenlessOrchestrator:
                     proposal_json=repair.to_dict(),
                     review_json=repair_review.to_dict() if repair_review else {},
                 )
-                if self._requires_change_approval(options, repair_actions if 'repair_actions' in locals() else [action for action in repair.actions if not is_read_only(action.tool)], repair_review):
+                repair_actions = [action for action in repair.actions if not is_read_only(action.tool)]
+                if self._requires_change_approval(options, repair_actions, repair_review):
                     decision, note = self._wait_gate(
                         task_id,
                         f"repair:{fix_count}",
@@ -532,7 +535,8 @@ class ZenlessOrchestrator:
                     )
                     if decision != "approve":
                         raise TaskBlocked("The correction was not approved." + (f" {note}" if note else ""))
-                repair_actions = [action for action in repair.actions if not is_read_only(action.tool)]
+                else:
+                    self._record_auto_approval(task_id, f"repair:{fix_count}:auto", options.approval_mode)
                 self._bind_mutation_preconditions(task_id, target.studio_id, repair_actions)
                 apply_evidence.extend(self._apply_actions(task_id, target.studio_id, repair_actions))
                 proposal = repair
@@ -785,6 +789,11 @@ class ZenlessOrchestrator:
                         json.dumps(qa, ensure_ascii=False),
                     )
                     continue
+                if options.approval_mode == "full_auto":
+                    self._record_auto_approval(task_id, f"visual:{version}:auto", options.approval_mode)
+                    visual["status"] = "APPROVED"
+                    self.store.update_context_section(task_id, "visual", visual)
+                    break
                 decision, note = self._wait_gate(
                     task_id,
                     f"visual:{version}",
@@ -821,6 +830,11 @@ class ZenlessOrchestrator:
                     target,
                 )
                 detail = json.dumps(response, ensure_ascii=False)
+                if options.approval_mode == "full_auto":
+                    self._record_auto_approval(task_id, f"3d:{model_version}:auto", options.approval_mode)
+                    response["status"] = "APPROVED"
+                    self.store.update_context_section(task_id, "model", response)
+                    break
                 decision, note = self._wait_gate(
                     task_id,
                     f"3d:{model_version}",
@@ -1470,6 +1484,8 @@ class ZenlessOrchestrator:
                 )
                 if decision != "approve":
                     raise TaskBlocked("Final correction was not approved: " + note)
+            else:
+                self._record_auto_approval(task_id, f"final-repair:{revisions}:auto", options.approval_mode)
             self._emit(task_id, Stage.APPLYING, "Applying the approved final review correction.")
             mutation_evidence.extend(self._apply_actions(task_id, studio_id, repair_actions))
             proposal = repair
@@ -1616,7 +1632,7 @@ class ZenlessOrchestrator:
     def _record_auto_approval(self, task_id: str, gate: str, mode: str) -> None:
         note = f"Automatically approved by Rubra approval mode: {mode}."
         self.store.record_approval(task_id, gate, "approve", note)
-        self._emit(task_id, Stage.REVIEWING, note, "success")
+        self.store.append_message(task_id, "Rubra", "system", note)
 
     @staticmethod
     def _proposal_detail(proposal: AgentProposal, review: ReviewResult | None) -> str:
