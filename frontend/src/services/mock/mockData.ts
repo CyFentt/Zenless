@@ -281,6 +281,7 @@ export const mockSettings: Settings = {
     smartRouting: true,
   },
   autoApprove: false,
+  approvalMode: "ASK",
   maxRevisions: 3,
   projectRoot: "",
   semanticIndex: true,
