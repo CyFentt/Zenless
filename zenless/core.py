@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import mimetypes
+import os
 import threading
 import time
 import uuid
@@ -18,6 +19,7 @@ from .managed_browser import ManagedBrowserController
 from .models import PipelineEvent, Stage, TaskOptions
 from .orchestrator import OrchestratorError, ZenlessOrchestrator
 from .policy import is_read_only
+from .project_index import ProjectIndexError, ProjectIndexService
 from .qa_breaker import QABreaker
 from .storage import StorageManager
 from .store import SQLiteStore
@@ -80,6 +82,8 @@ class ZenlessCore:
         },
         "autoApprove": False,
         "maxRevisions": 3,
+        "projectRoot": "",
+        "semanticIndex": True,
         "bridgePort": 0,
     }
 
@@ -99,6 +103,8 @@ class ZenlessCore:
         self.events = EventBus()
         self.store = SQLiteStore(self.data_root / "zenless.db")
         self.storage = StorageManager(self.data_root)
+        self.portable_root = Path(os.environ.get("RUBRA_HOME") or self.data_root.parent).expanduser().resolve()
+        self.project_index = ProjectIndexService(self.portable_root)
         self._closing = threading.Event()
         self._startup_thread: threading.Thread | None = None
         self._provider_threads: dict[str, threading.Thread] = {}
@@ -163,6 +169,7 @@ class ZenlessCore:
             run_root=self.data_root / "runs",
             event_callback=self._on_pipeline_event,
             qa_callback=self.qa.run_for_orchestrator,
+            project_search_callback=self._project_search_for_orchestrator,
         )
         self._diagnostic_unsubscribe = self.diagnostics.subscribe(self._on_diagnostic)
 
@@ -187,6 +194,7 @@ class ZenlessCore:
         self.bridge.stop()
         self.orchestrator.wait_for_idle(3.0)
         self.studio.close()
+        self.project_index.close()
         with self._provider_lock:
             threads = tuple(self._provider_threads.values())
         for thread in threads:
@@ -768,6 +776,14 @@ class ZenlessCore:
             current["autoApprove"] = bool(patch["autoApprove"])
         if "maxRevisions" in patch:
             current["maxRevisions"] = max(1, min(64, int(patch["maxRevisions"])))
+        if "projectRoot" in patch:
+            project_root = str(patch["projectRoot"] or "").strip()
+            try:
+                current["projectRoot"] = self.project_index.configure(project_root)
+            except ProjectIndexError as exc:
+                raise CoreError("INVALID_PROJECT_ROOT", str(exc), status=400) from exc
+        if "semanticIndex" in patch:
+            current["semanticIndex"] = bool(patch["semanticIndex"])
         if "models" in patch and isinstance(patch["models"], dict):
             current["models"] = self._merge_models(current["models"], patch["models"])
         self.store.set_setting("ui.settings", current)
@@ -836,6 +852,54 @@ class ZenlessCore:
         self.events.publish("SETTINGS_CHANGED", {"settings": current})
         return True
 
+    def project_index_status(self) -> dict[str, Any]:
+        settings = self.settings()
+        root = str(settings.get("projectRoot") or "").strip()
+        try:
+            self.project_index.configure(root)
+        except ProjectIndexError as exc:
+            return {"configured": False, "projectRoot": root, "running": False, "result": "", "error": str(exc)}
+        return self.project_index.status()
+
+    def reindex_project(self, *, incremental: bool = True) -> dict[str, Any]:
+        settings = self.settings()
+        root = str(settings.get("projectRoot") or "").strip()
+        if not root:
+            raise CoreError("PROJECT_ROOT_REQUIRED", "Configure a project folder before indexing.", status=409)
+        try:
+            self.project_index.configure(root)
+            return self.project_index.index(incremental=incremental)
+        except ProjectIndexError as exc:
+            raise CoreError("PROJECT_INDEX_FAILED", str(exc), status=503) from exc
+
+    def search_project(self, query: str, *, semantic: bool = True, limit: int = 12) -> dict[str, Any]:
+        settings = self.settings()
+        root = str(settings.get("projectRoot") or "").strip()
+        if not root:
+            return {"projectRoot": "", "query": query, "result": "", "available": False}
+        try:
+            self.project_index.configure(root)
+            return self.project_index.search(query, semantic=semantic, limit=limit)
+        except ProjectIndexError as exc:
+            raise CoreError("PROJECT_SEARCH_FAILED", str(exc), status=503) from exc
+
+    def _project_search_for_orchestrator(self, query: str) -> dict[str, Any]:
+        settings = self.settings()
+        if not bool(settings.get("semanticIndex", True)):
+            return {"available": False, "result": ""}
+        return self.search_project(query, semantic=True, limit=12)
+
+    def _index_project_background(self) -> None:
+        settings = self.settings()
+        root = str(settings.get("projectRoot") or "").strip()
+        if not root or not bool(settings.get("semanticIndex", True)):
+            return
+        try:
+            self.project_index.configure(root)
+            self.project_index.index(incremental=True)
+        except Exception as exc:
+            self._report("index", "background", exc, "Project indexing is optional; configure a valid project folder or retry manually.")
+
     def diagnostics_payload(self) -> list[dict[str, Any]]:
         return [self._diagnostic_payload(event) for event in self.diagnostics.recent(200)]
 
@@ -870,6 +934,8 @@ class ZenlessCore:
                 "The embedded browser remains available; the managed browser will be prepared during login if needed.",
             )
         self._refresh_provider_states()
+        index_thread = threading.Thread(target=self._index_project_background, name="Rubra-Project-Index", daemon=True)
+        index_thread.start()
         try:
             self.refresh_studio()
             self._set_boot("STUDIO", "READY")
@@ -896,7 +962,7 @@ class ZenlessCore:
     def _refresh_provider_states(self) -> None:
         statuses = self.bridge.provider_status()
         any_ready = False
-        for provider in ("chatgpt", "deepseek", "hunyuan"):
+        for provider in ("chatgpt", "deepseek", "gemini", "hunyuan"):
             state = str(statuses.get(provider, {}).get("state", "OFF"))
             normalized = "LOGIN" if state.casefold() == "standby" else self._normalize_connection(state)
             self._set_connection(provider, normalized)
