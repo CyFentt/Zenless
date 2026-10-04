@@ -17,6 +17,7 @@ from .event_bus import EventBus
 from .orchestrator import AgentTransport, OrchestratorError, TaskCancelled
 from .protocol import ProtocolError, extract_json_object
 from .store import SQLiteStore
+from .static_quality import StaticQualityRunner
 from .studio_mcp import MCPError, MCPToolResult, StudioMCPClient, validate_json_schema
 
 MULTIPLAYER_HARNESS_PROTOCOL = "ZENLESS_QA_MULTIPLAYER_V1"
@@ -203,6 +204,7 @@ class QABreaker:
         tripwire: StudioMCPClient | None = None,
         capture_root: Path | None = None,
         local_ai_callback: Callable[[str], str] | None = None,
+        portable_root: Path | None = None,
     ) -> None:
         self.store = store
         self.studio = studio
@@ -212,6 +214,8 @@ class QABreaker:
         self.capture_root = (capture_root or Path.cwd() / "qa-captures").resolve()
         self.capture_root.mkdir(parents=True, exist_ok=True)
         self.local_ai_callback = local_ai_callback
+        self.portable_root = (portable_root or self.capture_root.parent.parent).resolve()
+        self.static_quality = StaticQualityRunner(self.portable_root)
         self.play_test_seconds = max(1.0, min(20.0, play_test_seconds))
         self._run_lock = threading.Lock()
         self._manual_lock = threading.Lock()
@@ -335,6 +339,22 @@ class QABreaker:
                         failures,
                         logs,
                         seed,
+                    )
+                )
+                self._enforce_bound(started_at, profile, cancel_event)
+
+                outcomes.append(
+                    self._run_case(
+                        run_id,
+                        job_id,
+                        "static-quality",
+                        "External Luau static quality gate",
+                        "STATIC",
+                        lambda: self._run_static_quality(job_id),
+                        failures,
+                        logs,
+                        seed,
+                        skip_is_ok=True,
                     )
                 )
                 self._enforce_bound(started_at, profile, cancel_event)
@@ -531,6 +551,7 @@ class QABreaker:
         scenarios = [
             "Validate approved mutation evidence",
             "Confirm Studio starts in Edit mode",
+            "Run pinned external static quality tools when a filesystem project is configured",
             "Start Play, collect Output, Stop, and reject runtime errors",
         ]
         if profile.name in {"STANDARD", "DEEP", "EXHAUSTIVE"}:
@@ -699,6 +720,22 @@ class QABreaker:
         if explicit_failure:
             return "FAILED", expected, text
         return "PASSED", expected, text or "Playtest subagent completed"
+
+    def _run_static_quality(self, job_id: str) -> tuple[str, str, str]:
+        expected = "Pinned external Roblox quality tools report no gating failures"
+        settings = self.store.get_setting("ui.settings", {})
+        project_root = str(settings.get("projectRoot") or "").strip() if isinstance(settings, dict) else ""
+        if not project_root:
+            return "SKIPPED", expected, "No filesystem project is configured for static quality tools"
+        project = Path(project_root).expanduser().resolve()
+        if not project.is_dir():
+            return "FAILED", expected, f"Configured project directory does not exist: {project}"
+        checks = self.static_quality.run(project)
+        lines = [f"{item.name}: {item.status}\n{item.output}" for item in checks]
+        failed = [item for item in checks if item.status == "FAILED"]
+        if failed:
+            return "FAILED", expected, "\n\n".join(lines)[-16000:]
+        return "PASSED", expected, "\n\n".join(lines)[-16000:]
 
     def _run_tripwire_security(self, job_id: str) -> tuple[str, str, str]:
         expected = "Tripwire reports zero unvalidated client-trust findings in the configured source tree"
