@@ -52,6 +52,18 @@ PROVIDERS: dict[str, ProviderSpec] = {
         (".ds-loading", "button[aria-label*='Stop']", "button[aria-label*='停止']", "button[class*='stop']"),
         (".ds-markdown", "[class*='markdown']", "[class*='message'][class*='assistant']"),
     ),
+    "gemini": ProviderSpec(
+        "gemini",
+        "https://gemini.google.com/app",
+        (".ql-editor[contenteditable='true']", "div[contenteditable='true']"),
+        (
+            "button[aria-label*='Send']",
+            "button[aria-label*='Enviar']",
+            "button.send-button",
+        ),
+        ("button[aria-label*='Stop']", "button[aria-label*='Parar']", "button.stop-button"),
+        ("model-response message-content", "model-response"),
+    ),
     "hunyuan": ProviderSpec(
         "hunyuan",
         "https://3d.hunyuan.tencent.com/",
