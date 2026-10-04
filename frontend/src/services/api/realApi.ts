@@ -13,6 +13,8 @@ import type {
   ModelCatalog,
   ModelInfo,
   ProviderId,
+  ProjectIndexStatus,
+  ProjectSearchResult,
   Review,
   Settings,
   StudioNode,
@@ -228,6 +230,14 @@ export class RealZenlessAPI implements ZenlessAPI {
   startTest(jobId: string): Promise<{ ok: boolean }> { return request(`/api/jobs/${encodeURIComponent(jobId)}/test`, { method: 'POST' }); }
   stopTest(jobId: string): Promise<{ ok: boolean }> { return request(`/api/jobs/${encodeURIComponent(jobId)}/test/stop`, { method: 'POST' }); }
   getTestState(jobId: string): Promise<TestState> { return request(`/api/jobs/${encodeURIComponent(jobId)}/test/state`); }
+
+  getProjectIndexStatus(): Promise<ProjectIndexStatus> { return request('/api/project/index'); }
+  reindexProject(incremental = true): Promise<{ projectRoot: string; result: string; indexed: boolean }> {
+    return request('/api/project/index', { method: 'POST', body: { incremental }, timeout: 900000 });
+  }
+  searchProject(query: string, semantic = true, limit = 12): Promise<ProjectSearchResult> {
+    return request(`/api/project/search?q=${encodeURIComponent(query)}&semantic=${semantic ? '1' : '0'}&limit=${Math.max(1, Math.min(30, limit))}`, { timeout: 120000 });
+  }
 
   getSettings(): Promise<Settings> { return request('/api/settings'); }
   updateSettings(partial: Partial<Settings>): Promise<Settings> { return request('/api/settings', { method: 'PATCH', body: partial }); }
