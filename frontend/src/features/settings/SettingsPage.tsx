@@ -103,6 +103,9 @@ function GeneralTab({ settings, onChange }: { settings: Settings | null; onChang
         <Row label="Semantic Index" hint="AST-aware local semantic and keyword index powered by mcp-code-search">
           <Toggle checked={settings.semanticIndex} onChange={(value) => void persist({ semanticIndex: value })} />
         </Row>
+        <Row label="Local Scout" hint="Use the bundled local Qwen model for lightweight planning and QA scenario generation">
+          <Toggle checked={settings.localAI} onChange={(value) => void persist({ localAI: value })} />
+        </Row>
         <Row label="Index" hint="Incrementally index changed project files">
           <button
             disabled={!settings.projectRoot || indexState === 'INDEXING'}
