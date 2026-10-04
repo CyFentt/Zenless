@@ -1,0 +1,90 @@
+name: Rubra CI
+
+on:
+  push:
+    branches:
+      - rubra
+  pull_request:
+    branches:
+      - main
+      - rubra
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rubra-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Python dependencies
+        run: python -m pip install --upgrade pip && python -m pip install -r requirements-dev.txt
+
+      - name: Python compile
+        run: python -m compileall -q main.py zenless
+
+      - name: Ruff
+        run: python -m ruff check .
+
+      - name: Pyright
+        run: python -m pyright
+
+      - name: Pytest
+        run: python -m pytest -o addopts= -q
+
+      - name: Frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: ESLint
+        working-directory: frontend
+        run: npm run lint
+
+      - name: TypeScript
+        working-directory: frontend
+        run: npm run typecheck
+
+      - name: Vitest
+        working-directory: frontend
+        run: npm run test
+
+      - name: Production frontend
+        working-directory: frontend
+        env:
+          VITE_ZENLESS_MOCK: "false"
+        run: npm run build
+
+      - name: PyInstaller
+        run: python -m PyInstaller --clean --noconfirm Rubra.spec
+
+      - name: Upload Rubra
+        uses: actions/upload-artifact@v5
+        with:
+          name: Rubra-Windows
+          path: dist/Rubra.exe
+          if-no-files-found: error
+          retention-days: 7
