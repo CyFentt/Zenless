@@ -60,6 +60,36 @@ export function TaskOptionsPanel({ options, onChange, onClose }: Props) {
             }}
           />
         </OptionRow>
+        <OptionRow label="Effort" hint="Controls planning depth, context reads, and QA depth">
+          <Select
+            value={options.effort ?? 'AUTO'}
+            options={[
+              { id: 'AUTO', label: 'AUTO' },
+              { id: 'MIN', label: 'MIN' },
+              { id: 'MED', label: 'MED' },
+              { id: 'MAX', label: 'MAX' },
+            ]}
+            onChange={(value) => set('effort', value as TaskOptions['effort'])}
+          />
+        </OptionRow>
+        <OptionRow label="Research" hint="AUTO routes complex tasks through Gemini and the local scout when useful">
+          <Select
+            value={options.research ?? 'AUTO'}
+            options={[
+              { id: 'AUTO', label: 'AUTO' },
+              { id: 'ON', label: 'ON' },
+              { id: 'OFF', label: 'OFF' },
+            ]}
+            onChange={(value) => set('research', value as TaskOptions['research'])}
+          />
+        </OptionRow>
+        <OptionRow label="Verify" hint="Continue repair and verification cycles until convergence or the hard safety cap">
+          <Toggle
+            checked={options.continuousVerification ?? true}
+            onChange={(value) => set('continuousVerification', value)}
+            label="Verify"
+          />
+        </OptionRow>
         <OptionRow label="Risk" hint="Risk tolerance for generated changes">
           <Select
             value={options.risk}
