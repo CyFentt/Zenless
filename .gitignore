@@ -11,3 +11,6 @@ __pycache__/
 build/
 dist/
 artifacts/
+data/
+runtime/
+frontend/dist/
