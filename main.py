@@ -8,14 +8,18 @@ from pathlib import Path
 from typing import TextIO
 
 
-def _data_root() -> Path:
-    override = os.environ.get("ZENLESS_DATA_ROOT", "").strip()
+def _portable_root() -> Path:
+    override = os.environ.get("RUBRA_HOME", "").strip()
     if override:
-        path = Path(override).expanduser().resolve()
-        path.mkdir(parents=True, exist_ok=True)
-        return path
-    base = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
-    path = Path(base) / "Zenless"
+        return Path(override).expanduser().resolve()
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent
+
+
+def _data_root() -> Path:
+    override = os.environ.get("RUBRA_DATA_ROOT", "").strip()
+    path = Path(override).expanduser().resolve() if override else _portable_root() / "data"
     path.mkdir(parents=True, exist_ok=True)
     return path
 
@@ -47,8 +51,18 @@ def main() -> int:
 
         splash = NativeSplash()
         splash.show()
-        splash.update("CORE", "initializing local runtime")
+        splash.update("CORE", "initializing portable runtime")
+        from zenless.toolchain import ToolchainManager
         from zenless.web_app import run_web_app
+
+        if "--no-toolchain" not in sys.argv:
+            toolchain = ToolchainManager(
+                resource_root=_resource_root(),
+                portable_root=_portable_root(),
+                status_callback=splash.update,
+            )
+            toolchain.ensure_default()
+            os.environ.update(toolchain.environment())
 
         try:
             return run_web_app(
@@ -67,14 +81,14 @@ def main() -> int:
                 component="web-app",
                 message=str(exc),
                 exc=exc,
-                impact="Zenless could not open the WebView2 interface.",
+                impact="Rubra could not open the WebView2 interface.",
                 recovery_action="Review startup-error.log; automatic provisioning can be retried.",
             )
             (_data_root() / "startup-error.log").write_text(traceback.format_exc(), encoding="utf-8")
             try:
                 import ctypes
 
-                ctypes.windll.user32.MessageBoxW(0, f"Zenless failed to start:\n{exc}", "Zenless", 0x10)
+                ctypes.windll.user32.MessageBoxW(0, f"Rubra failed to start:\n{exc}", "Rubra", 0x10)
             except Exception:
                 pass
             return 1
