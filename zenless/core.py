@@ -158,11 +158,26 @@ class ZenlessCore:
             self._connections["studio"] = "OFF"
             self._set_boot("STUDIO", "OFF")
 
+        tripwire_root = self.portable_root / "runtime" / "tools" / "tripwire"
+        tripwire_executable = next(tripwire_root.rglob("tripwire-server.exe"), None) if tripwire_root.exists() else None
+        self.tripwire: StudioMCPClient | None = (
+            StudioMCPClient(
+                tripwire_executable,
+                client_name="Rubra Tripwire",
+                client_version="1.0.0",
+                startup_timeout=60,
+            )
+            if tripwire_executable is not None
+            else None
+        )
+
         self.qa = QABreaker(
             store=self.store,
             studio=self.studio,
             bridge=self.bridge,
             events=self.events,
+            tripwire=self.tripwire,
+            capture_root=self.data_root / "qa-captures",
         )
         self.orchestrator = ZenlessOrchestrator(
             store=self.store,
@@ -196,6 +211,8 @@ class ZenlessCore:
         self.bridge.stop()
         self.orchestrator.wait_for_idle(3.0)
         self.studio.close()
+        if self.tripwire is not None:
+            self.tripwire.close()
         self.project_index.close()
         with self._provider_lock:
             threads = tuple(self._provider_threads.values())
