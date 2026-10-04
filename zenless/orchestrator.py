@@ -444,7 +444,7 @@ class ZenlessOrchestrator:
         self._bind_mutation_preconditions(task_id, target.studio_id, mutating)
         self.store.update_task(task_id, proposal_json=proposal.to_dict())
 
-        if options.require_approval:
+        if self._requires_change_approval(options, mutating, review):
             gate_round = 0
             while True:
                 gate_round += 1
@@ -521,7 +521,7 @@ class ZenlessOrchestrator:
                     proposal_json=repair.to_dict(),
                     review_json=repair_review.to_dict() if repair_review else {},
                 )
-                if options.require_approval:
+                if self._requires_change_approval(options, repair_actions if 'repair_actions' in locals() else [action for action in repair.actions if not is_read_only(action.tool)], repair_review):
                     decision, note = self._wait_gate(
                         task_id,
                         f"repair:{fix_count}",
@@ -1459,7 +1459,7 @@ class ZenlessOrchestrator:
                 proposal_json=repair.to_dict(),
                 review_json=repair_review.to_dict() if repair_review else {},
             )
-            if options.require_approval:
+            if self._requires_change_approval(options, repair_actions, repair_review):
                 decision, note = self._wait_gate(
                     task_id,
                     f"final-repair:{revisions}",
@@ -1593,6 +1593,30 @@ class ZenlessOrchestrator:
         if not output.strip():
             return False
         return bool(re.search(r"(?im)(\bexception\b|\btraceback\b|stack begin|(^|\s)error[:\s])", output))
+
+    def _requires_change_approval(
+        self,
+        options: TaskOptions,
+        actions: list[ProposalAction],
+        review: ReviewResult | None,
+    ) -> bool:
+        mode = options.approval_mode
+        if mode == "full_auto":
+            return False
+        if mode == "ask":
+            return True
+        if review is None or not review.approved or review.confidence < 0.75:
+            return True
+        for action in actions:
+            decision = classify_action(action, set(self.studio.tools))
+            if not decision.allowed or decision.risk not in {"low", "medium"}:
+                return True
+        return False
+
+    def _record_auto_approval(self, task_id: str, gate: str, mode: str) -> None:
+        note = f"Automatically approved by Rubra approval mode: {mode}."
+        self.store.record_approval(task_id, gate, "approve", note)
+        self._emit(task_id, Stage.REVIEWING, note, "success")
 
     @staticmethod
     def _proposal_detail(proposal: AgentProposal, review: ReviewResult | None) -> str:
