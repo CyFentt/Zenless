@@ -109,6 +109,7 @@ export interface Job {
 
 export type EffortLevel = "AUTO" | "MIN" | "MED" | "MAX";
 export type ChatMode = "PROJECT" | "TEMP";
+export type ApprovalMode = "ASK" | "SAFE_AUTO" | "FULL_AUTO";
 
 export interface TaskOptions {
   visualFirst: boolean;
@@ -117,6 +118,7 @@ export interface TaskOptions {
   autoTest: boolean;
   autoFix: boolean;
   approval: boolean;
+  approvalMode: ApprovalMode;
   risk: "low" | "medium" | "high";
   revisions: number;
   fixAttempts: number;
@@ -133,6 +135,7 @@ export const DEFAULT_TASK_OPTIONS: TaskOptions = {
   autoTest: true,
   autoFix: true,
   approval: true,
+  approvalMode: "ASK",
   risk: "medium",
   revisions: 3,
   fixAttempts: 3,
