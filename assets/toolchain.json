@@ -182,6 +182,30 @@
       "critical": true,
       "flatten": true,
       "marker": "uv.exe"
+    },
+    {
+      "id": "pesde",
+      "group": "roblox",
+      "name": "pesde 0.7.4",
+      "kind": "zip",
+      "url": "https://github.com/pesde-pkg/pesde/releases/download/v0.7.4%2Bregistry.0.2.3/pesde-0.7.4-windows-x86_64.zip",
+      "sha256": "d0ff842217fd4ff462253e7f82653eb9b9fe9bfcac3e7aa1edf97078f127c3c1",
+      "target": "runtime/tools/pesde",
+      "critical": false,
+      "flatten": true,
+      "marker": "pesde.exe"
+    },
+    {
+      "id": "darklua",
+      "group": "quality",
+      "name": "darklua 0.19.0",
+      "kind": "zip",
+      "url": "https://github.com/seaofvoices/darklua/releases/download/v0.19.0/darklua-windows-x86_64.zip",
+      "sha256": "e099313a768a0628bce861123dff6959f0c7dc49b5c353d9523a144c1fa2124e",
+      "target": "runtime/tools/darklua",
+      "critical": false,
+      "flatten": true,
+      "marker": "darklua.exe"
     }
   ],
   "npm": [
@@ -306,6 +330,12 @@
       "repo": "seaofvoices/darklua",
       "commit": "83a3a9d0a241fb193140807e4e77e81545f6f60d",
       "target": "runtime/sources/darklua"
+    },
+    {
+      "id": "pesde",
+      "repo": "pesde-pkg/pesde",
+      "commit": "d0f910c629b5d5e0359cf10e740f02b0d32a16cf",
+      "target": "runtime/sources/pesde"
     }
   ]
 }
