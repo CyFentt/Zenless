@@ -410,6 +410,7 @@ export interface Settings {
   maxRevisions: number;
   projectRoot: string;
   semanticIndex: boolean;
+  localAI: boolean;
   bridgePort: number;
 }
 
