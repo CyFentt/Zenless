@@ -46,6 +46,9 @@ class ToolchainManager:
         with self._lock:
             results: list[InstallResult] = []
             for item in self.manifest.get("artifacts", []):
+                if item.get("auto", True) is False:
+                    results.append(InstallResult(str(item["id"]), "optional", "Available on demand"))
+                    continue
                 if not self._eligible(item):
                     results.append(InstallResult(str(item["id"]), "skipped", "Hardware threshold not met"))
                     continue
@@ -57,6 +60,9 @@ class ToolchainManager:
                     if item.get("critical"):
                         raise
             for item in self.manifest.get("sources", []):
+                if item.get("auto", True) is False:
+                    results.append(InstallResult(str(item["id"]), "optional", "Available on demand"))
+                    continue
                 try:
                     path = self._ensure_source(item)
                     results.append(InstallResult(str(item["id"]), "ready", "Pinned source ready", str(path)))
@@ -65,6 +71,27 @@ class ToolchainManager:
             self._ensure_npm_packages(results)
             self._save_state()
             return results
+
+    def install(self, item_id: str) -> InstallResult:
+        target_id = item_id.strip()
+        if not target_id:
+            raise ToolchainError("Tool ID is empty.")
+        with self._lock:
+            for item in self.manifest.get("artifacts", []):
+                if str(item.get("id") or "") != target_id:
+                    continue
+                if not self._eligible(item):
+                    raise ToolchainError(f"Hardware threshold not met for {target_id}.")
+                path = self._ensure_artifact(item)
+                self._save_state()
+                return InstallResult(target_id, "ready", "Verified and ready", str(path))
+            for item in self.manifest.get("sources", []):
+                if str(item.get("id") or "") != target_id:
+                    continue
+                path = self._ensure_source(item)
+                self._save_state()
+                return InstallResult(target_id, "ready", "Pinned source ready", str(path))
+        raise ToolchainError(f"Unknown tool or source: {target_id}")
 
     def environment(self) -> dict[str, str]:
         env = dict(os.environ)
@@ -180,6 +207,9 @@ class ToolchainManager:
             package_json.write_text('{"private":true}', encoding="utf-8")
         for item in self.manifest.get("npm", []):
             item_id = str(item["id"])
+            if item.get("auto", True) is False:
+                results.append(InstallResult(item_id, "optional", "Available on demand"))
+                continue
             package = str(item["package"])
             marker = prefix / ".rubra-packages" / item_id
             if marker.is_file() and marker.read_text(encoding="utf-8").strip() == package:
