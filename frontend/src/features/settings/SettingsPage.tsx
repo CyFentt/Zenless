@@ -52,6 +52,13 @@ export function SettingsPage() {
 }
 
 function GeneralTab({ settings, onChange }: { settings: Settings | null; onChange: (s: Settings) => void }) {
+  const [projectDraft, setProjectDraft] = useState(settings?.projectRoot ?? '');
+  const [indexState, setIndexState] = useState<'IDLE' | 'INDEXING' | 'READY' | 'ERROR'>('IDLE');
+
+  useEffect(() => {
+    setProjectDraft(settings?.projectRoot ?? '');
+  }, [settings?.projectRoot]);
+
   if (!settings) return <EmptyState />;
 
   const persist = async (patch: Partial<Settings>) => {
@@ -74,10 +81,44 @@ function GeneralTab({ settings, onChange }: { settings: Settings | null; onChang
             type="number"
             value={settings.maxRevisions}
             min={1}
-            max={10}
+            max={64}
             onChange={(event) => void persist({ maxRevisions: Number.parseInt(event.target.value, 10) || 1 })}
             className="w-12 h-6 text-2xs text-center text-ink-50 bg-ink-800 border border-ink-600 focus:border-ink-500"
           />
+        </Row>
+      </Section>
+      <Section title="PROJECT">
+        <Row label="Folder" hint="Rojo or local project folder used for semantic code indexing">
+          <input
+            value={projectDraft}
+            onChange={(event) => setProjectDraft(event.target.value)}
+            onBlur={() => {
+              if (projectDraft.trim() !== settings.projectRoot) void persist({ projectRoot: projectDraft.trim() });
+            }}
+            spellCheck={false}
+            placeholder="C:\\path\\to\\game"
+            className="w-64 h-6 px-2 text-2xs font-mono text-ink-50 bg-ink-800 border border-ink-600 focus:border-zen-red"
+          />
+        </Row>
+        <Row label="Semantic Index" hint="AST-aware local semantic and keyword index powered by mcp-code-search">
+          <Toggle checked={settings.semanticIndex} onChange={(value) => void persist({ semanticIndex: value })} />
+        </Row>
+        <Row label="Index" hint="Incrementally index changed project files">
+          <button
+            disabled={!settings.projectRoot || indexState === 'INDEXING'}
+            onClick={() => {
+              setIndexState('INDEXING');
+              void getApi().reindexProject(true)
+                .then(() => setIndexState('READY'))
+                .catch((error) => {
+                  setIndexState('ERROR');
+                  frontendDiagnostics.capture(error, 'settings', 'Project indexing failed');
+                });
+            }}
+            className="h-6 px-2 text-2xs uppercase tracking-wider border border-ink-600 text-ink-100 hover:border-zen-red hover:text-ink-0 disabled:opacity-40 transition-colors"
+          >
+            {indexState === 'INDEXING' ? 'INDEXING' : indexState === 'READY' ? 'READY' : indexState === 'ERROR' ? 'RETRY' : 'INDEX'}
+          </button>
         </Row>
       </Section>
       <Section title="CONNECTION">
