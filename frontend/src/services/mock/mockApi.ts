@@ -368,7 +368,7 @@ export class MockZenlessAPI implements ZenlessAPI {
     await delay(50);
     return clone(mockModelCatalog);
   }
-  async setModel(agent: "chatgpt" | "deepseek" | "hunyuan", model: string) {
+  async setModel(agent: "chatgpt" | "deepseek" | "gemini" | "hunyuan", model: string) {
     await delay(50);
     if (agent === "hunyuan") this.settings.models.hunyuan.version = model;
     else this.settings.models[agent].model = model;
