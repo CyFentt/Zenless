@@ -31,6 +31,7 @@ export const mockConnections: ConnectionInfo = {
   browser: 'READY',
   chatgpt: 'READY',
   deepseek: 'READY',
+  gemini: 'READY',
   hunyuan: 'LOGIN',
   studio: 'OFF',
 };
@@ -38,6 +39,7 @@ export const mockConnections: ConnectionInfo = {
 export const mockAgents: AgentInfo[] = [
   { id: 'chatgpt', name: 'ChatGPT', status: 'READY', model: 'chatgpt-default', reasoning: true },
   { id: 'deepseek', name: 'DeepSeek', status: 'READY', model: 'deepseek-default', reasoning: true },
+  { id: 'gemini', name: 'Gemini', status: 'READY', model: 'auto', reasoning: true },
   { id: 'hunyuan', name: 'Hunyuan', status: 'LOGIN', version: 'hunyuan-current', quality: 'standard' },
   { id: 'studio', name: 'Studio', status: 'OFF' },
 ];
