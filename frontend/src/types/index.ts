@@ -1,7 +1,7 @@
 export type ConnectionStatus = "READY" | "CONNECTING" | "LOGIN" | "OFF" | "ERR";
 export type SocketStatus = "CONNECTING" | "CONNECTED" | "RECONNECTING" | "DISCONNECTED";
 
-export type AgentId = "chatgpt" | "deepseek" | "hunyuan" | "studio";
+export type AgentId = "chatgpt" | "deepseek" | "gemini" | "hunyuan" | "studio";
 export type ProviderId = Extract<AgentId, "chatgpt" | "deepseek" | "hunyuan">;
 
 export type ProviderRole = "BUILDER" | "REVIEWER" | "VISUAL" | "THREED";
@@ -19,6 +19,7 @@ export interface AgentInfo {
 export const PROVIDER_NAMES: Record<ProviderId, string> = {
   chatgpt: "ChatGPT",
   deepseek: "DeepSeek",
+  gemini: "Gemini",
   hunyuan: "Hunyuan",
 };
 
@@ -32,6 +33,7 @@ export const AGENT_NAMES: Record<AgentId, string> = {
 export const AGENT_ROLES: Record<AgentId, string> = {
   chatgpt: "BUILDER",
   deepseek: "REVIEWER",
+  gemini: "RESEARCH",
   hunyuan: "3D GENERATOR",
   studio: "EDITOR",
 };
@@ -388,6 +390,7 @@ export interface ModelOption {
 export interface ModelSettings {
   chatgpt: { model: string; reasoning: boolean };
   deepseek: { model: string; reasoning: boolean };
+  gemini: { model: string; reasoning: boolean };
   hunyuan: { version: string; quality: string };
   smartRouting: boolean;
 }
@@ -395,6 +398,7 @@ export interface ModelSettings {
 export interface ModelCatalog {
   chatgpt: { models: ModelOption[]; reasoningOptions?: ModelOption[] };
   deepseek: { models: ModelOption[]; reasoningOptions?: ModelOption[] };
+  gemini: { models: ModelOption[]; reasoningOptions?: ModelOption[] };
   hunyuan: { versions: ModelOption[]; qualities: ModelOption[] };
 }
 
@@ -432,6 +436,7 @@ export interface ConnectionInfo {
   browser: ConnectionStatus;
   chatgpt: ConnectionStatus;
   deepseek: ConnectionStatus;
+  gemini: ConnectionStatus;
   hunyuan: ConnectionStatus;
   studio: ConnectionStatus;
 }
