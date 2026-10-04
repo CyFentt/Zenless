@@ -111,7 +111,7 @@ class ToolchainManager:
     def _ensure_artifact(self, item: dict[str, Any]) -> Path:
         item_id = str(item["id"])
         target = self.portable_root / str(item["target"])
-        if self._target_ready(target, str(item.get("marker") or ""), str(item.get("kind") or "")):
+        if self._artifact_ready(item, target):
             return target
         self._status(item_id, f"Installing {item.get('name', item_id)}")
         url = str(item["url"])
@@ -132,7 +132,17 @@ class ToolchainManager:
             os.replace(temporary, target)
         else:
             self._extract_atomic(archive, target, kind, bool(item.get("flatten")))
-        self._state[item_id] = {"url": url, "sha256": expected, "target": str(target)}
+        marker_path = self._marker_path(target, str(item.get("marker") or ""), kind)
+        marker_sha = self._sha256(marker_path) if marker_path is not None and marker_path.is_file() else ""
+        size = target.stat().st_size if target.is_file() else 0
+        self._state[item_id] = {
+            "url": url,
+            "sha256": expected,
+            "target": str(target),
+            "markerSha256": marker_sha,
+            "size": size,
+        }
+        archive.unlink(missing_ok=True)
         return target
 
     def _ensure_source(self, item: dict[str, Any]) -> Path:
@@ -153,6 +163,7 @@ class ToolchainManager:
         self._download(f"https://github.com/{repo}/archive/{commit}.zip", archive)
         self._extract_atomic(archive, target, "zip", True)
         marker.write_text(json.dumps({"repo": repo, "commit": commit}, indent=2), encoding="utf-8")
+        archive.unlink(missing_ok=True)
         return target
 
     def _ensure_npm_packages(self, results: list[InstallResult]) -> None:
@@ -264,13 +275,54 @@ class ToolchainManager:
             members.append(member)
         bundle.extractall(target, members=members)
 
-    @staticmethod
-    def _target_ready(target: Path, marker: str, kind: str) -> bool:
-        if kind == "raw":
-            return target.is_file()
-        if not target.exists():
+    def _artifact_ready(self, item: dict[str, Any], target: Path) -> bool:
+        item_id = str(item.get("id") or "")
+        kind = str(item.get("kind") or "")
+        marker = str(item.get("marker") or "")
+        marker_path = self._marker_path(target, marker, kind)
+        if marker_path is None or not marker_path.is_file():
             return False
-        return not marker or (target / marker).is_file() or next(target.rglob(marker), None) is not None
+        expected = str(item.get("sha256") or "").lower()
+        state = self._state.get(item_id)
+        if not expected or not isinstance(state, dict):
+            return False
+        if str(state.get("sha256") or "").lower() != expected:
+            return False
+        if str(state.get("target") or "") != str(target):
+            return False
+        if kind == "raw":
+            try:
+                size = target.stat().st_size
+            except OSError:
+                return False
+            recorded_size = int(state.get("size") or 0)
+            if recorded_size and size != recorded_size:
+                return False
+            if size <= 128 * 1024 * 1024:
+                return self._sha256(target) == expected
+            return True
+        recorded_marker_sha = str(state.get("markerSha256") or "").lower()
+        if not recorded_marker_sha:
+            return False
+        try:
+            if marker_path.stat().st_size > 128 * 1024 * 1024:
+                return True
+        except OSError:
+            return False
+        return self._sha256(marker_path) == recorded_marker_sha
+
+    @staticmethod
+    def _marker_path(target: Path, marker: str, kind: str) -> Path | None:
+        if kind == "raw":
+            return target if target.is_file() else None
+        if not target.exists():
+            return None
+        if not marker:
+            return target if target.is_file() else None
+        direct = target / marker
+        if direct.is_file():
+            return direct
+        return next(target.rglob(marker), None)
 
     @staticmethod
     def _sha256(path: Path) -> str:
