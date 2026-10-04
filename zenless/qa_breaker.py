@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import hashlib
 import json
 import math
@@ -470,7 +471,7 @@ class QABreaker:
                 self.events.publish("TEST_FINISHED", {"passed": passed, "jobId": job_id})
                 joined = "\n".join(logs)[-20_000:]
                 if failures:
-                    return "ERROR: QA Breaker encontrou falhas.\n" + joined
+                    return "ERROR: QA Breaker found failures.\n" + joined
                 return joined or "QA completed without detected errors."
             except TaskCancelled:
                 self.store.finish_test_run(run_id, "CANCELLED", {"profile": profile.name, "seed": seed})
@@ -678,7 +679,7 @@ class QABreaker:
         normalized = text.casefold()
         explicit_failure = any(
             token in normalized
-            for token in (""passed":false", ""success":false", "verdict: fail", "status: failed", "test failed")
+            for token in ('"passed":false', '"success":false', "verdict: fail", "status: failed", "test failed")
         )
         if explicit_failure:
             return "FAILED", expected, text
@@ -808,7 +809,7 @@ class QABreaker:
             return None
         try:
             payload = base64.b64decode(data, validate=True)
-        except ValueError:
+        except (ValueError, binascii.Error):
             return None
         if not payload or len(payload) > 24 * 1024 * 1024:
             return None
@@ -947,7 +948,7 @@ class QABreaker:
                 expected=expected,
                 actual=actual,
                 seed=seed,
-                reproduction=[f"Execute o perfil QA e reproduza: {name}"],
+                reproduction=[f"Run the QA profile and reproduce: {name}"],
                 evidence=[actual[-4000:]],
                 probable_area=suite,
             )
@@ -966,7 +967,7 @@ class QABreaker:
                         "expected": expected,
                         "actual": actual,
                         "cause": failure.probable_area,
-                        "recovery": "Corrigir pelo fluxo Builder -> Reviewer -> safety gate e repetir este caso.",
+                        "recovery": "Fix through Builder -> Reviewer -> safety gate and rerun this case.",
                     },
                 },
             )
