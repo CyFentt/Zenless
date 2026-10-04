@@ -182,6 +182,7 @@ class ZenlessCore:
             tripwire=self.tripwire,
             capture_root=self.data_root / "qa-captures",
             local_ai_callback=self._local_ai_complete,
+            portable_root=self.portable_root,
         )
         self.orchestrator = ZenlessOrchestrator(
             store=self.store,
@@ -200,7 +201,7 @@ class ZenlessCore:
             return
         self._startup_thread = threading.Thread(
             target=self._start_services,
-            name="Zenless-Core-Startup",
+            name="Rubra-Core-Startup",
             daemon=True,
         )
         self._startup_thread.start()
@@ -297,7 +298,7 @@ class ZenlessCore:
             thread = threading.Thread(
                 target=self._login_worker,
                 args=(provider,),
-                name=f"Zenless-Login-{provider}",
+                name=f"Rubra-Login-{provider}",
                 daemon=True,
             )
             self._provider_threads[provider] = thread
