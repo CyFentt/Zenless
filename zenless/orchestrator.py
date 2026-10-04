@@ -1673,9 +1673,16 @@ class ZenlessOrchestrator:
             return False
         if mode == "ask":
             return True
-        if review is None or not review.approved or review.confidence < 0.75:
+        if (
+            review is None
+            or not review.approved
+            or review.confidence < 0.75
+            or review.risk not in {"low", "medium"}
+        ):
             return True
         for action in actions:
+            if action.risk not in {"low", "medium"}:
+                return True
             decision = classify_action(action, set(self.studio.tools))
             if not decision.allowed or decision.risk not in {"low", "medium"}:
                 return True
