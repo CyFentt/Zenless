@@ -68,6 +68,8 @@ class ZenlessBrain:
             name for name, markers in self._SCOPES.items() if any(marker in normalized for marker in markers)
         )
         providers = ["chatgpt"]
+        if any(intent in {"debug", "test", "visual", "3d", "audit"} for intent in intents):
+            providers.append("gemini")
         if independent_review:
             providers.append("deepseek")
         if create_3d or "3d" in intents:
