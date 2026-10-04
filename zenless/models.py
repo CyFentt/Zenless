@@ -171,6 +171,7 @@ class TaskOptions:
     automatic_play_test: bool = True
     auto_fix_errors: bool = True
     require_approval: bool = True
+    approval_mode: str = "ask"
     max_revisions: int = 3
     max_test_fixes: int = 3
     continuous_verification: bool = True
@@ -195,6 +196,10 @@ class TaskOptions:
             automatic_play_test=bool(raw.get("Automatic Play Test", True)),
             auto_fix_errors=bool(raw.get("Auto Fix Errors", True)),
             require_approval=bool(raw.get("Require Approval Before Studio Changes", True)),
+            approval_mode=cls._approval_mode(
+                raw.get("Approval Mode"),
+                "ask" if bool(raw.get("Require Approval Before Studio Changes", True)) else "full_auto",
+            ),
             max_revisions=bounded_int("Max Revisions", 3),
             max_test_fixes=bounded_int("Max Test Fixes", 3),
             continuous_verification=bool(raw.get("Continuous Verification", True)),
@@ -212,13 +217,19 @@ class TaskOptions:
                 return default
 
         create_3d_asset = bool(source.get("create3D", True))
+        legacy_approval = bool(source.get("approval", True))
+        approval_mode = cls._approval_mode(
+            source.get("approvalMode"),
+            "ask" if legacy_approval else "full_auto",
+        )
         return cls(
             visual_first=bool(source.get("visualFirst", True)) or create_3d_asset,
             create_3d_asset=create_3d_asset,
             independent_review=bool(source.get("review", True)),
             automatic_play_test=bool(source.get("autoTest", True)),
             auto_fix_errors=bool(source.get("autoFix", True)),
-            require_approval=bool(source.get("approval", True)),
+            require_approval=approval_mode != "full_auto",
+            approval_mode=approval_mode,
             max_revisions=bounded_int("revisions", 3),
             max_test_fixes=bounded_int("fixAttempts", 3),
             continuous_verification=bool(source.get("continuousVerification", True)),
@@ -229,6 +240,20 @@ class TaskOptions:
     def _risk(value: Any) -> str:
         normalized = str(value).strip().casefold()
         return normalized if normalized in {"low", "medium", "high"} else "medium"
+
+    @staticmethod
+    def _approval_mode(value: Any, fallback: str = "ask") -> str:
+        normalized = str(value or fallback).strip().casefold().replace("-", "_").replace(" ", "_")
+        aliases = {
+            "manual": "ask",
+            "always_ask": "ask",
+            "safe": "safe_auto",
+            "automatic": "full_auto",
+            "auto": "full_auto",
+            "full": "full_auto",
+        }
+        normalized = aliases.get(normalized, normalized)
+        return normalized if normalized in {"ask", "safe_auto", "full_auto"} else fallback
 
 
 @dataclass(slots=True)
