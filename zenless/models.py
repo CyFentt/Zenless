@@ -173,6 +173,7 @@ class TaskOptions:
     require_approval: bool = True
     max_revisions: int = 3
     max_test_fixes: int = 3
+    continuous_verification: bool = True
     risk_level: str = "medium"
 
     def to_dict(self) -> dict[str, Any]:
@@ -182,7 +183,7 @@ class TaskOptions:
     def from_ui(cls, raw: dict[str, Any]) -> "TaskOptions":
         def bounded_int(key: str, default: int) -> int:
             try:
-                return max(1, min(5, int(raw.get(key, default))))
+                return max(1, min(64, int(raw.get(key, default))))
             except TypeError, ValueError:
                 return default
 
@@ -196,6 +197,7 @@ class TaskOptions:
             require_approval=bool(raw.get("Require Approval Before Studio Changes", True)),
             max_revisions=bounded_int("Max Revisions", 3),
             max_test_fixes=bounded_int("Max Test Fixes", 3),
+            continuous_verification=bool(raw.get("Continuous Verification", True)),
             risk_level=cls._risk(raw.get("Risk", raw.get("Risk Level", "medium"))),
         )
 
@@ -205,7 +207,7 @@ class TaskOptions:
 
         def bounded_int(key: str, default: int) -> int:
             try:
-                return max(1, min(5, int(source.get(key, default))))
+                return max(1, min(64, int(source.get(key, default))))
             except TypeError, ValueError:
                 return default
 
@@ -219,6 +221,7 @@ class TaskOptions:
             require_approval=bool(source.get("approval", True)),
             max_revisions=bounded_int("revisions", 3),
             max_test_fixes=bounded_int("fixAttempts", 3),
+            continuous_verification=bool(source.get("continuousVerification", True)),
             risk_level=cls._risk(source.get("risk", "medium")),
         )
 
