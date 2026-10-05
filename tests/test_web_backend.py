@@ -123,6 +123,8 @@ class WebBackendTests(unittest.TestCase):
                 token = str(session["token"])
                 headers = {"X-Rubra-Token": token, "Origin": base}
                 self.assertTrue(self._request(base + "/api/status", headers=headers)["ready"])
+                with urlopen(base + "/", timeout=5) as response:
+                    self.assertEqual(response.headers.get("Cache-Control"), "no-store")
 
                 with self.assertRaises(HTTPError) as unauthorized:
                     self._request(base + "/api/status", headers={"X-Rubra-Token": "wrong"})
