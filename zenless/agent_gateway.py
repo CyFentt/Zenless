@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -115,37 +116,57 @@ class AgentGateway:
     def wait_for_provider(self, provider: str, timeout: float = 5.0) -> bool:
         if self._stopping.is_set():
             return False
-        if self._can_use_local(provider) and self._routes.get(provider) not in {"webview2", "playwright", "extension"}:
+
+        embedded_status = self.embedded.provider_status().get(provider, {})
+        if str(embedded_status.get("state") or "").casefold() == "ready":
+            with self._route_lock:
+                self._routes[provider] = "webview2"
+            return True
+        managed_status = self.managed.provider_status().get(provider, {})
+        if str(managed_status.get("state") or "").casefold() == "ready":
+            with self._route_lock:
+                self._routes[provider] = "playwright"
+            return True
+        if self.allow_extension_fallback and self.extension is not None:
+            extension_status = self.extension.provider_status().get(provider, {})
+            if str(extension_status.get("state") or "").casefold() in {"ready", "connected"}:
+                with self._route_lock:
+                    self._routes[provider] = "extension"
+                return True
+
+        budget = max(0.0, float(timeout))
+        deadline = time.monotonic() + budget
+        if budget > 0:
+            first_budget = max(0.05, budget * 0.6)
+            if self.embedded.wait_for_provider(provider, min(first_budget, max(0.05, deadline - time.monotonic()))):
+                with self._route_lock:
+                    self._routes[provider] = "webview2"
+                return True
+            remaining = deadline - time.monotonic()
+            if remaining > 0 and self.managed.wait_for_provider(provider, remaining):
+                with self._route_lock:
+                    self._routes[provider] = "playwright"
+                return True
+            remaining = deadline - time.monotonic()
+            if (
+                remaining > 0
+                and self.allow_extension_fallback
+                and self.extension is not None
+                and self.extension.wait_for_provider(provider, remaining)
+            ):
+                with self._route_lock:
+                    self._routes[provider] = "extension"
+                if self.status_callback is not None:
+                    self.status_callback(provider, "Connected", "Extension fallback selected")
+                return True
+
+        if self._can_use_local(provider):
             with self._route_lock:
                 self._routes[provider] = "local"
             if self.status_callback is not None:
                 self.status_callback(
-                    provider, "Ready", "Local model; builder and review use separate inference contexts"
+                    provider, "Ready", "Local fallback; web provider is not currently authenticated"
                 )
-            return True
-        embedded_timeout = max(1.0, min(timeout, 20.0))
-        if self.embedded.wait_for_provider(provider, embedded_timeout):
-            with self._route_lock:
-                self._routes[provider] = "webview2"
-            return True
-        managed_timeout = max(1.0, min(timeout, 15.0))
-        if self.managed.wait_for_provider(provider, managed_timeout):
-            with self._route_lock:
-                self._routes[provider] = "playwright"
-            return True
-        if (
-            self.allow_extension_fallback
-            and self.extension is not None
-            and self.extension.wait_for_provider(provider, max(0.0, timeout - managed_timeout - embedded_timeout))
-        ):
-            with self._route_lock:
-                self._routes[provider] = "extension"
-            if self.status_callback is not None:
-                self.status_callback(provider, "Connected", "Extension fallback selected")
-            return True
-        if self._can_use_local(provider):
-            with self._route_lock:
-                self._routes[provider] = "local"
             return True
         return False
 
