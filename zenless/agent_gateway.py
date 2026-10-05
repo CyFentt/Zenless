@@ -128,18 +128,18 @@ class AgentGateway:
             return False
 
         embedded_status = self.embedded.provider_status().get(provider, {})
-        if str(embedded_status.get("state") or "").casefold() == "ready":
+        if self.embedded.running and str(embedded_status.get("state") or "").casefold() == "ready":
             with self._route_lock:
                 self._routes[provider] = "webview2"
             return True
         managed_status = self.managed.provider_status().get(provider, {})
-        if str(managed_status.get("state") or "").casefold() == "ready":
+        if self.managed.running and str(managed_status.get("state") or "").casefold() == "ready":
             with self._route_lock:
                 self._routes[provider] = "playwright"
             return True
         if self.allow_extension_fallback and self.extension is not None:
             extension_status = self.extension.provider_status().get(provider, {})
-            if str(extension_status.get("state") or "").casefold() in {"ready", "connected"}:
+            if self.extension.running and str(extension_status.get("state") or "").casefold() in {"ready", "connected"}:
                 with self._route_lock:
                     self._routes[provider] = "extension"
                 return True
@@ -202,16 +202,28 @@ class AgentGateway:
                     "detail": "Local fallback; web provider is not currently authenticated",
                     "transport": "local",
                 }
-            elif route == "extension" and provider in extension:
+            elif route == "extension" and self.extension is not None and self.extension.running and provider in extension:
                 result[provider] = dict(extension[provider])
-            elif route == "webview2" and provider in embedded:
+            elif route == "webview2" and self.embedded.running and provider in embedded:
                 result[provider] = dict(embedded[provider])
-            elif route == "playwright" and provider in managed:
+            elif route == "playwright" and self.managed.running and provider in managed:
                 result[provider] = dict(managed[provider])
             else:
-                result[provider] = dict(
-                    embedded.get(provider) or managed.get(provider) or extension.get(provider) or {}
+                live = (
+                    (embedded.get(provider) if self.embedded.running else None)
+                    or (managed.get(provider) if self.managed.running else None)
+                    or (extension.get(provider) if self.extension is not None and self.extension.running else None)
                 )
+                if live:
+                    result[provider] = dict(live)
+                elif self._can_use_local(provider):
+                    result[provider] = {
+                        "state": "Ready",
+                        "detail": "Local fallback; web provider is not currently authenticated",
+                        "transport": "local",
+                    }
+                else:
+                    result[provider] = {"state": "Off", "detail": "No live provider transport", "transport": ""}
         return result
 
     def send_prompt(
