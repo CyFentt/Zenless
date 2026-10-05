@@ -216,8 +216,9 @@ class ManagedBrowserController:
             return {key: dict(value) for key, value in self._states.items()}
 
     def wait_for_provider(self, provider: str, timeout: float = 5.0) -> bool:
+        budget = max(0.05, float(timeout))
         try:
-            result = self._call("health", provider, timeout=max(15.0, timeout))
+            result = self._call("health", provider, timeout=budget)
         except BridgeError:
             return False
         return bool(result.get("ready"))
@@ -291,17 +292,18 @@ class ManagedBrowserController:
     ) -> Any:
         if provider and provider not in self.provider_specs:
             raise BridgeError(f"Unknown managed provider: {provider}")
+        effective_timeout = max(0.05, float(timeout))
         if not self.running:
-            self.start()
+            self.start(timeout=min(10.0, effective_timeout))
         command = _Command(
             action,
             provider,
             payload or {},
-            timeout=max(1.0, timeout),
+            timeout=effective_timeout,
             stream_callback=stream_callback,
         )
         self._commands.put(command)
-        if not command.event.wait(command.timeout + 2.0):
+        if not command.event.wait(command.timeout + 0.25):
             command.cancelled.set()
             raise BridgeError(f"Managed browser timed out ({action}/{provider or 'core'}).")
         if command.error is not None:
