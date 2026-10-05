@@ -213,12 +213,12 @@ class ZenlessOrchestrator:
             raise ValueError("Invalid approval decision.")
         with self._state_lock:
             target = self._gates.get((task_id, gate))
-        if target is None:
-            return False
-        target.decision = normalized
-        target.note = note.strip()
-        self.store.record_approval(task_id, gate, normalized, target.note)
-        target.event.set()
+            if target is None or target.event.is_set():
+                return False
+            target.decision = normalized
+            target.note = note.strip()
+            self.store.record_approval(task_id, gate, normalized, target.note)
+            target.event.set()
         return True
 
     def approve_active(self, task_id: str, prefixes: tuple[str, ...], decision: str, note: str = "") -> bool:
