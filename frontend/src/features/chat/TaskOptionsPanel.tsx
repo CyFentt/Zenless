@@ -83,14 +83,14 @@ export function TaskOptionsPanel({ options, onChange, onClose }: Props) {
             onChange={(value) => set('research', value as TaskOptions['research'])}
           />
         </OptionRow>
-        <OptionRow label="Verify" hint="Continue repair and verification cycles until convergence or the hard safety cap">
+        <OptionRow label="Verify" hint="Repeat auto-fix and verification until green, capped by Fix Attempts. When off, Rubra makes at most one automatic correction.">
           <Toggle hideLabel
             checked={options.continuousVerification ?? true}
             onChange={(value) => set('continuousVerification', value)}
             label="Verify"
           />
         </OptionRow>
-        <OptionRow label="Risk" hint="Risk tolerance for generated changes">
+        <OptionRow label="Task Risk" hint="Expected task risk. Higher risk increases planning depth and QA coverage; it never relaxes policy blocks.">
           <Select
             value={options.risk}
             options={[
