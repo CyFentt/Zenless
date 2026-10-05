@@ -1,12 +1,49 @@
 from __future__ import annotations
 
+import os
+import tempfile
 import threading
 import time
 import unittest
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
-from zenless.studio_mcp import MCPError, MCPTool, MCPToolResult, StudioMCPClient, StudioTarget, select_studio_target
+from zenless.studio_mcp import (
+    MCPError,
+    MCPTool,
+    MCPToolResult,
+    StudioMCPClient,
+    StudioTarget,
+    find_studio_mcp,
+    select_studio_target,
+)
+
+
+class StudioMCPDiscoveryTests(unittest.TestCase):
+    def test_windows_launcher_is_preferred_over_direct_version_binary(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            roblox = root / "Roblox"
+            launcher = roblox / "mcp.bat"
+            launcher.parent.mkdir(parents=True)
+            launcher.write_text("@echo off\n", encoding="utf-8")
+            version = roblox / "Versions" / "version-current"
+            version.mkdir(parents=True)
+            (version / "StudioMCP.exe").write_bytes(b"MZ")
+            (version / "RobloxStudioBeta.exe").write_bytes(b"MZ")
+            with patch.dict(os.environ, {"LOCALAPPDATA": str(root)}, clear=False):
+                self.assertEqual(find_studio_mcp(), launcher.resolve())
+
+    def test_direct_binary_remains_a_fallback_when_launcher_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            version = root / "Roblox" / "Versions" / "version-current"
+            version.mkdir(parents=True)
+            binary = version / "StudioMCP.exe"
+            binary.write_bytes(b"MZ")
+            (version / "RobloxStudioBeta.exe").write_bytes(b"MZ")
+            with patch.dict(os.environ, {"LOCALAPPDATA": str(root)}, clear=False):
+                self.assertEqual(find_studio_mcp(), binary.resolve())
 
 
 class StudioMCPConcurrencyTests(unittest.TestCase):
