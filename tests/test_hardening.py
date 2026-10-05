@@ -177,6 +177,24 @@ class HardeningTests(unittest.TestCase):
         gateway.send_prompt("deepseek", "review", task_id="1")
         self.assertEqual(extension.sent, [("deepseek", "review")])
 
+    def test_gateway_uses_local_only_after_authenticated_web_routes_are_unavailable(self) -> None:
+        managed = FakeManaged(set())
+        embedded = FakeEmbedded({"chatgpt"})
+        gateway = AgentGateway(
+            managed=managed,
+            embedded=embedded,
+            local_available=lambda: True,
+            local_complete=lambda prompt: "local:" + prompt,
+            selected_model=lambda _provider: "auto",
+        )
+        self.assertTrue(gateway.wait_for_provider("chatgpt", 0.1))
+        self.assertEqual(gateway._routes["chatgpt"], "webview2")
+
+        embedded.ready.clear()
+        gateway._routes.clear()
+        self.assertTrue(gateway.wait_for_provider("chatgpt", 0))
+        self.assertEqual(gateway._routes["chatgpt"], "local")
+
     def test_gateway_does_not_require_extension_by_default(self) -> None:
         gateway = AgentGateway(
             managed=FakeManaged(set()),
