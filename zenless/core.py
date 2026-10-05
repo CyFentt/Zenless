@@ -823,16 +823,24 @@ class ZenlessCore:
     def assets(self) -> list[dict[str, Any]]:
         result = []
         for asset in self.store.assets():
+            metadata = dict(asset.get("metadata") or {})
+            kind = str(asset.get("kind") or "RBX").upper()
+            if kind == "PNG":
+                kind = "VIEW" if metadata.get("view") else "IMG"
+            if kind == "VIEW" and "conceptVersion" not in metadata and "version" in metadata:
+                metadata["conceptVersion"] = metadata.pop("version")
+            if kind not in {"IMG", "VIEW", "GLB", "GLTF", "TEX", "RBX"}:
+                kind = "RBX"
             result.append(
                 {
                     "id": asset["id"],
                     "name": asset["name"],
-                    "type": asset["kind"],
+                    "type": kind,
                     "url": f"/api/assets/{asset['id']}/content",
                     "size": int(asset["size"]),
                     "createdAt": _milliseconds(asset["created_at"]),
                     "jobId": asset["job_id"] or None,
-                    **dict(asset.get("metadata") or {}),
+                    **metadata,
                 }
             )
         return result
