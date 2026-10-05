@@ -231,6 +231,34 @@ def test_set_model_requires_exact_provider_confirmation_and_invalidates_cache():
     assert core._model_cache is None
 
 
+def test_visual_hydration_preserves_approved_views(tmp_path):
+    core = ZenlessCore.__new__(ZenlessCore)
+    core.store = SQLiteStore(tmp_path / 'state.db')
+    core.store.create_task('visual-job', 'visual', TaskOptions())
+    core.store.update_task(
+        'visual-job',
+        context_json={
+            'visual': {
+                'status': 'APPROVED',
+                'version': 2,
+                'prompt': 'approved concept',
+                'front': {'asset_id': 'front-asset'},
+            }
+        },
+    )
+    payload = core.visual('visual-job')
+    front = next(view for view in payload['views'] if view['name'] == 'FRONT')
+    assert front['state'] == 'APPROVED'
+    assert payload['concept']['status'] == 'APPROVED'
+
+
+def test_generated_concept_assets_use_frontend_view_contract():
+    root = Path(__file__).resolve().parents[1]
+    source = (root / 'zenless' / 'orchestrator.py').read_text(encoding='utf-8')
+    assert 'kind="VIEW"' in source
+    assert '"conceptVersion": version' in source
+
+
 def test_manual_play_button_always_uses_standalone_studio_test():
     root = Path(__file__).resolve().parents[1]
     for relative in (
