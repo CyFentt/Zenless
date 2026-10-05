@@ -28,7 +28,7 @@ def install_native_host(executable: Path | None = None) -> Path:
     target.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "name": HOST_NAME,
-        "description": "Zenless local browser bridge",
+        "description": "Rubra local browser bridge",
         "path": str(target_executable),
         "type": "stdio",
         "allowed_extensions": [EXTENSION_ID],
