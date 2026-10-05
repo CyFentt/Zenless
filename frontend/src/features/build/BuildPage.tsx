@@ -6,7 +6,7 @@ import { Tabs } from '@/components/Tabs';
 import { Modal } from '@/components/Modal';
 import { Tooltip } from '@/components/Tooltip';
 import { DiffViewer } from './DiffViewer';
-import { Check, X, RefreshCw, Lock, Unlock, Eye, FileCode, CheckCircle, AlertTriangle, ShieldAlert } from 'lucide-react';
+import { Check, X, RefreshCw, Lock, Unlock, Eye, FileCode, CheckCircle, AlertTriangle, ShieldAlert, Pause, Play, Square } from 'lucide-react';
 import type { ContextItem, Job, Review } from '@/types';
 
 type BuildTab = 'context' | 'changes' | 'history';
@@ -16,20 +16,79 @@ export function BuildPage() {
 
   return (
     <div className="flex flex-col h-full bg-ink-950">
-      <Tabs
-        tabs={[
-          { id: 'changes', label: 'CHANGES' },
-          { id: 'context', label: 'CONTEXT' },
-          { id: 'history', label: 'HISTORY' },
-        ]}
-        active={activeTab}
-        onChange={(t) => setActiveTab(t as BuildTab)}
-      />
+      <div className="flex items-center border-b border-ink-600">
+        <div className="flex-1 min-w-0">
+          <Tabs
+            tabs={[
+              { id: 'changes', label: 'CHANGES' },
+              { id: 'context', label: 'CONTEXT' },
+              { id: 'history', label: 'HISTORY' },
+            ]}
+            active={activeTab}
+            onChange={(t) => setActiveTab(t as BuildTab)}
+          />
+        </div>
+        <TaskControls />
+      </div>
       <div className="flex-1 overflow-hidden">
         {activeTab === 'changes' && <ChangesTab />}
         {activeTab === 'context' && <ContextTab />}
         {activeTab === 'history' && <HistoryTab />}
       </div>
+    </div>
+  );
+}
+
+function TaskControls() {
+  const job = useStore((s) => s.jobs.find((item) => item.id === s.currentJobId));
+  const upsertJob = useStore((s) => s.upsertJob);
+  const setCurrentJobId = useStore((s) => s.setCurrentJobId);
+  const [busy, setBusy] = useState(false);
+
+  if (!job || !['NEW', 'RUNNING', 'PAUSED'].includes(job.status)) return null;
+
+  const run = async (action: 'pause' | 'resume' | 'cancel') => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      if (action === 'pause') {
+        upsertJob(await getApi().pauseJob(job.id));
+      } else if (action === 'resume') {
+        const resumed = await getApi().resumeJob(job.id);
+        upsertJob(resumed);
+        setCurrentJobId(resumed.id);
+      } else {
+        const result = await getApi().cancelJob(job.id);
+        if (!result.ok) throw new Error('The task is no longer cancellable.');
+        upsertJob(await getApi().getJob(job.id));
+      }
+    } catch (error) {
+      frontendDiagnostics.capture(error, 'build', `Failed to ${action} task`, { jobId: job.id });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="flex items-center gap-1 px-2 shrink-0">
+      {job.status === 'RUNNING' || job.status === 'NEW' ? (
+        <Tooltip content="Pause at the next safe checkpoint">
+          <button disabled={busy} onClick={() => void run('pause')} className="h-7 px-2 inline-flex items-center gap-1 text-2xs uppercase tracking-wider border border-ink-600 text-ink-200 hover:text-ink-0 disabled:opacity-40">
+            <Pause size={10} /> PAUSE
+          </button>
+        </Tooltip>
+      ) : (
+        <Tooltip content="Resume this task">
+          <button disabled={busy} onClick={() => void run('resume')} className="h-7 px-2 inline-flex items-center gap-1 text-2xs uppercase tracking-wider border border-ink-600 text-zen-okBright hover:bg-ink-800 disabled:opacity-40">
+            <Play size={10} /> RESUME
+          </button>
+        </Tooltip>
+      )}
+      <Tooltip content="Cancel this task">
+        <button disabled={busy} onClick={() => void run('cancel')} className="h-7 px-2 inline-flex items-center gap-1 text-2xs uppercase tracking-wider border border-ink-600 text-zen-errBright hover:bg-ink-800 disabled:opacity-40">
+          <Square size={10} /> CANCEL
+        </button>
+      </Tooltip>
     </div>
   );
 }
