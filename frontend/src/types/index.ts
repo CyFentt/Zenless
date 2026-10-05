@@ -533,7 +533,7 @@ export interface ZenlessEventMap {
   TEST_CASE_STARTED: { jobId?: string; testCase: TestCaseResult };
   TEST_CASE_FINISHED: { jobId?: string; testCase: TestCaseResult };
   TEST_FAILURE: { jobId?: string; failure: TestFailure };
-  TEST_LOG: { log: TestLog };
+  TEST_LOG: { jobId?: string; log: TestLog };
   TEST_CAPTURE: { jobId: string; capture: TestCapture };
   TEST_FINISHED: { passed: boolean; cancelled?: boolean; jobId?: string };
   SETTINGS_CHANGED: { settings: Partial<Settings> };
