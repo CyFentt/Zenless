@@ -10,6 +10,7 @@ import pytest
 
 from zenless.agent_gateway import AgentGateway
 from zenless.browser_bridge import BridgeError
+from zenless.core import CoreError, ZenlessCore
 from zenless.event_bus import EventBus
 from zenless.local_ai import LocalAIService
 from zenless.managed_browser import PROVIDERS
@@ -94,7 +95,46 @@ def test_tool_setup_continues_after_failed_critical_and_prioritizes_sources(tmp_
     assert calls == ['broken', 'working', 'skill', 'model']
     assert [item.state for item in results] == ['failed', 'ready', 'ready', 'ready']
     assert json.loads((tmp_path / 'runtime/toolchain-results.json').read_text())['broken']['detail'] == 'network unavailable'
-    assert ToolRegistry(tmp_path, tmp_path).descriptors()[0]['reason'] == 'network unavailable'
+    failed = ToolRegistry(tmp_path, tmp_path).descriptors()[0]
+    assert failed['reason'] == 'network unavailable'
+    assert failed['status'] == 'FAILED'
+
+
+def test_set_model_requires_exact_provider_confirmation_and_invalidates_cache():
+    core = ZenlessCore.__new__(ZenlessCore)
+    core.bridge = Mock()
+    core.bridge.wait_for_provider.return_value = True
+    core.store = Mock()
+    core.events = Mock()
+    core._model_cache = (1.0, {'stale': True})
+    settings = {
+        'models': {
+            'chatgpt': {'model': 'auto', 'reasoning': True},
+            'deepseek': {'model': 'auto', 'reasoning': True},
+            'gemini': {'model': 'auto', 'reasoning': True},
+            'hunyuan': {'version': 'auto', 'quality': 'standard'},
+            'smartRouting': True,
+        }
+    }
+    core.settings = lambda: json.loads(json.dumps(settings))
+
+    core.bridge.request.return_value = {'status': 'ok', 'selected': 'different'}
+    with pytest.raises(CoreError, match='did not confirm'):
+        core.set_model('chatgpt', 'GPT Test')
+    core.store.set_setting.assert_not_called()
+
+    core.bridge.request.return_value = {'status': 'ok', 'selected': 'GPT Test'}
+    assert core.set_model('chatgpt', 'GPT Test')
+    saved = core.store.set_setting.call_args.args[1]
+    assert saved['models']['chatgpt']['model'] == 'GPT Test'
+    assert core._model_cache is None
+
+
+def test_manual_play_button_always_uses_standalone_studio_test():
+    root = Path(__file__).resolve().parents[1]
+    source = (root / 'frontend' / 'src' / 'features' / 'test' / 'TestPage.tsx').read_text(encoding='utf-8')
+    assert 'const result = await getApi().startStudioTest();' in source
+    assert 'startTest(currentJobId)' not in source
 
 
 def test_manual_test_plan_never_waits_for_an_ai_account(tmp_path):
