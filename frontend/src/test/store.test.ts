@@ -100,6 +100,30 @@ describe('Store', () => {
     expect(useStore.getState().testLogs.length).toBe(initial + 1);
   });
 
+  it('ignores QA events from a different active test job', () => {
+    useStore.getState().resetTestDetails();
+    useStore.getState().setTestLogs([]);
+    useStore.setState({ activeTestJobId: 'job-a' });
+
+    handleEvent({
+      type: 'TEST_CASE_STARTED',
+      data: {
+        jobId: 'job-b',
+        testCase: { id: 'case-stale', name: 'stale', suite: 'PlayTest', status: 'RUNNING', startedAt: 100 },
+      },
+    });
+    handleEvent({
+      type: 'TEST_LOG',
+      data: {
+        jobId: 'job-b',
+        log: { id: 'log-stale', timestamp: 100, level: 'ERR', message: 'stale' },
+      },
+    });
+
+    expect(useStore.getState().testCases).toHaveLength(0);
+    expect(useStore.getState().testLogs).toHaveLength(0);
+  });
+
   it('addJob prepends to jobs', () => {
     const initial = useStore.getState().jobs.length;
     useStore.getState().addJob({ id: 'job_test', title: 'Test', status: 'NEW', stage: 'NEW', createdAt: Date.now(), updatedAt: Date.now() });
