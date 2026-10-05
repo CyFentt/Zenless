@@ -150,7 +150,12 @@ def find_studio_mcp(explicit_path: str = "") -> Path:
     if not local_app_data:
         raise MCPError("The LOCALAPPDATA environment variable is unavailable.")
 
-    versions = Path(local_app_data) / "Roblox" / "Versions"
+    roblox_root = Path(local_app_data) / "Roblox"
+    launcher = roblox_root / "mcp.bat"
+    if launcher.is_file():
+        return launcher
+
+    versions = roblox_root / "Versions"
     paired: list[Path] = []
     fallback: list[Path] = []
     for candidate in versions.glob("version-*/StudioMCP.exe"):
@@ -160,9 +165,6 @@ def find_studio_mcp(explicit_path: str = "") -> Path:
             paired.append(candidate)
     candidates = paired or fallback
     if not candidates:
-        launcher = Path(local_app_data) / "Roblox" / "mcp.bat"
-        if launcher.is_file():
-            return launcher
         raise MCPError("Studio MCP was not found. Update Studio and enable Assistant > MCP Servers.")
     return max(candidates, key=lambda path: path.stat().st_mtime)
 
