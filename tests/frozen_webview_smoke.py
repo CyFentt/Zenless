@@ -32,7 +32,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main() -> int:
-    executable = Path(sys.argv[1] if len(sys.argv) > 1 else "dist/Zenless.exe").resolve()
+    executable = Path(sys.argv[1] if len(sys.argv) > 1 else "dist/Rubra/Rubra.exe").resolve()
     if not executable.is_file():
         raise FileNotFoundError(executable)
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
@@ -47,7 +47,7 @@ def main() -> int:
         (".reply",),
     )
     try:
-        with tempfile.TemporaryDirectory(prefix="zenless-frozen-webview-") as folder:
+        with tempfile.TemporaryDirectory(prefix="rubra-frozen-webview-") as folder:
             root = Path(folder)
             diagnostics = ErrorBus(root / "logs")
             controller = WebView2BrowserController(
