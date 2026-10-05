@@ -656,21 +656,22 @@ class ZenlessCore:
         context = task.get("context") or {}
         raw_visual = context.get("visual") if isinstance(context, dict) else None
         visual: dict[str, Any] = raw_visual if isinstance(raw_visual, dict) else {}
+        persisted_status = str(visual.get("status") or "")
         views = []
         for name in ("FRONT", "BACK", "LEFT", "RIGHT", "TOP", "BOTTOM"):
             entry = visual.get(name.casefold(), {}) if isinstance(visual, dict) else {}
             asset_id = str(entry.get("asset_id", "")) if isinstance(entry, dict) else ""
+            view_state = "APPROVED" if asset_id and persisted_status == "APPROVED" else ("READY" if asset_id else "EMPTY")
             views.append(
                 {
                     "name": name,
-                    "state": "READY" if asset_id else "EMPTY",
+                    "state": view_state,
                     **({"imageUrl": f"/api/assets/{asset_id}/content"} if asset_id else {}),
                 }
             )
         proposal = task.get("proposal") or {}
         prompt = str(visual.get("prompt") or proposal.get("visual_prompt", ""))
         stage = str(task.get("stage", ""))
-        persisted_status = str(visual.get("status") or "")
         if persisted_status:
             status = persisted_status
         elif stage == Stage.GENERATING_CONCEPT.value:
