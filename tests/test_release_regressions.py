@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import io
 import json
+import os
+import stat
+import tarfile
 import threading
+import zipfile
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -20,7 +24,7 @@ from zenless.qa_breaker import PROFILES, QABreaker
 from zenless.store import SQLiteStore
 from zenless.studio_data import SourceSnapshot, export_sources
 from zenless.tool_registry import ToolRegistry
-from zenless.toolchain import ToolchainManager
+from zenless.toolchain import ToolchainError, ToolchainManager
 from zenless.webview_host import WebViewHost
 
 
@@ -99,6 +103,56 @@ def test_tool_setup_continues_after_failed_critical_and_prioritizes_sources(tmp_
     failed = ToolRegistry(tmp_path, tmp_path).descriptors()[0]
     assert failed['reason'] == 'network unavailable'
     assert failed['status'] == 'FAILED'
+
+
+def test_toolchain_rejects_archive_links(tmp_path):
+    target = tmp_path / 'extract'
+    target.mkdir()
+
+    zip_path = tmp_path / 'unsafe.zip'
+    with zipfile.ZipFile(zip_path, 'w') as bundle:
+        info = zipfile.ZipInfo('link')
+        info.create_system = 3
+        info.external_attr = (stat.S_IFLNK | 0o777) << 16
+        bundle.writestr(info, '../outside')
+    with zipfile.ZipFile(zip_path) as bundle:
+        with pytest.raises(ToolchainError, match='symbolic links'):
+            ToolchainManager._safe_zip(bundle, target)
+
+    tar_path = tmp_path / 'unsafe.tar.gz'
+    with tarfile.open(tar_path, 'w:gz') as bundle:
+        info = tarfile.TarInfo('link')
+        info.type = tarfile.SYMTYPE
+        info.linkname = '../outside'
+        bundle.addfile(info)
+    with tarfile.open(tar_path, 'r:gz') as bundle:
+        with pytest.raises(ToolchainError, match='links and device'):
+            ToolchainManager._safe_tar(bundle, target)
+
+
+def test_toolchain_directory_swap_restores_previous_version_on_failure(tmp_path):
+    archive = tmp_path / 'tool.zip'
+    with zipfile.ZipFile(archive, 'w') as bundle:
+        bundle.writestr('new.txt', 'new')
+    target = tmp_path / 'tool'
+    target.mkdir()
+    (target / 'old.txt').write_text('old', encoding='utf-8')
+    manager = object.__new__(ToolchainManager)
+    real_replace = os.replace
+
+    def fail_new_swap(source, destination):
+        source_path, destination_path = Path(source), Path(destination)
+        if source_path.name == 'tool.new' and destination_path == target:
+            raise OSError('simulated replacement failure')
+        return real_replace(source, destination)
+
+    with patch('zenless.toolchain.os.replace', side_effect=fail_new_swap):
+        with pytest.raises(OSError, match='simulated replacement failure'):
+            manager._extract_atomic(archive, target, 'zip', False)
+
+    assert (target / 'old.txt').read_text(encoding='utf-8') == 'old'
+    assert not target.with_name('tool.new').exists()
+    assert not target.with_name('tool.old').exists()
 
 
 def test_legacy_unverifiable_model_fields_are_not_restored():
