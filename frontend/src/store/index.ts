@@ -113,8 +113,6 @@ interface AppState {
   diagnostics: Diagnostic[];
   readiness: ReadinessStateInfo | null;
   setReadiness: (r: ReadinessStateInfo) => void;
-  loginStates: Record<string, string>;
-  setLoginState: (provider: ProviderId, state: string) => void;
   effort: EffortLevel;
   setEffort: (e: EffortLevel) => void;
   tools: ToolDescriptor[];
@@ -262,8 +260,6 @@ export const useStore = create<AppState>((set) => ({
 
   readiness: null,
   setReadiness: (readiness) => set({ readiness }),
-  loginStates: {},
-  setLoginState: (provider, state) => set((s) => ({ loginStates: { ...s.loginStates, [provider]: state } })),
   effort: 'AUTO',
   setEffort: (effort) => set({ effort }),
   tools: [],
