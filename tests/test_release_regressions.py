@@ -13,8 +13,9 @@ from zenless.browser_bridge import BridgeError
 from zenless.core import CoreError, ZenlessCore
 from zenless.event_bus import EventBus
 from zenless.local_ai import LocalAIService
-from zenless.managed_browser import PROVIDERS
+from zenless.managed_browser import PROVIDERS, ManagedBrowserController, _Command
 from zenless.models import TaskOptions
+from zenless.webview2_browser import WebView2BrowserController
 from zenless.qa_breaker import PROFILES, QABreaker
 from zenless.store import SQLiteStore
 from zenless.studio_data import SourceSnapshot, export_sources
@@ -178,7 +179,6 @@ def test_corrupt_export_manifest_does_not_block_new_snapshot(tmp_path):
 
 
 def test_background_health_and_requests_do_not_close_active_login(tmp_path):
-    from zenless.managed_browser import ManagedBrowserController, _Command
     controller = ManagedBrowserController(data_root=tmp_path)
     controller._login_provider = "chatgpt"
     with patch.object(controller, "_ensure_context") as context:
@@ -188,6 +188,36 @@ def test_background_health_and_requests_do_not_close_active_login(tmp_path):
         with pytest.raises(BridgeError, match="LOGIN_IN_PROGRESS"):
             controller._handle(_Command("login", "deepseek"))
         context.assert_not_called()
+
+def test_managed_request_failure_clears_working_state(tmp_path):
+    controller = ManagedBrowserController(data_root=tmp_path)
+    command = _Command("request", "chatgpt", {"provider_action": "send_prompt"})
+    controller._commands.put(command)
+    controller._commands.put(_Command("stop"))
+
+    def fail(_command):
+        controller._set_state("chatgpt", "Working", "Waiting")
+        raise BridgeError("send failed")
+
+    with patch.object(controller, "_handle", side_effect=fail):
+        controller._event_loop()
+
+    assert isinstance(command.error, BridgeError)
+    assert controller.provider_status()["chatgpt"]["state"] == "Error"
+
+
+def test_webview2_request_failure_clears_working_state(tmp_path):
+    controller = WebView2BrowserController(data_root=tmp_path)
+    process = Mock()
+    process.poll.return_value = None
+    controller._process = process
+    with patch.object(controller, "_request", side_effect=BridgeError("selector changed")):
+        with pytest.raises(BridgeError, match="selector changed"):
+            controller.request("chatgpt", "send_prompt", {"prompt": "x"}, task_id="task", timeout=1)
+    state = controller.provider_status()["chatgpt"]
+    assert state["state"] == "Error"
+    assert "selector changed" in state["detail"]
+
 
 def test_frontend_lockfile_keeps_resolved_package_versions_consistent():
     root = Path(__file__).resolve().parents[1]
