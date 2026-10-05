@@ -49,18 +49,23 @@ export function handleEvent(event: ZenlessEvent) {
       store.updateJob(event.data.jobId, { status: 'FAILED', stage: 'FAILED' });
       break;
     case 'CHAT_STREAM_STARTED':
+      if (event.data.jobId && useStore.getState().currentJobId !== event.data.jobId) break;
       store.setStreaming(event.data.messageId);
       break;
     case 'CHAT_STREAM_DELTA':
+      if (event.data.jobId && useStore.getState().currentJobId !== event.data.jobId) break;
       store.appendStreamDelta(event.data.delta);
       break;
     case 'CHAT_STREAM_FINISHED':
+      if (event.data.jobId && useStore.getState().currentJobId !== event.data.jobId) break;
       store.finishStream();
       break;
     case 'CHAT_MESSAGE':
+      if (event.data.message.jobId && useStore.getState().currentJobId !== event.data.message.jobId) break;
       store.addMessage(event.data.message);
       break;
     case 'CHAT_ACTIVITY':
+      if (event.data.activity.jobId && useStore.getState().currentJobId !== event.data.activity.jobId) break;
       store.addActivity(event.data.activity);
       break;
     case 'CONTEXT_UPDATED':
