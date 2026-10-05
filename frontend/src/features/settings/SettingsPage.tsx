@@ -55,11 +55,16 @@ export function SettingsPage() {
 
 function GeneralTab({ settings, onChange }: { settings: Settings | null; onChange: (s: Settings) => void }) {
   const [projectDraft, setProjectDraft] = useState(settings?.projectRoot ?? '');
+  const [revisionDraft, setRevisionDraft] = useState(String(settings?.maxRevisions ?? 3));
   const [indexState, setIndexState] = useState<'IDLE' | 'INDEXING' | 'READY' | 'ERROR'>('IDLE');
 
   useEffect(() => {
     setProjectDraft(settings?.projectRoot ?? '');
   }, [settings?.projectRoot]);
+
+  useEffect(() => {
+    setRevisionDraft(String(settings?.maxRevisions ?? 3));
+  }, [settings?.maxRevisions]);
 
   if (!settings) return <EmptyState />;
 
@@ -102,10 +107,17 @@ function GeneralTab({ settings, onChange }: { settings: Settings | null; onChang
         <Row label="Max Revisions" hint="Maximum revision attempts per job">
           <input
             type="number"
-            value={settings.maxRevisions}
+            value={revisionDraft}
             min={1}
             max={64}
-            onChange={(event) => void persist({ maxRevisions: Number.parseInt(event.target.value, 10) || 1 })}
+            onChange={(event) => setRevisionDraft(event.target.value)}
+            onBlur={() => {
+              const parsed = Number.parseInt(revisionDraft, 10);
+              const next = Number.isFinite(parsed) ? Math.max(1, Math.min(64, parsed)) : settings.maxRevisions;
+              setRevisionDraft(String(next));
+              if (next !== settings.maxRevisions) void persist({ maxRevisions: next });
+            }}
+            onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur(); }}
             className="w-12 h-6 text-2xs text-center text-ink-50 bg-ink-800 border border-ink-600 focus:border-ink-500"
           />
         </Row>
