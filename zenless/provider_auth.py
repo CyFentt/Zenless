@@ -37,7 +37,6 @@ def authentication_script(provider: str, inputs: tuple[str, ...], origin_url: st
     }})()"""
 
 
-
 def model_options_script(model: str = "") -> str:
     return f"""(() => {{
       const wanted = {json.dumps(model)}.trim().toLowerCase();
