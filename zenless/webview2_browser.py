@@ -192,23 +192,27 @@ class WebView2BrowserController:
         request_payload = dict(payload)
         request_payload.update({"provider_action": action, "task_id": task_id})
         self._set_state(provider, "Working", f"WebView2: {action}")
-        result = self._request(
-            "request",
-            provider,
-            request_payload,
-            timeout=timeout,
-            stream_callback=stream_callback,
-        )
-        if (
-            action in {"generate_3d", "generate_geometry", "generate_texture"}
-            and result.get("artifact_url")
-            and not result.get("artifact_path")
-        ):
-            try:
-                result["artifact_path"] = str(self._download_artifact(str(result["artifact_url"]), task_id))
-            except Exception as exc:
-                result["download_error"] = str(exc)
-                self._report(exc, "artifact-download")
+        try:
+            result = self._request(
+                "request",
+                provider,
+                request_payload,
+                timeout=timeout,
+                stream_callback=stream_callback,
+            )
+            if (
+                action in {"generate_3d", "generate_geometry", "generate_texture"}
+                and result.get("artifact_url")
+                and not result.get("artifact_path")
+            ):
+                try:
+                    result["artifact_path"] = str(self._download_artifact(str(result["artifact_url"]), task_id))
+                except Exception as exc:
+                    result["download_error"] = str(exc)
+                    self._report(exc, "artifact-download")
+        except BridgeError as exc:
+            self._set_state(provider, "Error", str(exc))
+            raise
         self._set_state(provider, "Ready", "WebView2 session idle")
         return result
 
