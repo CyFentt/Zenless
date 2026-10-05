@@ -57,6 +57,8 @@ function ViewsTab() {
   const conceptPrompt = useStore((s) => s.conceptPrompt);
   const setConcept = useStore((s) => s.setConcept);
   const currentJobId = useStore((s) => s.currentJobId);
+  const currentJob = useStore((s) => s.jobs.find((job) => job.id === s.currentJobId));
+  const canEditVisual = currentJob?.stage === "WAITING_IMAGE_APPROVAL";
 
   const [editing, setEditing] = useState(false);
   const [draftPrompt, setDraftPrompt] = useState("");
@@ -116,7 +118,7 @@ function ViewsTab() {
       <div className="flex-1 grid grid-cols-3 grid-rows-2 gap-px bg-ink-600 p-px">
         {VIEW_NAMES.map((name) => {
           const view = views.find((v) => v.name === name) ?? { name, state: "EMPTY" as const };
-          return <ViewTile key={name} view={view} jobId={currentJobId} />;
+          return <ViewTile key={name} view={view} jobId={currentJobId} canRegenerate={canEditVisual} />;
         })}
       </div>
       <div className="flex items-center justify-between px-3 h-10 border-t border-ink-600 shrink-0">
@@ -132,7 +134,8 @@ function ViewsTab() {
           <Tooltip content="Edit concept prompt">
             <button
               onClick={openEdit}
-              className="flex items-center gap-1 px-2 h-7 text-2xs uppercase tracking-wider text-ink-150 border border-ink-600 hover:bg-ink-800 transition-colors"
+              disabled={!canEditVisual}
+              className="flex items-center gap-1 px-2 h-7 text-2xs uppercase tracking-wider text-ink-150 border border-ink-600 hover:bg-ink-800 transition-colors disabled:opacity-40 disabled:pointer-events-none"
             >
               <Pencil size={10} />
               EDIT
@@ -141,7 +144,8 @@ function ViewsTab() {
           <Tooltip content="Regenerate all views">
             <button
               onClick={handleRegen}
-              className="flex items-center gap-1 px-2 h-7 text-2xs uppercase tracking-wider text-ink-150 border border-ink-600 hover:bg-ink-800 transition-colors"
+              disabled={!canEditVisual}
+              className="flex items-center gap-1 px-2 h-7 text-2xs uppercase tracking-wider text-ink-150 border border-ink-600 hover:bg-ink-800 transition-colors disabled:opacity-40 disabled:pointer-events-none"
             >
               <RefreshCw size={10} />
               REGEN
@@ -149,7 +153,8 @@ function ViewsTab() {
           </Tooltip>
           <button
             onClick={handleApprove}
-            className="flex items-center gap-1 px-2 h-7 text-2xs uppercase tracking-wider text-zen-okBright border border-ink-600 hover:bg-ink-800 transition-colors"
+            disabled={!canEditVisual}
+            className="flex items-center gap-1 px-2 h-7 text-2xs uppercase tracking-wider text-zen-okBright border border-ink-600 hover:bg-ink-800 transition-colors disabled:opacity-40 disabled:pointer-events-none"
           >
             <Check size={10} />
             APPROVE
@@ -189,10 +194,10 @@ function ViewsTab() {
   );
 }
 
-function ViewTile({ view, jobId }: { view: ViewTile; jobId: string | null }) {
+function ViewTile({ view, jobId, canRegenerate }: { view: ViewTile; jobId: string | null; canRegenerate: boolean }) {
   const handleRegen = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!jobId) return;
+    if (!jobId || !canRegenerate) return;
     try {
       await getApi().regenerateView(jobId, view.name);
     } catch (error) {
@@ -255,7 +260,7 @@ function ViewTile({ view, jobId }: { view: ViewTile; jobId: string | null }) {
           NO IMAGE
         </div>
       )}
-      {view.state !== "GENERATING" && (
+      {canRegenerate && view.state !== "GENERATING" && (
         <button
           onClick={handleRegen}
           className="absolute bottom-2 right-2 w-6 h-6 flex items-center justify-center text-ink-400 hover:text-ink-0 opacity-0 group-hover:opacity-100 transition-opacity"
@@ -272,6 +277,8 @@ function ModelViewerTab() {
   const modelInfo = useStore((s) => s.modelInfo);
   const setModelInfo = useStore((s) => s.setModelInfo);
   const currentJobId = useStore((s) => s.currentJobId);
+  const currentJob = useStore((s) => s.jobs.find((job) => job.id === s.currentJobId));
+  const canEditModel = currentJob?.stage === "WAITING_3D_APPROVAL";
 
   useEffect(() => {
     if (!currentJobId) return;
@@ -348,7 +355,8 @@ function ModelViewerTab() {
           <Tooltip content="Regenerate geometry">
             <button
               onClick={handleRegenGeo}
-              className="px-2 h-7 text-2xs uppercase tracking-wider text-ink-150 border border-ink-600 hover:bg-ink-800"
+              disabled={!canEditModel}
+              className="px-2 h-7 text-2xs uppercase tracking-wider text-ink-150 border border-ink-600 hover:bg-ink-800 disabled:opacity-40 disabled:pointer-events-none"
             >
               <RefreshCw size={10} className="inline mr-1" />
               SHAPE
@@ -357,7 +365,8 @@ function ModelViewerTab() {
           <Tooltip content="Regenerate texture">
             <button
               onClick={handleRegenTex}
-              className="px-2 h-7 text-2xs uppercase tracking-wider text-ink-150 border border-ink-600 hover:bg-ink-800"
+              disabled={!canEditModel}
+              className="px-2 h-7 text-2xs uppercase tracking-wider text-ink-150 border border-ink-600 hover:bg-ink-800 disabled:opacity-40 disabled:pointer-events-none"
             >
               <RefreshCw size={10} className="inline mr-1" />
               TEXTURE
@@ -365,7 +374,8 @@ function ModelViewerTab() {
           </Tooltip>
           <button
             onClick={handleApprove}
-            className="px-2 h-7 text-2xs uppercase tracking-wider text-zen-okBright border border-ink-600 hover:bg-ink-800"
+            disabled={!canEditModel}
+            className="px-2 h-7 text-2xs uppercase tracking-wider text-zen-okBright border border-ink-600 hover:bg-ink-800 disabled:opacity-40 disabled:pointer-events-none"
           >
             <Check size={10} className="inline mr-1" />
             APPROVE
