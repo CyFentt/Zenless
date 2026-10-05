@@ -978,9 +978,11 @@ class ZenlessCore:
         return {"ok": True, "jobId": job_id}
 
     def stop_test(self, job_id: str) -> bool:
-        if not self.qa.stop(job_id):
-            raise CoreError("TEST_NOT_RUNNING", "No test is running.", status=409)
-        return True
+        if self.qa.stop(job_id):
+            return True
+        if self.orchestrator.cancel(job_id):
+            return True
+        raise CoreError("TEST_NOT_RUNNING", "No test is running.", status=409)
 
     def test_state(self, job_id: str) -> dict[str, Any]:
         task = self._require_task(job_id)
