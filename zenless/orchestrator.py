@@ -1061,10 +1061,10 @@ class ZenlessOrchestrator:
                 asset_id,
                 job_id=task_id,
                 name=output.name,
-                kind="PNG",
+                kind="VIEW",
                 path=output,
                 mime="image/png",
-                metadata={"view": view.upper(), "version": version, "width": width, "height": height},
+                metadata={"view": view.upper(), "conceptVersion": version, "width": width, "height": height},
             )
             visual[view] = {
                 "asset_id": asset_id,
