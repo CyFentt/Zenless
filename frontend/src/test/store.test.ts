@@ -100,6 +100,27 @@ describe('Store', () => {
     expect(useStore.getState().testLogs.length).toBe(initial + 1);
   });
 
+  it('ignores chat stream and message events from an unselected job', () => {
+    useStore.setState({
+      currentJobId: 'job-a',
+      messages: [],
+      activities: [],
+      streamingMessageId: null,
+      streamingContent: '',
+    });
+
+    handleEvent({ type: 'CHAT_STREAM_STARTED', data: { messageId: 'stream-b', jobId: 'job-b' } });
+    handleEvent({ type: 'CHAT_STREAM_DELTA', data: { messageId: 'stream-b', jobId: 'job-b', delta: 'stale' } });
+    handleEvent({
+      type: 'CHAT_MESSAGE',
+      data: { message: { id: 'msg-b', role: 'zenless', content: 'stale', timestamp: 10, jobId: 'job-b' } },
+    });
+
+    expect(useStore.getState().streamingMessageId).toBeNull();
+    expect(useStore.getState().streamingContent).toBe('');
+    expect(useStore.getState().messages).toHaveLength(0);
+  });
+
   it('ignores QA events from a different active test job', () => {
     useStore.getState().resetTestDetails();
     useStore.getState().setTestLogs([]);
