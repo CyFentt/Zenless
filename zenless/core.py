@@ -375,11 +375,21 @@ class ZenlessCore:
         if self.orchestrator.resume(job_id):
             return self.job(job_id)
         task = self._require_task(job_id)
-        if str(task.get("stage")) != Stage.PAUSED.value or "Checkpoint recuperado" not in str(task.get("error")):
-            raise CoreError("JOB_NOT_RESUMABLE", "The job is not paused.", status=409)
+        recovery_error = str(task.get("error") or "")
+        recovered_checkpoint = (
+            "Checkpoint recovered after an unexpected shutdown" in recovery_error
+            or "Checkpoint recuperado" in recovery_error
+            or recovery_error.startswith("RECOVERED_CHECKPOINT:")
+        )
+        if str(task.get("stage")) != Stage.PAUSED.value or not recovered_checkpoint:
+            raise CoreError("JOB_NOT_RESUMABLE", "The job is not a recoverable paused checkpoint.", status=409)
         try:
             options = TaskOptions(**dict(task.get("options") or {}))
-            replacement_id = self.orchestrator.submit(str(task.get("prompt") or ""), options)
+            replacement_id = self.orchestrator.submit(
+                str(task.get("prompt") or ""),
+                options,
+                parent_task_id=job_id,
+            )
         except (TypeError, OrchestratorError) as exc:
             raise CoreError("JOB_NOT_RESUMABLE", str(exc), status=409) from exc
         self.store.update_task(
