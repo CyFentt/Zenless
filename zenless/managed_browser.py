@@ -349,6 +349,10 @@ class ManagedBrowserController:
                             "Unavailable",
                             "Playwright runtime failed; Rubra will try embedded WebView2",
                         )
+                elif command.action == "request" and command.provider:
+                    current = self.provider_status().get(command.provider, {}).get("state")
+                    if current == "Working":
+                        self._set_state(command.provider, "Error", str(exc))
                 command.error = exc
                 self._report(
                     exc,
