@@ -151,12 +151,15 @@ export function handleEvent(event: ZenlessEvent) {
       store.setTestState({ ...useStore.getState().testState, status: 'RUNNING' });
       break;
     case 'TEST_CASE_STARTED':
+      if (event.data.jobId && useStore.getState().activeTestJobId !== event.data.jobId) break;
       store.upsertTestCase(event.data.testCase);
       break;
     case 'TEST_CASE_FINISHED':
+      if (event.data.jobId && useStore.getState().activeTestJobId !== event.data.jobId) break;
       store.upsertTestCase(event.data.testCase);
       break;
     case 'TEST_FAILURE':
+      if (event.data.jobId && useStore.getState().activeTestJobId !== event.data.jobId) break;
       store.addTestFailure(event.data.failure);
       store.addTestLog({
         id: `failure_${event.data.failure.id}`,
@@ -175,6 +178,7 @@ export function handleEvent(event: ZenlessEvent) {
       });
       break;
     case 'TEST_LOG':
+      if (event.data.jobId && useStore.getState().activeTestJobId !== event.data.jobId) break;
       store.addTestLog(event.data.log);
       break;
     case 'TEST_CAPTURE':
