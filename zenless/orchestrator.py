@@ -200,13 +200,13 @@ class ZenlessOrchestrator:
                 initial_message_id = self.store.append_message(task_id, "User", "user", objective)
                 if prepare_callback is not None:
                     prepare_callback(task_id, initial_message_id)
+                if ready_callback is not None:
+                    ready_callback(task_id, initial_message_id)
                 self._tasks[task_id] = thread
                 self._cancel[task_id] = cancel_event
                 self._pause[task_id] = pause_event
                 self.current_task_id = task_id
                 self._emit(task_id, Stage.NEW, "Request received and queued.")
-                if ready_callback is not None:
-                    ready_callback(task_id, initial_message_id)
                 thread.start()
             except Exception:
                 self._tasks.pop(task_id, None)
