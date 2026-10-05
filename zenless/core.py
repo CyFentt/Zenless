@@ -1520,11 +1520,11 @@ class ZenlessCore:
         if event.kind == "stream_delta":
             self.events.publish(
                 "CHAT_STREAM_DELTA",
-                {"messageId": event.message, "delta": event.detail},
+                {"messageId": event.message, "jobId": event.task_id, "delta": event.detail},
             )
             return
         if event.kind == "stream_finish":
-            self.events.publish("CHAT_STREAM_FINISHED", {"messageId": event.message})
+            self.events.publish("CHAT_STREAM_FINISHED", {"messageId": event.message, "jobId": event.task_id})
             return
         try:
             job = self.job(event.task_id)
