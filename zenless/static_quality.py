@@ -164,12 +164,18 @@ class StaticQualityRunner:
                     output, _ = process.communicate(timeout=3)
                 except subprocess.TimeoutExpired:
                     process.kill()
-                    output, _ = process.communicate(timeout=2)
+                    try:
+                        output, _ = process.communicate(timeout=2)
+                    except subprocess.TimeoutExpired:
+                        output = ""
                 return StaticCheck(name, "FAILED", "Cancelled.\n" + output[-12000:])
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 process.kill()
-                output, _ = process.communicate(timeout=2)
+                try:
+                    output, _ = process.communicate(timeout=2)
+                except subprocess.TimeoutExpired:
+                    output = ""
                 return StaticCheck(name, "FAILED", "Timed out.\n" + output[-12000:])
             try:
                 output, _ = process.communicate(timeout=min(0.25, remaining))
