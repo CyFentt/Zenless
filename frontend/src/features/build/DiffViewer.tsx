@@ -3,30 +3,27 @@ import type { ChangedFile } from '@/types';
 
 interface DiffViewerProps {
   file: ChangedFile;
-  onSaveContent?: (fileId: string, newContent: string) => Promise<void>;
+  onRequestChanges?: (fileId: string, newContent: string) => Promise<void>;
 }
 
-export function DiffViewer({ file, onSaveContent }: DiffViewerProps) {
+export function DiffViewer({ file, onRequestChanges }: DiffViewerProps) {
   const [editing, setEditing] = useState(false);
-  const [editContent, setEditContent] = useState('');
+  const [revisionNote, setRevisionNote] = useState('');
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
 
   const handleStartEdit = () => {
-    const content = file.diff
-      .filter((line) => line.type === 'unchanged' || line.type === 'added')
-      .map((line) => line.content)
-      .join('\n');
-    setEditContent(content);
+    setRevisionNote('');
+    setSaveError('');
     setEditing(true);
   };
 
   const handleSave = async () => {
-    if (!onSaveContent) return;
+    if (!onRequestChanges || !revisionNote.trim()) return;
     setSaving(true);
     setSaveError('');
     try {
-      await onSaveContent(file.id, editContent);
+      await onRequestChanges(file.id, revisionNote.trim());
       setEditing(false);
     } catch (error) {
       setSaveError(error instanceof Error && error.message ? error.message : 'The change could not be saved.');
@@ -63,7 +60,7 @@ export function DiffViewer({ file, onSaveContent }: DiffViewerProps) {
                 disabled={saving}
                 className="px-2 py-1 text-2xs font-mono bg-zen-ok text-black rounded font-medium hover:bg-zen-okBright transition-colors disabled:opacity-50"
               >
-                {saving ? 'SAVING...' : 'SAVE'}
+                {saving ? 'SENDING...' : 'SEND REQUEST'}
               </button>
               <button
                 onClick={() => setEditing(false)}
@@ -74,7 +71,7 @@ export function DiffViewer({ file, onSaveContent }: DiffViewerProps) {
               </button>
             </>
           ) : (
-            onSaveContent && (
+            onRequestChanges && (
               <button
                 onClick={handleStartEdit}
                 className="px-2 py-1 text-2xs font-mono bg-ink-800 text-ink-200 border border-ink-700 rounded hover:text-ink-0 hover:bg-ink-700 transition-colors"
@@ -94,9 +91,10 @@ export function DiffViewer({ file, onSaveContent }: DiffViewerProps) {
       {editing ? (
         <div className="flex-1 p-2 bg-ink-950">
           <textarea
-            value={editContent}
-            onChange={(e) => setEditContent(e.target.value)}
-            className="w-full h-full bg-ink-900 text-ink-100 font-mono text-xs p-3 border border-ink-700 rounded focus:outline-none focus:border-ink-500 resize-none"
+            value={revisionNote}
+            onChange={(e) => setRevisionNote(e.target.value)}
+            placeholder="Describe what the builder should change in this proposal…"
+            className="w-full h-full bg-ink-900 text-ink-100 font-mono text-xs p-3 border border-ink-700 rounded focus:outline-none focus:border-ink-500 resize-none placeholder:text-ink-400"
             spellCheck={false}
           />
         </div>
