@@ -136,6 +136,7 @@ class ZenlessOrchestrator:
         *,
         attachment_paths: tuple[Path, ...] = (),
         studio_id: str = "",
+        parent_task_id: str = "",
     ) -> str:
         objective = prompt.strip()
         if not objective:
@@ -155,9 +156,43 @@ class ZenlessOrchestrator:
                     "A task is already active. Complete, reject, or close the current stage before submitting another request."
                 )
             try:
+                history: list[dict[str, str]] = []
+                if parent_task_id:
+                    if self.store.load_task(parent_task_id) is None:
+                        raise OrchestratorError(f"Parent task not found: {parent_task_id}")
+                    for row in self.store.task_messages(parent_task_id)[-24:]:
+                        history.append(
+                            {
+                                "sender": str(row.get("sender") or ""),
+                                "role": str(row.get("role") or ""),
+                                "content": str(row.get("content") or ""),
+                            }
+                        )
                 self.store.create_task(task_id, objective, options)
+                updates: dict[str, Any] = {}
                 if studio_id:
-                    self.store.update_task(task_id, studio_id=studio_id)
+                    updates["studio_id"] = studio_id
+                if parent_task_id:
+                    updates["context_json"] = {
+                        "parent_task_id": parent_task_id,
+                        "conversation_history": [
+                            {
+                                "sender": item["sender"][:120],
+                                "role": item["role"][:80],
+                                "content": item["content"][:6000],
+                            }
+                            for item in history
+                        ],
+                    }
+                if updates:
+                    self.store.update_task(task_id, **updates)
+                for item in history:
+                    self.store.append_message(
+                        task_id,
+                        item["sender"] or "Previous",
+                        item["role"] or "assistant",
+                        item["content"],
+                    )
                 self._tasks[task_id] = thread
                 self._cancel[task_id] = cancel_event
                 self._pause[task_id] = pause_event
@@ -357,6 +392,7 @@ class ZenlessOrchestrator:
             self.studio.start()
         studios = self.studio.list_studios()
         task = self.store.load_task(task_id) or {}
+        seed_context = task.get("context") if isinstance(task.get("context"), dict) else {}
         target = select_studio_target(studios, str(task.get("studio_id") or ""), active_title=active_studio_title())
         self.store.update_task(task_id, studio_id=target.studio_id)
         analysis = self.brain.analyze(
@@ -365,6 +401,13 @@ class ZenlessOrchestrator:
             create_3d=options.create_3d_asset,
         )
         context = self._collect_context(task_id, target.studio_id, analysis)
+        if isinstance(seed_context, dict):
+            history = seed_context.get("conversation_history")
+            if isinstance(history, list) and history:
+                context["conversation_history"] = history[-24:]
+            parent_task_id = str(seed_context.get("parent_task_id") or "")
+            if parent_task_id:
+                context["parent_task_id"] = parent_task_id
         research_enabled = self._should_research(options, analysis)
         skill_selection = self.skills.select(objective)
         if skill_selection.text:
