@@ -283,6 +283,25 @@ class OrchestratorTests(unittest.TestCase):
                 with self.assertRaisesRegex(OrchestratorError, "READ_BACK_MISMATCH"):
                     orchestrator._apply_actions("corrupt", "studio-1", [action])
 
+    def test_submit_rolls_back_persisted_task_when_prepare_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            orchestrator, store = self.make_system(folder, FakeBridge({}), FakeStudio())
+            prepared: list[str] = []
+
+            def fail_prepare(task_id: str) -> None:
+                prepared.append(task_id)
+                raise RuntimeError("asset registration failed")
+
+            with self.assertRaisesRegex(RuntimeError, "asset registration failed"):
+                orchestrator.submit("Prepare safely", TaskOptions(), prepare_callback=fail_prepare)
+
+            self.assertEqual(len(prepared), 1)
+            self.assertIsNone(store.load_task(prepared[0]))
+            self.assertEqual(orchestrator.current_task_id, "")
+            self.assertNotIn(prepared[0], orchestrator._tasks)
+            self.assertNotIn(prepared[0], orchestrator._cancel)
+            self.assertNotIn(prepared[0], orchestrator._pause)
+
     def make_system(
         self,
         folder: str,
