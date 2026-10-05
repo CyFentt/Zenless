@@ -461,7 +461,7 @@ class LocalWebBridge:
 
     async def _set_smart_routing(self, request: web.Request) -> web.Response:
         body = await self._json_body(request)
-        return self._json({"ok": self.core.set_smart_routing(bool(body.get("enabled")))})
+        return self._json({"ok": self.core.set_smart_routing(body.get("enabled"))})
 
     async def _websocket(self, request: web.Request) -> web.WebSocketResponse:
         if not secrets.compare_digest(request.query.get("token", ""), self.token):
