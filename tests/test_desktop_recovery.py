@@ -17,7 +17,7 @@ from zenless.local_ai import LocalAIError, LocalAIService
 from zenless.managed_browser import PROVIDERS
 from zenless.models import Stage
 from zenless.store import SQLiteStore
-from zenless.studio_mcp import MCPToolResult, StudioTarget
+from zenless.studio_mcp import MCPBusyError, MCPToolResult, StudioTarget
 from zenless.web_bridge import LocalWebBridge
 from zenless.webview2_browser import WebView2BrowserController
 from zenless.webview_host import WebViewHost
@@ -74,11 +74,14 @@ def test_structured_tree_and_real_script_content(core):
 
 
 @pytest.mark.parametrize("payload", ["bad JSON", {"unexpected": []}, 42])
-def test_invalid_tree_is_not_silently_reported_ready(core, payload):
+def test_invalid_tree_keeps_connection_and_play_available_but_reports_inventory_error(core, payload):
     core.studio.call_tool.return_value = MCPToolResult("search_game_tree", "", False, (), structured_content=payload)
-    with pytest.raises(CoreError, match="tree"):
-        core.refresh_studio()
-    assert core.connections()["studio"] == "ERR"
+    assert core.refresh_studio()
+    assert core.connections()["studio"] == "READY"
+    assert core.studio_state()["treeError"]
+    assert core.studio_state()["projectName"] == "My place"
+    assert core.studio_tree() == []
+    assert core.start_studio_test()["jobId"]
 
 
 def test_late_studio_installation_rebinds_all_consumers(core):
@@ -109,6 +112,35 @@ def test_multiple_places_do_not_select_an_arbitrary_project(core):
     with pytest.raises(CoreError, match="Multiple Studio"):
         core.refresh_studio()
     core.studio.call_tool.assert_not_called()
+
+
+def test_duplicate_named_objects_keep_separate_identity(core):
+    _, nodes = core._parse_studio_tree([
+        {"id": "1", "path": "game.Workspace.Same", "className": "Part"},
+        {"id": "2", "path": "game.Workspace.Same", "className": "Part"},
+    ])
+    assert len(nodes) == 2
+    assert len({node["id"] for node in nodes.values()}) == 2
+    assert all(node["path"] == "game.Workspace.Same" for node in nodes.values())
+
+
+def test_monitor_busy_does_not_disconnect_studio(core):
+    core._connections["studio"] = "READY"
+    core._studio_target_id = "place"
+    def busy():
+        core._closing.set()
+        raise MCPBusyError("Another Studio operation is active")
+    core.studio.list_studios.side_effect = busy
+    core._monitor_studio()
+    assert core.connections()["studio"] == "READY"
+    assert core._studio_target_id == "place"
+
+
+def test_new_job_does_not_pin_a_disconnected_old_game(core):
+    core._studio_target_id = "old-game"
+    core.job = Mock(return_value={"id": "new-job"})
+    core.create_job("Review my game")
+    assert core.orchestrator.submit.call_args.kwargs["studio_id"] == ""
 
 
 def test_standalone_play_creates_persisted_target_without_ai(core):

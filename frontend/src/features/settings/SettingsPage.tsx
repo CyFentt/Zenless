@@ -111,7 +111,7 @@ function GeneralTab({ settings, onChange }: { settings: Settings | null; onChang
         </Row>
       </Section>
       <Section title="PROJECT">
-        <Row label="Folder" hint="Rojo or local project folder used for semantic code indexing">
+        <Row label="Optional local files" hint="The open Studio game is selected automatically. Choose a folder only for a separate Rojo or local files project.">
           <div className="flex items-center gap-2 w-full">
             <input
               value={projectDraft}

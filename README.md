@@ -132,3 +132,9 @@ Pinned tools, upstream Roblox skill sources, and local models are prepared after
 Provider authentication is confirmed from account and composer signals, rejects visible sign-in controls, and requires a stable state before hiding its window. Provider UI changes can require adapter updates. A guest composer alone never counts as login.
 
 Run `python -m pytest`, `npm test` in `frontend`, and `npm run test:e2e` after installing Playwright Chromium. The E2E configuration starts a mock UI server and does not access real accounts or Studio.
+
+The open Studio place is selected automatically. Tree summaries, encoded JSON and attached text resources are decoded separately; an inventory error no longer disconnects a healthy Studio session or blocks Play. Native Edit-mode reads paginate up to 50,000 descendants and 2,000 scripts. Full readable source is exported automatically for static checks; protected sources and coverage gaps remain visible. Agent prompts contain bounded excerpts and require another full read before a write.
+
+Scene/property changes use an explicit expected-property map, a before snapshot, concurrent-change detection and post-write verification. QA captures successive full-resolution gameplay frames before Stop and exposes them in the Test page. Independent image review requires an authenticated image-capable provider; local text models do not certify visual correctness.
+
+On Windows, closing the desktop hides it in the notification area while workers continue. Double-click the tray icon to reopen it, or choose Quit Rubra to stop it. The installer lets you choose a writable destination and creates a desktop shortcut; the default remains `%LOCALAPPDATA%\Programs\Rubra`.

@@ -15,6 +15,7 @@ from typing import Any, BinaryIO, cast
 from .managed_browser import PROVIDERS, ProviderSpec
 from .native_host import read_native_message, write_native_message
 from .provider_auth import authentication_script, model_options_script
+from .windows_tray import set_app_identity
 
 
 def _specs_from_file(path: Path | None) -> dict[str, ProviderSpec]:
@@ -59,6 +60,8 @@ class WebViewHost:
     def run(self) -> int:
         import webview
 
+        set_app_identity("Rubra.Providers")
+
         self.profile_root.mkdir(parents=True, exist_ok=True)
         self._control = webview.create_window(
             "Rubra Managed WebView",
@@ -76,6 +79,7 @@ class WebViewHost:
             debug=False,
             private_mode=False,
             storage_path=str(self.profile_root),
+            icon=str(Path(__file__).resolve().parent.parent / "assets" / "rubra.ico"),
         )
         return 0
 

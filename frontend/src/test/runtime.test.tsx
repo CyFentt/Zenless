@@ -5,7 +5,7 @@ import { ApplicationRuntime } from '@/runtime/AppRuntime';
 import { MockZenlessAPI } from '@/services/mock/mockApi';
 import type { ZenlessSocket } from '@/services/websocket/socket';
 import { useStore } from '@/store';
-import type { AgentInfo, ConnectionInfo, SocketStatus, ZenlessEvent, ZenlessEventHandler } from '@/types';
+import type { AgentInfo, ConnectionInfo, SocketStatus, TestState, ZenlessEvent, ZenlessEventHandler } from '@/types';
 
 type StatusHandler = (status: SocketStatus) => void;
 
@@ -55,6 +55,23 @@ const initialState = useStore.getState();
 beforeEach(() => useStore.setState(initialState, true));
 
 describe('ApplicationRuntime', () => {
+  it.each(['started', 'finished'])('keeps the newer test event when %s races a job snapshot', async (event) => {
+    const api = new MockZenlessAPI();
+    const socket = new RuntimeSocket();
+    let resolveState!: (value: TestState) => void;
+    const pending = new Promise<TestState>((resolve) => { resolveState = resolve; });
+    const stateRequest = vi.spyOn(api, 'getTestState').mockReturnValue(pending);
+    const runtime = new ApplicationRuntime(api, socket);
+    const starting = runtime.start();
+    await waitFor(() => expect(stateRequest).toHaveBeenCalled());
+    const jobId = useStore.getState().currentJobId!;
+    socket.emit({ type: 'TEST_STARTED', data: { jobId } });
+    if (event === 'finished') socket.emit({ type: 'TEST_FINISHED', data: { jobId, passed: true } });
+    resolveState({ status: 'IDLE', elapsedMs: 0, fixAttempt: 0, maxFixAttempts: 3 });
+    await starting;
+    expect(useStore.getState().testState.status).toBe(event === 'started' ? 'RUNNING' : 'STOPPED');
+    runtime.stop();
+  });
   it('finishes delayed hydration before leaving the splash and keeps the socket alive', async () => {
     const api = new MockZenlessAPI();
     const socket = new RuntimeSocket();

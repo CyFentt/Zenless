@@ -307,13 +307,13 @@ class LocalWebBridge:
             raise
 
     async def _cancel_generation(self, request: web.Request) -> web.Response:
-        return self._json({"ok": self.core.cancel_generation(request.match_info["job_id"])})
+        return self._json({"ok": await asyncio.to_thread(self.core.cancel_generation, request.match_info["job_id"])})
 
     async def _context(self, request: web.Request) -> web.Response:
         return self._json(self.core.context(request.match_info["job_id"]))
 
     async def _refresh_context(self, request: web.Request) -> web.Response:
-        return self._json(self.core.context(request.match_info["job_id"], refresh=True))
+        return self._json(await asyncio.to_thread(self.core.context, request.match_info["job_id"], refresh=True))
 
     async def _inspect_context(self, request: web.Request) -> web.Response:
         return self._json(self.core.context_item(request.match_info["item_id"]))

@@ -41,6 +41,7 @@ from .prompts import (
 from .protocol import ProtocolError, extract_json_object
 from .skills import SkillLibrary
 from .store import SQLiteStore, now_iso
+from .studio_data import active_studio_title, export_sources, read_scene, read_sources, read_tree, script_source
 from .studio_mcp import MCPError, StudioMCPClient, select_studio_target
 
 EventCallback = Callable[[PipelineEvent], None]
@@ -134,6 +135,7 @@ class ZenlessOrchestrator:
         options: TaskOptions,
         *,
         attachment_paths: tuple[Path, ...] = (),
+        studio_id: str = "",
     ) -> str:
         objective = prompt.strip()
         if not objective:
@@ -154,6 +156,8 @@ class ZenlessOrchestrator:
                 )
             try:
                 self.store.create_task(task_id, objective, options)
+                if studio_id:
+                    self.store.update_task(task_id, studio_id=studio_id)
                 self._tasks[task_id] = thread
                 self._cancel[task_id] = cancel_event
                 self._pause[task_id] = pause_event
@@ -351,7 +355,7 @@ class ZenlessOrchestrator:
             self.studio.start()
         studios = self.studio.list_studios()
         task = self.store.load_task(task_id) or {}
-        target = select_studio_target(studios, str(task.get("studio_id") or ""))
+        target = select_studio_target(studios, str(task.get("studio_id") or ""), active_title=active_studio_title())
         self.store.update_task(task_id, studio_id=target.studio_id)
         analysis = self.brain.analyze(
             objective,
@@ -364,7 +368,12 @@ class ZenlessOrchestrator:
         if skill_selection.text:
             context["rubra_skills"] = skill_selection.text
             context["rubra_skill_sources"] = list(skill_selection.names)
-            self._emit(task_id, Stage.COLLECTING_CONTEXT, f"Loaded {len(skill_selection.names)} Roblox skill references.", detail=", ".join(skill_selection.names))
+            self._emit(
+                task_id,
+                Stage.COLLECTING_CONTEXT,
+                f"Loaded {len(skill_selection.names)} Roblox skill references.",
+                detail=", ".join(skill_selection.names),
+            )
         if self.project_search_callback is not None:
             try:
                 indexed = self.project_search_callback(objective)
@@ -374,8 +383,7 @@ class ZenlessOrchestrator:
                     metadata = indexed.get("metadata")
                     if isinstance(metadata, dict):
                         context["semantic_project_metadata"] = {
-                            str(key): str(value)[:16000]
-                            for key, value in metadata.items()
+                            str(key): str(value)[:16000] for key, value in metadata.items()
                         }
             except Exception as exc:
                 context["semantic_project_index_unavailable"] = str(exc)
@@ -454,6 +462,12 @@ class ZenlessOrchestrator:
 
         mutating = [action for action in proposal.actions if not is_read_only(action.tool)]
         if not mutating:
+            if options.automatic_play_test and any(intent in analysis.intents for intent in ("audit", "debug", "test")):
+                self._emit(task_id, Stage.TESTING, "Testing the existing game without persistent changes.")
+                output = self._run_quality_test(task_id, target.studio_id, cancel_event, [], False)
+                self.store.append_message(task_id, "Studio", "test", output)
+                if self._console_has_errors(output):
+                    raise TaskBlocked("The existing-game review found test failures. " + output[-6000:])
             final_text = proposal.final_message or proposal.summary or "No persistent changes were required."
             self.store.append_message(task_id, "Builder", "assistant", final_text)
             self.store.update_task(task_id, final_text=final_text)
@@ -515,7 +529,11 @@ class ZenlessOrchestrator:
             console_output = self._run_quality_test(task_id, target.studio_id, cancel_event, apply_evidence, False)
             fix_count = 0
             while self._console_has_errors(console_output):
-                if not options.auto_fix_errors or (not options.continuous_verification and fix_count >= options.max_test_fixes) or fix_count >= 64:
+                if (
+                    not options.auto_fix_errors
+                    or (not options.continuous_verification and fix_count >= options.max_test_fixes)
+                    or fix_count >= 64
+                ):
                     raise OrchestratorError(
                         "The play test returned errors and reached the correction limit.\n" + console_output[-6000:]
                     )
@@ -554,7 +572,9 @@ class ZenlessOrchestrator:
                     if decision != "approve":
                         raise TaskBlocked("The correction was not approved." + (f" {note}" if note else ""))
                 else:
-                    self._record_auto_approval(task_id, f"repair:{fix_count}:auto", self._effective_approval_mode(options))
+                    self._record_auto_approval(
+                        task_id, f"repair:{fix_count}:auto", self._effective_approval_mode(options)
+                    )
                 self._bind_mutation_preconditions(task_id, target.studio_id, repair_actions)
                 apply_evidence.extend(self._apply_actions(task_id, target.studio_id, repair_actions))
                 proposal = repair
@@ -579,11 +599,6 @@ class ZenlessOrchestrator:
     def _collect_context(self, task_id: str, studio_id: str, analysis: BrainAnalysis) -> dict[str, Any]:
         calls: list[tuple[str, dict[str, Any]]] = [
             ("get_studio_state", {}),
-            ("search_game_tree", {"datamodel_type": "Edit", "max_depth": 4, "head_limit": 350}),
-            (
-                "search_game_tree",
-                {"datamodel_type": "Edit", "instance_type": "BaseScript", "max_depth": 8, "head_limit": 250},
-            ),
             ("get_console_output", {}),
         ]
         context: dict[str, Any] = {
@@ -592,6 +607,77 @@ class ZenlessOrchestrator:
             "brain": analysis.to_dict(),
             "reads": {},
         }
+        try:
+            snapshot = read_tree(self.studio, studio_id)
+            folder = self.run_root / task_id
+            folder.mkdir(parents=True, exist_ok=True)
+            (folder / "studio-inventory.json").write_text(
+                json.dumps(snapshot.instances, ensure_ascii=False), encoding="utf-8"
+            )
+            counts: dict[str, int] = {}
+            scripts: list[dict[str, Any]] = []
+            for item in snapshot.instances:
+                class_name = str(item.get("className") or item.get("class_name") or item.get("ClassName") or "Instance")
+                counts[class_name] = counts.get(class_name, 0) + 1
+                if class_name in {"Script", "LocalScript", "ModuleScript"}:
+                    scripts.append(item)
+            context["inventory"] = {
+                "total": snapshot.total,
+                "indexed": len(snapshot.instances),
+                "complete": snapshot.complete,
+                "classes": counts,
+                "scripts": [
+                    {key: item.get(key) for key in ("path", "className", "name")}
+                    for item in scripts[:64]
+                ],
+                "script_count": len(scripts),
+                "source": snapshot.source,
+            }
+            context["reads"]["search_game_tree:inventory"] = json.dumps(snapshot.instances[:100], ensure_ascii=False)
+            source_snapshot = read_sources(self.studio, studio_id, snapshot)
+            source_root = folder / "studio-project"
+            source_manifest = export_sources(source_root, studio_id, source_snapshot)
+            context["studio_project_root"] = str(source_root)
+            context["studio_source_snapshot"] = True
+            ranked = sorted(
+                source_snapshot.scripts,
+                key=lambda item: -sum(word in str(item.get("path", "")).casefold() for word in analysis.keywords),
+            )
+            sources: dict[str, str] = {}
+            budget = 22000
+            for item in ranked[:24]:
+                if budget <= 0:
+                    break
+                excerpt = (
+                    ("READ_UNAVAILABLE: " + item["readError"])
+                    if item.get("readError")
+                    else item["source"][: min(4000, budget)]
+                )
+                sources[item["path"]] = excerpt
+                budget -= len(excerpt)
+            context["script_sources"] = sources
+            context["source_coverage"] = {
+                "exported": source_manifest["readable"],
+                "total_scripts": source_snapshot.total,
+                "complete": source_snapshot.complete,
+                "errors": source_manifest["errors"],
+                "prompt_excerpts": len(sources),
+                "additional_reads": "Full source is exported for static checks. Prompt sources are excerpts; use script_read before each change.",
+            }
+            self.store.update_task(task_id, context_json=context)
+            roots = self.store.get_setting("studio.projectRoots", {})
+            if not isinstance(roots, dict):
+                roots = {}
+            roots[studio_id] = str(source_root)
+            self.store.set_setting("studio.projectRoots", roots)
+            self._emit(
+                task_id,
+                Stage.COLLECTING_CONTEXT,
+                f"Indexed {len(snapshot.instances)} objects and exported {source_manifest['readable']} scripts for checks.",
+                "success",
+            )
+        except MCPError as exc:
+            context["inventory_unavailable"] = str(exc)
         for tool_name, arguments in calls:
             if tool_name not in self.studio.tools:
                 continue
@@ -812,7 +898,9 @@ class ZenlessOrchestrator:
                     )
                     continue
                 if self._effective_approval_mode(options) == "full_auto":
-                    self._record_auto_approval(task_id, f"visual:{version}:auto", self._effective_approval_mode(options))
+                    self._record_auto_approval(
+                        task_id, f"visual:{version}:auto", self._effective_approval_mode(options)
+                    )
                     visual["status"] = "APPROVED"
                     self.store.update_context_section(task_id, "visual", visual)
                     break
@@ -853,7 +941,9 @@ class ZenlessOrchestrator:
                 )
                 detail = json.dumps(response, ensure_ascii=False)
                 if options.approval_mode == "full_auto":
-                    self._record_auto_approval(task_id, f"3d:{model_version}:auto", self._effective_approval_mode(options))
+                    self._record_auto_approval(
+                        task_id, f"3d:{model_version}:auto", self._effective_approval_mode(options)
+                    )
                     response["status"] = "APPROVED"
                     self.store.update_context_section(task_id, "model", response)
                     break
@@ -1180,6 +1270,18 @@ class ZenlessOrchestrator:
                 expected_hash = str(action.arguments.get("_zenless_expected_sha256") or "")
                 before_hash = ""
                 expected_source = ""
+                if action.tool == "execute_luau":
+                    expected = action.arguments.get("_zenless_expected_instances")
+                    if not isinstance(expected, dict) or "_zenless_scene_before" not in action.arguments:
+                        raise OrchestratorError("Scene changes require a bound property snapshot.")
+                    current = read_scene(self.studio, studio_id, expected)
+                    if current["observed"] != action.arguments["_zenless_scene_before"].get("observed") or current[
+                        "missing"
+                    ] != action.arguments["_zenless_scene_before"].get("missing"):
+                        raise OrchestratorError("STUDIO_CHANGED: scene properties changed after review.")
+                    (run_dir / f"before-scene-{index:02d}.json").write_text(
+                        json.dumps(current, ensure_ascii=False), encoding="utf-8"
+                    )
                 if action.tool == "multi_edit":
                     if not expected_hash:
                         raise OrchestratorError("MUTATION_PRECONDITION_MISSING: multi_edit has no expected hash.")
@@ -1218,6 +1320,19 @@ class ZenlessOrchestrator:
                     operation_evidence.extend(
                         self._verify_script(task_id, studio_id, arguments, expected_hash, operation_id, expected_source)
                     )
+                if action.tool == "execute_luau":
+                    verified = read_scene(
+                        self.studio, studio_id, action.arguments["_zenless_expected_instances"], verify=True
+                    )
+                    operation_evidence.append(
+                        {
+                            "tool": "rubra_scene_readback",
+                            "is_error": False,
+                            "verified": True,
+                            "result": verified,
+                            "operation_id": operation_id,
+                        }
+                    )
                 self.store.finish_operation(
                     operation_id,
                     "complete",
@@ -1244,6 +1359,10 @@ class ZenlessOrchestrator:
     ) -> None:
         predicted: dict[str, tuple[bool, str]] = {}
         for action in actions:
+            if action.tool == "execute_luau":
+                action.arguments["_zenless_scene_before"] = read_scene(
+                    self.studio, studio_id, action.arguments["_zenless_expected_instances"]
+                )
             if action.tool != "multi_edit":
                 continue
             arguments = self._prepare_arguments(action.tool, action.arguments)
@@ -1284,14 +1403,14 @@ class ZenlessOrchestrator:
             timeout=90,
         )
         if result.is_error:
-            if allow_missing and target in result.text and re.search(
-                r"\b(?:not found|does not exist|doesn't exist)\b", result.text, re.IGNORECASE
+            if (
+                allow_missing
+                and target in result.text
+                and re.search(r"\b(?:not found|does not exist|doesn't exist)\b", result.text, re.IGNORECASE)
             ):
                 return False, ""
             raise OrchestratorError(f"Could not read back {target}: {result.compact(3000)}")
-        structured = result.structured_content
-        source = structured.get("source") if isinstance(structured, dict) else None
-        return True, source if isinstance(source, str) else result.text
+        return True, script_source(result)
 
     @staticmethod
     def _edited_source(source: str, arguments: dict[str, Any]) -> str:
@@ -1543,7 +1662,9 @@ class ZenlessOrchestrator:
                 if decision != "approve":
                     raise TaskBlocked("Final correction was not approved: " + note)
             else:
-                self._record_auto_approval(task_id, f"final-repair:{revisions}:auto", self._effective_approval_mode(options))
+                self._record_auto_approval(
+                    task_id, f"final-repair:{revisions}:auto", self._effective_approval_mode(options)
+                )
             self._emit(task_id, Stage.APPLYING, "Applying the approved final review correction.")
             mutation_evidence.extend(self._apply_actions(task_id, studio_id, repair_actions))
             proposal = repair
@@ -1585,8 +1706,8 @@ class ZenlessOrchestrator:
                 state["sources"][target] = {"error": result.compact(3000)}
                 continue
             state["sources"][target] = {
-                "sha256": self._source_hash(result.text),
-                "source": result.text[:32_000],
+                "sha256": self._source_hash(script_source(result)),
+                "source": script_source(result)[:32_000],
             }
         return state
 
@@ -1629,13 +1750,25 @@ class ZenlessOrchestrator:
     def _tool_catalog(self) -> list[dict[str, Any]]:
         catalog: list[dict[str, Any]] = []
         for tool in sorted(self.studio.tools.values(), key=lambda item: item.name):
-            if tool.name in {"execute_luau", "user_keyboard_input", "user_mouse_input", "start_stop_play"}:
+            if tool.name in {"user_keyboard_input", "user_mouse_input", "start_stop_play"}:
                 continue
+            schema = tool.input_schema
+            if tool.name == "execute_luau":
+                schema = {
+                    **schema,
+                    "properties": {
+                        **schema.get("properties", {}),
+                        "_zenless_expected_instances": {
+                            "type": "object",
+                            "description": "Required post-change expectations: exact game paths mapped to the properties and JSON values that Rubra must read back.",
+                        },
+                    },
+                }
             catalog.append(
                 {
                     "name": tool.name,
                     "description": tool.description[:1200],
-                    "inputSchema": tool.input_schema,
+                    "inputSchema": schema,
                 }
             )
         return catalog
@@ -1716,12 +1849,7 @@ class ZenlessOrchestrator:
             return False
         if mode == "ask":
             return True
-        if (
-            review is None
-            or not review.approved
-            or review.confidence < 0.75
-            or review.risk not in {"low", "medium"}
-        ):
+        if review is None or not review.approved or review.confidence < 0.75 or review.risk not in {"low", "medium"}:
             return True
         for action in actions:
             if action.risk not in {"low", "medium"}:

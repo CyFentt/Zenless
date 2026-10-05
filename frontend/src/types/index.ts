@@ -176,6 +176,14 @@ export interface ChatAttachment {
   state?: "READY" | "EXTRACTING" | "ROUTING" | "UNSUPPORTED" | "FAILED" | "PREPARING";
 }
 
+export interface TestCapture {
+  id: string;
+  imageUrl: string;
+  width: number;
+  height: number;
+  timestamp: number;
+}
+
 export type ChatArtifactType = "IMAGE" | "MODEL_3D" | "FILE" | "DIFF" | "REPORT";
 export type ChatArtifactState = "GENERATING" | "READY" | "APPROVED" | "REJECTED" | "FAILED";
 
@@ -322,6 +330,8 @@ export interface Asset {
 export type StudioState = "ONLINE" | "OFFLINE" | "CONNECTING" | "SEARCHING" | "SETUP_REQUIRED" | "SELECT_REQUIRED" | "ERROR";
 
 export interface StudioNode {
+  details?: unknown;
+  detailsError?: string;
   id: string;
   name: string;
   className: string;
@@ -579,13 +589,14 @@ export interface ZenlessEventMap {
   MODEL_READY: { modelUrl: string; filename?: string };
   MODEL_APPROVED: Record<string, never>;
   ASSETS_UPDATED: { assets: Asset[] };
-  STUDIO_STATE_CHANGED: { state: StudioState; projectName?: string };
+  STUDIO_STATE_CHANGED: { state: StudioState; projectName?: string; treeError?: string };
   STUDIO_TREE_UPDATED: { tree: StudioNode[] };
   TEST_STARTED: { jobId?: string };
   TEST_CASE_STARTED: { jobId?: string; testCase: TestCaseResult };
   TEST_CASE_FINISHED: { jobId?: string; testCase: TestCaseResult };
   TEST_FAILURE: { jobId?: string; failure: TestFailure };
   TEST_LOG: { log: TestLog };
+  TEST_CAPTURE: { jobId: string; capture: TestCapture };
   TEST_FINISHED: { passed: boolean; cancelled?: boolean; jobId?: string };
   SETTINGS_CHANGED: { settings: Partial<Settings> };
   DIAGNOSTIC_EVENT: { diagnostic: Diagnostic };

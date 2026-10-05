@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, lazy, Suspense } from 'react';
-import { Paperclip, ArrowUp, Settings2, X } from 'lucide-react';
+import { Paperclip, ArrowUp, Settings2, X, Square, ScanSearch, Wrench, Code2 } from 'lucide-react';
 import { useStore } from '@/store';
 import { getApi } from '@/services';
 import { ApiError } from '@/services/api/realApi';
@@ -9,6 +9,9 @@ import { DEFAULT_TASK_OPTIONS, type ChatMessage, type ProviderId, type TaskOptio
 const TaskOptionsPanel = lazy(() => import('./TaskOptionsPanel').then((m) => ({ default: m.TaskOptionsPanel })));
 
 export function ChatPage() {
+  const projectName = useStore((s) => s.studioProjectName);
+  const job = useStore((s) => s.jobs.find((item) => item.id === s.currentJobId));
+  const working = job?.status === 'RUNNING' || job?.status === 'NEW';
   const activities = useStore((s) => s.activities);
   const messages = useStore((s) => s.messages);
   const streamingMessageId = useStore((s) => s.streamingMessageId);
@@ -30,6 +33,14 @@ export function ChatPage() {
   const [attachments, setAttachments] = useState<{ id: string; file: File; previewUrl?: string }[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const composerRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    if (composerRef.current) {
+      composerRef.current.style.height = 'auto';
+      composerRef.current.style.height = `${Math.min(180, Math.max(48, composerRef.current.scrollHeight))}px`;
+    }
+  }, [input]);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -39,7 +50,7 @@ export function ChatPage() {
 
   const handleSend = async () => {
     const content = input.trim();
-    if ((!content && attachments.length === 0) || sending) return;
+    if ((!content && attachments.length === 0) || sending || working) return;
     const files = attachments.map((attachment) => attachment.file);
     const displayContent = content || files.map((file) => file.name).join(', ');
     const localId = `pending_${crypto.randomUUID?.() ?? `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`}`;
@@ -109,10 +120,18 @@ export function ChatPage() {
     <div className="flex h-full">
       <div className="flex-1 flex flex-col min-w-0">
         <div ref={scrollRef} className="flex-1 overflow-y-auto scrollbar-zen">
-          <div className="max-w-3xl mx-auto px-6 py-4 space-y-1">
+          <div className="max-w-3xl mx-auto px-6 py-8 space-y-6 min-h-full flex flex-col">
             {messages.length === 0 && !streamingMessageId && (
-              <div className="flex items-center justify-center h-full text-xs text-ink-400 uppercase tracking-wider pt-20">
-                Start a conversation
+              <div className="my-auto py-10 space-y-7 text-center">
+                <div className="space-y-3">
+                  <h1 className="text-2xl font-medium text-ink-0 tracking-tight">What should we work on?</h1>
+                  <p className="text-sm text-ink-300">{projectName ? `Working with ${projectName}` : 'Open your game in Studio. Rubra connects automatically.'}</p>
+                </div>
+                <div className="flex flex-wrap justify-center gap-2">
+                  {[{ icon: ScanSearch, label: 'Review this game', prompt: 'Review this existing game, inspect its scripts and structure, and report concrete issues.' }, { icon: Wrench, label: 'Find and fix errors', prompt: 'Inspect this game, reproduce its errors, fix the causes, and test the changes.' }, { icon: Code2, label: 'Build a feature', prompt: 'Help me add a feature to this existing game: ' }].map(({ icon: Icon, label, prompt }) => (
+                    <button key={label} onClick={() => { setInput(prompt); composerRef.current?.focus(); }} className="inline-flex items-center gap-2 px-3 py-2.5 rounded-lg border border-ink-700 hover:border-zen-red text-xs text-ink-100 hover:text-ink-0 transition-colors"><Icon size={14} />{label}</button>
+                  ))}
+                </div>
               </div>
             )}
             {messages.map((msg) => (
@@ -134,7 +153,7 @@ export function ChatPage() {
             )}
           </div>
         </div>
-        <div className="shrink-0 border-t border-ink-600 px-6 py-3">
+        <div className="shrink-0 px-6 pb-5 pt-3">
           <div className="max-w-3xl mx-auto">
             {attachments.length > 0 && (
               <div className="flex flex-wrap gap-1.5 mb-2">
@@ -154,7 +173,7 @@ export function ChatPage() {
                 ))}
               </div>
             )}
-            <div className="flex items-end gap-2">
+            <div className="rubra-composer flex items-end gap-2 rounded-xl border border-ink-600 bg-ink-900 p-2 focus-within:border-zen-red transition-colors">
               <Tooltip content="Attach">
                 <button onClick={handleAttach} className="w-8 h-8 flex items-center justify-center text-ink-300 hover:text-ink-0 border border-ink-600 hover:border-ink-500 transition-colors" aria-label="Attach file">
                   <Paperclip size={14} strokeWidth={1.5} />
@@ -162,20 +181,22 @@ export function ChatPage() {
               </Tooltip>
               <input ref={fileInputRef} type="file" multiple className="hidden" onChange={handleFileChange} />
               <textarea
+                ref={composerRef}
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
+                onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); handleSend(); } }}
                 placeholder="Message Rubra"
                 rows={1}
-                className="flex-1 bg-ink-800 border border-ink-600 text-sm text-ink-0 px-3 py-2 resize-none placeholder:text-ink-400 focus:border-ink-500 transition-colors scrollbar-zen"
-                style={{ minHeight: '36px', maxHeight: '120px' }}
+                className="flex-1 min-w-0 bg-transparent text-sm text-ink-0 px-2 py-3 resize-none placeholder:text-ink-300 outline-none scrollbar-zen"
+                style={{ minHeight: '48px', maxHeight: '180px' }}
               />
               <Tooltip content="Options">
                 <button onClick={() => setShowOptions(!showOptions)} className={`w-8 h-8 flex items-center justify-center border transition-colors ${showOptions ? 'text-ink-0 bg-ink-700 border-ink-500' : 'text-ink-300 border-ink-600 hover:border-ink-500 hover:text-ink-0'}`} aria-label="Task options">
                   <Settings2 size={14} strokeWidth={1.5} />
                 </button>
               </Tooltip>
-              <button onClick={handleSend} disabled={sending || (!input.trim() && attachments.length === 0)} className="w-8 h-8 flex items-center justify-center text-ink-0 bg-ink-700 border border-ink-500 disabled:opacity-30 hover:bg-ink-600 transition-colors" aria-label="Send">
+              {working && currentJobId && <Tooltip content="Stop the active task"><button aria-label="Stop task" onClick={() => void getApi().cancelGeneration(currentJobId).catch((error) => frontendDiagnostics.capture(error, 'chat', 'Failed to stop task'))} className="w-8 h-8 rounded-lg flex items-center justify-center text-zen-redBright border border-zen-red"><Square size={13} /></button></Tooltip>}
+              <button onClick={handleSend} disabled={sending || working || (!input.trim() && attachments.length === 0)} className="w-8 h-8 flex items-center justify-center text-white bg-zen-red rounded-lg disabled:opacity-30 hover:bg-zen-redBright transition-colors" aria-label="Send">
                 <ArrowUp size={14} strokeWidth={1.5} />
               </button>
             </div>
@@ -197,12 +218,12 @@ function ChatMessageRow({ message, streaming, logging, onLogin }: { message: Cha
   const parts = message.content.split(/(```[\s\S]*?```)/g);
 
   return (
-    <div className={`py-2 ${streaming ? 'opacity-80' : ''}`}>
+    <div className={`${isUser ? 'self-end max-w-[88%] rounded-xl bg-ink-850 border border-ink-700 px-4 py-3' : 'w-full py-2'} ${streaming ? 'opacity-80' : ''}`}>
       <div className="flex items-baseline gap-2 mb-1">
-        <span className={`text-2xs uppercase tracking-widest font-medium ${isUser ? 'text-ink-100' : 'text-ink-0'}`}>{isUser ? 'YOU' : 'ZENLESS'}</span>
+        <span className={`text-2xs uppercase tracking-widest font-medium ${isUser ? 'text-ink-100' : 'text-ink-0'}`}>{isUser ? 'You' : message.role === 'system' ? 'Notice' : 'Rubra'}</span>
         <span className="text-2xs text-ink-400 font-mono">{time}</span>
       </div>
-      <div className={`text-sm leading-relaxed ${isUser ? 'text-ink-50' : 'text-ink-100'} pl-0`}>
+      <div className={`text-sm leading-7 whitespace-pre-wrap break-words ${isUser ? 'text-ink-50' : 'text-ink-100'} pl-0`}>
         {parts.map((part, idx) => {
           if (part.startsWith('```')) {
             const code = part.replace(/```\w*\n?/, '').replace(/```$/, '');

@@ -130,6 +130,7 @@ export function handleEvent(event: ZenlessEvent) {
     case 'STUDIO_STATE_CHANGED':
       store.setStudioState(event.data.state);
       useStore.setState((state) => ({ studioVersion: state.studioVersion + 1, studioProjectName: event.data.projectName ?? (event.data.state === 'OFFLINE' ? '' : state.studioProjectName) }));
+      if (event.data.treeError !== undefined) useStore.setState({ studioTreeError: event.data.treeError });
       break;
     case 'STUDIO_TREE_UPDATED':
       useStore.setState((state) => ({ studioVersion: state.studioVersion + 1 }));
@@ -166,7 +167,11 @@ export function handleEvent(event: ZenlessEvent) {
     case 'TEST_LOG':
       store.addTestLog(event.data.log);
       break;
+    case 'TEST_CAPTURE':
+      if (useStore.getState().activeTestJobId === event.data.jobId) useStore.setState((state) => ({ testCaptures: [...state.testCaptures.filter((item) => item.id !== event.data.capture.id), event.data.capture].slice(-12) }));
+      break;
     case 'TEST_FINISHED':
+      if (useStore.getState().activeTestJobId && useStore.getState().activeTestJobId !== event.data.jobId) break;
       store.setTestState({ ...useStore.getState().testState, status: event.data.passed || event.data.cancelled ? 'STOPPED' : 'FAILED' });
       break;
     case 'SETTINGS_CHANGED':

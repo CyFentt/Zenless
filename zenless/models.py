@@ -49,6 +49,7 @@ _STAGE_TRANSITIONS: dict[Stage, set[Stage]] = {
         *_COMMON_FAILURES,
     },
     Stage.PLANNING: {
+        Stage.TESTING,
         Stage.COLLECTING_CONTEXT,
         Stage.REVIEWING,
         Stage.GENERATING_CONCEPT,
@@ -99,6 +100,7 @@ _STAGE_TRANSITIONS: dict[Stage, set[Stage]] = {
         *_COMMON_FAILURES,
     },
     Stage.REVIEWING: {
+        Stage.TESTING,
         Stage.REVISING,
         Stage.GENERATING_CONCEPT,
         Stage.GENERATING_3D,

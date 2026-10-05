@@ -3,10 +3,13 @@ from __future__ import annotations
 import json
 import os
 import queue
+import re
 import subprocess
 import threading
+import time
 from collections import deque
 from dataclasses import dataclass
+from itertools import islice
 from pathlib import Path
 from typing import Any, Callable
 
@@ -15,6 +18,48 @@ MCP_PROTOCOL_VERSION = "2024-11-05"
 
 class MCPError(RuntimeError):
     pass
+
+
+class MCPBusyError(MCPError):
+    pass
+
+
+def json_values(value: Any, _depth: int = 0):
+    if _depth > 8:
+        return
+    if isinstance(value, (dict, list)):
+        yield value
+        if isinstance(value, dict):
+            for key in ("result", "output", "data", "structuredContent", "text"):
+                if key in value:
+                    yield from json_values(value[key], _depth + 1)
+        return
+    if not isinstance(value, str) or len(value) > 16_000_000:
+        return
+    text = value.strip().lstrip("\ufeff")
+    try:
+        decoded = json.loads(text)
+    except ValueError, RecursionError:
+        decoded = None
+    if isinstance(decoded, str) and decoded != value:
+        yield from json_values(decoded, _depth + 1)
+        return
+    elif isinstance(decoded, (dict, list)):
+        yield from json_values(decoded, _depth + 1)
+        return
+    decoder = json.JSONDecoder()
+    end = 0
+    for match in islice(re.finditer(r'[\[{\"]', text), 256):
+        if match.start() < end:
+            continue
+        try:
+            decoded, end = decoder.raw_decode(text, match.start())
+        except ValueError, RecursionError:
+            continue
+        if isinstance(decoded, (dict, list)):
+            yield from json_values(decoded, _depth + 1)
+        elif isinstance(decoded, str) and any(ch in decoded for ch in "[{"):
+            yield from json_values(decoded, _depth + 1)
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,9 +77,20 @@ class MCPToolResult:
     content_types: tuple[str, ...]
     images: tuple[dict[str, str], ...] = ()
     structured_content: dict[str, Any] | list[Any] | None = None
+    text_blocks: tuple[str, ...] = ()
+
+    def json_payloads(self):
+        yield from json_values(self.structured_content)
+        for block in self.text_blocks or (self.text,):
+            yield from json_values(block)
 
     def compact(self, limit: int = 12_000) -> str:
         text = self.text.strip()
+        if self.structured_content is not None:
+            structured = json.dumps(self.structured_content, ensure_ascii=False)
+            if structured not in text:
+                text += "\n" + structured
+            text = text.strip()
         if len(text) <= limit:
             return text
         return text[:limit] + "\n...[result truncated]"
@@ -47,7 +103,9 @@ class StudioTarget:
     raw: dict[str, Any]
 
 
-def select_studio_target(studios: list[StudioTarget], studio_id: str = "") -> StudioTarget:
+def select_studio_target(
+    studios: list[StudioTarget], studio_id: str = "", *, preferred_id: str = "", active_title: str = ""
+) -> StudioTarget:
     if studio_id:
         for studio in studios:
             if studio.studio_id == studio_id:
@@ -55,8 +113,29 @@ def select_studio_target(studios: list[StudioTarget], studio_id: str = "") -> St
         raise MCPError("The Studio instance assigned to this task is no longer connected.")
     if not studios:
         raise MCPError("No Studio instance is connected.")
+    active = [
+        studio
+        for studio in studios
+        if any(studio.raw.get(key) is True for key in ("active", "is_active", "isActive", "focused", "isFocused"))
+    ]
+    if len(active) == 1:
+        return active[0]
+    if active_title:
+        matches = [
+            studio
+            for studio in studios
+            if str(studio.raw.get("name") or studio.label.split(" • ")[0]).casefold() in active_title.casefold()
+        ]
+        if len(matches) == 1:
+            return matches[0]
+    if preferred_id:
+        preferred = [studio for studio in studios if studio.studio_id == preferred_id]
+        if preferred:
+            return preferred[0]
     if len(studios) != 1:
-        raise MCPError("Multiple Studio instances are connected. Keep only the intended place open before starting a task.")
+        raise MCPError(
+            "Multiple Studio instances are connected. Focus the intended Studio window so Rubra can select it automatically."
+        )
     return studios[0]
 
 
@@ -71,10 +150,6 @@ def find_studio_mcp(explicit_path: str = "") -> Path:
     if not local_app_data:
         raise MCPError("The LOCALAPPDATA environment variable is unavailable.")
 
-    launcher = Path(local_app_data) / "Roblox" / "mcp.bat"
-    if launcher.is_file():
-        return launcher
-
     versions = Path(local_app_data) / "Roblox" / "Versions"
     paired: list[Path] = []
     fallback: list[Path] = []
@@ -85,6 +160,9 @@ def find_studio_mcp(explicit_path: str = "") -> Path:
             paired.append(candidate)
     candidates = paired or fallback
     if not candidates:
+        launcher = Path(local_app_data) / "Roblox" / "mcp.bat"
+        if launcher.is_file():
+            return launcher
         raise MCPError("Studio MCP was not found. Update Studio and enable Assistant > MCP Servers.")
     return max(candidates, key=lambda path: path.stat().st_mtime)
 
@@ -149,7 +227,9 @@ class StudioMCPClient:
             )
             safe_name = "".join(ch if ch.isalnum() else "-" for ch in self.client_name)[:32] or "MCP"
             self._reader = threading.Thread(target=self._read_stdout, name=f"Rubra-{safe_name}-stdout", daemon=True)
-            self._stderr_reader = threading.Thread(target=self._read_stderr, name=f"Rubra-{safe_name}-stderr", daemon=True)
+            self._stderr_reader = threading.Thread(
+                target=self._read_stderr, name=f"Rubra-{safe_name}-stderr", daemon=True
+            )
             self._reader.start()
             self._stderr_reader.start()
 
@@ -203,13 +283,12 @@ class StudioMCPClient:
         result = self.call_tool("list_roblox_studios", {}, timeout=5)
         if result.is_error:
             raise MCPError(result.text or "Failed to list Studio instances.")
-        payload = result.structured_content
-        if payload is None:
-            try:
-                payload = json.loads(result.text)
-            except json.JSONDecodeError as exc:
-                raise MCPError("Studio discovery returned invalid JSON.") from exc
-        raw_studios = payload.get("studios", []) if isinstance(payload, dict) else payload
+        raw_studios = None
+        for payload in result.json_payloads():
+            candidate = payload.get("studios", payload.get("instances")) if isinstance(payload, dict) else payload
+            if isinstance(candidate, list):
+                raw_studios = candidate
+                break
         if not isinstance(raw_studios, list):
             raise MCPError("Studio discovery returned an invalid instance list.")
         studios: list[StudioTarget] = []
@@ -233,8 +312,15 @@ class StudioMCPClient:
         studio_id: str = "",
         timeout: float = 180,
     ) -> MCPToolResult:
-        with self._tool_call_lock:
-            return self._call_tool(name, arguments, studio_id=studio_id, timeout=timeout)
+        started = time.monotonic()
+        if not self._tool_call_lock.acquire(timeout=max(0.0, timeout)):
+            raise MCPBusyError("Studio is handling another operation; retry after it completes.")
+        try:
+            return self._call_tool(
+                name, arguments, studio_id=studio_id, timeout=max(0.01, timeout - (time.monotonic() - started))
+            )
+        finally:
+            self._tool_call_lock.release()
 
     def _call_tool(
         self,
@@ -282,7 +368,9 @@ class StudioMCPClient:
                     images.append({"mimeType": mime, "data": data})
                 text_parts.append(f"[MCP image: {mime}]")
             elif item_type == "resource":
-                text_parts.append("[MCP resource returned]")
+                resource = item.get("resource")
+                if isinstance(resource, dict) and isinstance(resource.get("text"), str):
+                    text_parts.append(resource["text"])
         structured = raw_result.get("structuredContent")
         if not isinstance(structured, (dict, list)):
             structured = None
@@ -295,6 +383,7 @@ class StudioMCPClient:
             content_types=tuple(content_types),
             images=tuple(images),
             structured_content=structured,
+            text_blocks=tuple(text_parts),
         )
 
     def request(self, method: str, params: dict[str, Any], *, timeout: float) -> dict[str, Any]:
@@ -430,7 +519,13 @@ def validate_json_schema(value: Any, schema: dict[str, Any], path: str = "$") ->
         alternatives = schema.get(keyword)
         if isinstance(alternatives, list):
             matches = sum(not validate_json_schema(value, option, path) for option in alternatives)
-            valid = matches == len(alternatives) if keyword == "allOf" else matches == 1 if keyword == "oneOf" else matches > 0
+            valid = (
+                matches == len(alternatives)
+                if keyword == "allOf"
+                else matches == 1
+                if keyword == "oneOf"
+                else matches > 0
+            )
             if not valid:
                 errors.append(f"{path} does not satisfy {keyword}")
 

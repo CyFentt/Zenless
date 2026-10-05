@@ -208,7 +208,7 @@ export class RealZenlessAPI implements ZenlessAPI {
 
   getAssets(): Promise<Asset[]> { return request('/api/assets'); }
 
-  getStudioState(): Promise<{ state: StudioState; projectName?: string }> { return request('/api/studio/state'); }
+  getStudioState(): Promise<{ state: StudioState; projectName?: string; treeError?: string }> { return request('/api/studio/state'); }
   getStudioTree(): Promise<StudioNode[]> { return request('/api/studio/tree'); }
   searchStudio(query: string): Promise<StudioNode[]> { return request(`/api/studio/search?q=${encodeURIComponent(query)}`); }
   refreshStudio(): Promise<{ ok: boolean }> { return request('/api/studio/refresh', { method: 'POST', timeout: 60000 }); }

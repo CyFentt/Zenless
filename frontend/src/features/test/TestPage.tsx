@@ -12,6 +12,7 @@ const FILTERS = ["ALL", "ERR", "WARN", "ZEN", "SRV", "CLI"] as const;
 export function TestPage() {
   const testState = useStore((s) => s.testState);
   const testLogs = useStore((s) => s.testLogs);
+  const captures = useStore((s) => s.testCaptures);
   const testCases = useStore((s) => s.testCases);
   const logFilter = useStore((s) => s.logFilter);
   const setLogFilter = useStore((s) => s.setLogFilter);
@@ -30,10 +31,15 @@ export function TestPage() {
       setTestState({ status: "IDLE", elapsedMs: 0, fixAttempt: 0, maxFixAttempts: 3 });
       return;
     }
+    const version = useStore.getState().testVersion;
+    let active = true;
     getApi()
       .getTestState(session)
-      .then(setTestState)
+      .then((state) => {
+        if (active && useStore.getState().testVersion === version) setTestState(state);
+      })
       .catch((error) => frontendDiagnostics.capture(error, "test", "Failed to load test state"));
+    return () => { active = false; };
   }, [currentJobId, testJobId, setTestState]);
 
   useEffect(() => {
@@ -155,6 +161,12 @@ export function TestPage() {
         </div>
       </div>
 
+      {captures.length > 0 && <div className="shrink-0 border-b border-ink-700 px-3 py-2 flex gap-2 overflow-x-auto" aria-label="Studio test captures">
+        {captures.map((capture) => <a key={capture.id} href={capture.imageUrl} target="_blank" rel="noreferrer" className="shrink-0 border border-ink-700 hover:border-zen-red rounded-md overflow-hidden">
+          <img src={capture.imageUrl} alt={`Studio test frame at ${formatLogTime(capture.timestamp)}`} className="h-24 w-40 object-contain bg-ink-950" />
+          <p className="px-2 py-1 text-2xs text-ink-300">{capture.width ? `${capture.width} × ${capture.height}` : 'Full-resolution frame'}</p>
+        </a>)}
+      </div>}
       <div className="flex-1 overflow-y-auto scrollbar-zen bg-ink-950 font-mono">
         {filteredLogs.length === 0 ? (
           <div className="flex items-center justify-center h-full text-2xs text-ink-400 uppercase tracking-wider">

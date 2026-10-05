@@ -24,7 +24,8 @@ from .project_index import ProjectIndexError, ProjectIndexService
 from .qa_breaker import QABreaker
 from .storage import StorageManager
 from .store import SQLiteStore
-from .studio_mcp import MCPError, MCPToolResult, StudioMCPClient, find_studio_mcp, select_studio_target
+from .studio_data import active_studio_title, read_tree, script_source, supported_arguments, tree_instances
+from .studio_mcp import MCPBusyError, MCPError, MCPToolResult, StudioMCPClient, find_studio_mcp, select_studio_target
 from .tool_registry import ToolRegistry
 from .toolchain import ToolchainManager
 from .webview2_browser import WebView2BrowserController
@@ -125,6 +126,8 @@ class ZenlessCore:
         self._test_start_lock = threading.Lock()
         self._studio_target_id = ""
         self._studio_label = ""
+        self._studio_tree_error = ""
+        self._studio_inventory = {"complete": False, "total": 0, "source": ""}
         self._studio_nodes: dict[str, dict[str, Any]] = {}
         self._studio_tree: list[dict[str, Any]] = []
         self._connections = {
@@ -345,6 +348,7 @@ class ZenlessCore:
                 title,
                 TaskOptions.from_api(options),
                 attachment_paths=attachments,
+                studio_id=self._studio_target_id if self.connections()["studio"] == "READY" else "",
             )
         except OrchestratorError as exc:
             raise CoreError("JOB_BUSY", str(exc), status=409) from exc
@@ -722,12 +726,15 @@ class ZenlessCore:
             raise CoreError("ASSET_UNAVAILABLE", "Local asset unavailable.", status=404)
         return path, str(asset["mime"]), str(asset["name"])
 
-    def studio_state(self) -> dict[str, str]:
+    def studio_state(self) -> dict[str, Any]:
         return {
             "state": "ONLINE"
             if self.connections()["studio"] == "READY"
             else ("CONNECTING" if self.connections()["studio"] == "CONNECTING" else "OFFLINE"),
             "projectName": self._studio_label,
+            "studioId": self._studio_target_id,
+            "treeError": getattr(self, "_studio_tree_error", ""),
+            "inventory": getattr(self, "_studio_inventory", {}),
         }
 
     def studio_tree(self) -> list[dict[str, Any]]:
@@ -755,31 +762,44 @@ class ZenlessCore:
             if not self.studio.running:
                 self.studio.start()
             studios = self.studio.list_studios()
-            target = select_studio_target(studios)
-            result = self.studio.call_tool(
-                "search_game_tree",
-                {"datamodel_type": "Edit", "max_depth": 5, "head_limit": 500},
-                studio_id=target.studio_id,
-                timeout=10,
-            )
-            if result.is_error:
-                raise MCPError(result.compact(4000))
-            tree, nodes = self._parse_studio_tree(
-                result.structured_content if result.structured_content is not None else result.text
+            target = select_studio_target(
+                studios, preferred_id=self._studio_target_id, active_title=active_studio_title()
             )
             with self._studio_lock:
-                self._studio_tree = tree
-                self._studio_nodes = nodes
+                if target.studio_id != self._studio_target_id:
+                    self._studio_tree, self._studio_nodes = [], {}
                 self._studio_target_id = target.studio_id
                 self._studio_label = target.label
             self._set_connection("studio", "READY")
             self.events.publish("STUDIO_STATE_CHANGED", self.studio_state())
+            try:
+                snapshot = read_tree(self.studio, target.studio_id)
+                tree, nodes = self._parse_studio_tree(snapshot.instances)
+                with self._studio_lock:
+                    self._studio_tree, self._studio_nodes = tree, nodes
+                    self._studio_inventory = {
+                        "complete": snapshot.complete,
+                        "total": snapshot.total,
+                        "source": snapshot.source,
+                    }
+                self._studio_tree_error = ""
+                self._last_studio_inventory = time.monotonic()
+            except MCPError as exc:
+                self._studio_tree_error = str(exc)
+            self.events.publish("STUDIO_STATE_CHANGED", self.studio_state())
+            tree = self.studio_tree()
             self.events.publish("STUDIO_TREE_UPDATED", {"tree": tree})
             return True
+        except MCPBusyError as exc:
+            raise CoreError("STUDIO_BUSY", str(exc), status=409) from exc
         except Exception as exc:
-            self._studio_label = ""
+            with self._studio_lock:
+                self._studio_label = self._studio_target_id = ""
+                self._studio_tree, self._studio_nodes = [], {}
+                self._studio_inventory = {}
             self._set_connection("studio", "ERR")
             self.events.publish("STUDIO_STATE_CHANGED", {"state": "OFFLINE"})
+            self.events.publish("STUDIO_TREE_UPDATED", {"tree": []})
             if report_error:
                 self._report(
                     "studio",
@@ -795,18 +815,36 @@ class ZenlessCore:
                 if self.connections()["studio"] != "READY" or not self.studio.running:
                     self.refresh_studio(report_error=False)
                 else:
-                    target = select_studio_target(self.studio.list_studios())
-                    if target.studio_id != self._studio_target_id:
+                    target = select_studio_target(
+                        self.studio.list_studios(),
+                        preferred_id=self._studio_target_id,
+                        active_title=active_studio_title(),
+                    )
+                    if (
+                        target.studio_id != self._studio_target_id
+                        or target.label != self._studio_label
+                        or getattr(self, "_studio_tree_error", "")
+                        or (
+                            time.monotonic() - getattr(self, "_last_studio_inventory", 0) >= 30
+                            and self.orchestrator.current_task_id is None
+                            and not self.qa.running(self._studio_test_id)
+                        )
+                    ):
                         self.refresh_studio(report_error=False)
                 self._set_boot("STUDIO", "READY")
             except (CoreError, MCPError) as exc:
-                if isinstance(exc, CoreError) and exc.code == "STUDIO_BUSY":
+                if isinstance(exc, MCPBusyError) or isinstance(exc, CoreError) and exc.code == "STUDIO_BUSY":
                     if self._closing.wait(5.0):
                         break
                     continue
                 if self.connections()["studio"] != "OFF":
+                    with self._studio_lock:
+                        self._studio_label = self._studio_target_id = ""
+                        self._studio_tree, self._studio_nodes = [], {}
+                        self._studio_inventory = {}
                     self._set_connection("studio", "OFF")
                     self.events.publish("STUDIO_STATE_CHANGED", {"state": "OFFLINE", "projectName": ""})
+                    self.events.publish("STUDIO_TREE_UPDATED", {"tree": []})
                 self._set_boot("STUDIO", "OFF")
             if self._closing.wait(5.0):
                 break
@@ -827,6 +865,26 @@ class ZenlessCore:
         if node is None:
             raise CoreError("STUDIO_NODE_NOT_FOUND", "Studio object not found.", status=404)
         result = dict(node)
+        tools = getattr(self.studio, "tools", {})
+        if isinstance(tools, dict) and "inspect_instance" in tools:
+            tool = tools["inspect_instance"]
+            properties = tool.input_schema.get("properties", {})
+            key = next(
+                (name for name in ("path", "instance_path", "instancePath", "target") if name in properties), None
+            )
+            if key:
+                try:
+                    details = self.studio.call_tool(
+                        "inspect_instance",
+                        supported_arguments(self.studio, "inspect_instance", {key: node["path"], "datamodel_type": "Edit"}),
+                        studio_id=self._studio_target_id,
+                        timeout=10,
+                    )
+                    if details.is_error:
+                        raise MCPError(details.compact(2000))
+                    result["details"] = details.structured_content or details.text
+                except MCPError as exc:
+                    result["detailsError"] = str(exc)
         if node["className"] in {"Script", "LocalScript", "ModuleScript"}:
             source = self.studio.call_tool(
                 "script_read",
@@ -836,12 +894,7 @@ class ZenlessCore:
             )
             if source.is_error:
                 raise CoreError("STUDIO_READ_FAILED", source.compact(2000), status=503)
-            structured = source.structured_content
-            result["source"] = (
-                str(structured.get("source") or structured.get("content") or source.text)
-                if isinstance(structured, dict)
-                else source.text
-            )
+            result["source"] = script_source(source)
         return result
 
     def set_studio_reference(self, node_id: str, action: str) -> bool:
@@ -1093,27 +1146,38 @@ class ZenlessCore:
         self.events.publish("SETTINGS_CHANGED", {"settings": current})
         return True
 
+    def _effective_project_root(self) -> str:
+        configured = str(self.settings().get("projectRoot") or "").strip()
+        if configured:
+            return configured
+        roots = self.store.get_setting("studio.projectRoots", {})
+        root = roots.get(self._studio_target_id, "") if isinstance(roots, dict) else ""
+        if root and self._is_within(Path(root).resolve(), self.data_root):
+            return str(root)
+        return ""
+
     def project_index_status(self) -> dict[str, Any]:
-        settings = self.settings()
-        root = str(settings.get("projectRoot") or "").strip()
+        root = self._effective_project_root()
         try:
             return self.project_index.status(project_root=root)
         except ProjectIndexError as exc:
             return {"configured": False, "projectRoot": root, "running": False, "result": "", "error": str(exc)}
 
     def reindex_project(self, *, incremental: bool = True) -> dict[str, Any]:
-        settings = self.settings()
-        root = str(settings.get("projectRoot") or "").strip()
+        root = self._effective_project_root()
         if not root:
-            raise CoreError("PROJECT_ROOT_REQUIRED", "Configure a project folder before indexing.", status=409)
+            raise CoreError(
+                "PROJECT_ROOT_REQUIRED",
+                "Open a game in Studio and start a chat task to collect its source index.",
+                status=409,
+            )
         try:
             return self.project_index.index(project_root=root, incremental=incremental)
         except ProjectIndexError as exc:
             raise CoreError("PROJECT_INDEX_FAILED", str(exc), status=503) from exc
 
     def search_project(self, query: str, *, semantic: bool = True, limit: int = 12) -> dict[str, Any]:
-        settings = self.settings()
-        root = str(settings.get("projectRoot") or "").strip()
+        root = self._effective_project_root()
         if not root:
             return {"projectRoot": "", "query": query, "result": "", "available": False}
         try:
@@ -1125,6 +1189,9 @@ class ZenlessCore:
         settings = self.settings()
         if not bool(settings.get("semanticIndex", True)):
             return {"available": False, "result": ""}
+        root = self._effective_project_root()
+        if root:
+            self.project_index.index(project_root=root, incremental=True)
         return self.search_project(query, semantic=True, limit=12)
 
     def _local_ai_complete(self, prompt: str) -> str:
@@ -1141,7 +1208,7 @@ class ZenlessCore:
 
     def _index_project_background(self) -> None:
         settings = self.settings()
-        root = str(settings.get("projectRoot") or "").strip()
+        root = self._effective_project_root()
         if not root or not bool(settings.get("semanticIndex", True)):
             return
         try:
@@ -1471,24 +1538,13 @@ class ZenlessCore:
 
     @staticmethod
     def _parse_studio_tree(payload: Any) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
-        if isinstance(payload, str):
-            try:
-                payload = json.loads(payload)
-            except json.JSONDecodeError as exc:
-                raise MCPError("Studio tree returned invalid JSON.") from exc
-        while isinstance(payload, dict):
-            nested = next(
-                (payload[key] for key in ("results", "instances", "tree", "nodes", "data") if key in payload), None
-            )
-            if nested is None:
-                raise MCPError("Studio tree returned an unsupported response shape.")
-            payload = nested
-        if not isinstance(payload, list):
-            raise MCPError("Studio tree must be an instance list.")
+        payload = tree_instances(payload)
         paths: dict[str, dict[str, Any]] = {}
+        parents: dict[str, str] = {}
+        path_keys: dict[str, str] = {}
 
         def add(raw: Any, parent: str = "", depth: int = 0) -> None:
-            if not isinstance(raw, dict) or depth > 64 or len(paths) >= 2000:
+            if not isinstance(raw, dict) or depth > 128 or len(paths) >= 50_000:
                 return
             name = str(raw.get("name") or raw.get("Name") or "")
             path = str(
@@ -1500,8 +1556,11 @@ class ZenlessCore:
             )
             if not path:
                 return
+            key = "instance:" + str(raw["id"]) if raw.get("id") else path
+            if key in paths:
+                key += f":{len(paths)}"
             node = {
-                "id": hashlib.sha256(path.encode("utf-8", "replace")).hexdigest()[:24],
+                "id": hashlib.sha256(key.encode("utf-8", "replace")).hexdigest()[:24],
                 "name": name or path.rsplit(".", 1)[-1],
                 "className": str(
                     raw.get("className")
@@ -1513,15 +1572,17 @@ class ZenlessCore:
                 "path": path,
                 "children": [],
             }
-            paths[path] = node
+            paths[key] = node
+            path_keys[path] = key
+            parents[key] = "instance:" + str(raw["parentId"]) if raw.get("parentId") else path.rpartition(".")[0]
             for child in raw.get("children", raw.get("Children", [])) or []:
                 add(child, path, depth + 1)
 
         for raw in payload:
             add(raw)
         roots: list[dict[str, Any]] = []
-        for path, node in paths.items():
-            parent = paths.get(path.rpartition(".")[0])
+        for key, node in paths.items():
+            parent = paths.get(parents[key]) or paths.get(path_keys.get(parents[key], ""))
             if parent is not None:
                 parent["children"].append(node)
             else:

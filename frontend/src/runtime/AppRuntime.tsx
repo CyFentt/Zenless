@@ -118,6 +118,7 @@ export class ApplicationRuntime {
     store.setAssets(assets);
     if (studioVersion === useStore.getState().studioVersion) {
       store.setStudioState(studioState.state);
+      useStore.setState({ studioTreeError: studioState.treeError || '' });
       if (studioState.projectName !== undefined) useStore.setState({ studioProjectName: studioState.projectName });
       store.setStudioTree(studioTree);
     }
@@ -136,6 +137,7 @@ export class ApplicationRuntime {
   }
 
   private async loadJobSnapshot(job: Job): Promise<void> {
+    const testVersion = useStore.getState().testVersion;
     const [messages, context, changes, visual, model, testState] = await Promise.all([
       this.api.getMessages(job.id),
       this.api.getContext(job.id),
@@ -152,7 +154,7 @@ export class ApplicationRuntime {
     store.setViews(visual.views);
     store.setConcept(visual.concept.version, visual.concept.status, visual.concept.prompt);
     store.setModelInfo(model);
-    store.setTestState(testState);
+    if (useStore.getState().testVersion === testVersion && (!store.activeTestJobId || store.activeTestJobId === job.id)) store.setTestState(testState);
   }
 
   private selectCurrentJob(jobs: Job[], currentJobId: string | null): Job | null {

@@ -10,6 +10,7 @@ All generated game content, identifiers, user-facing development artifacts, plan
 Generated Luau must be production-quality and contain no comments. Do not emit tutorial comments, explanatory comments, TODO comments or version suffixes such as v2, v3, final2 or new.
 Prefer existing project architecture and proven upstream libraries over reimplementing infrastructure.
 Read the relevant existing scripts and project state before proposing changes.
+The objective may ask to create, inspect, review, debug, or repair an existing game. Follow that intent instead of assuming every request is a new build. Use the live Studio inventory, properties, sources, console, and QA evidence. Inventory coverage and source coverage are different: never claim unread scripts or unseen gameplay were reviewed.
 Treat server authority, remote validation, bounded work, cleanup, cancellation, deterministic state and measurable performance as default requirements.
 Use the supplied Rubra skill excerpts as authoritative project guidance when they apply.
 Do not claim a capability was tested unless there is direct evidence from Studio, a static tool, a runtime test, a screenshot, a log, a read-back or an independent reviewer.
@@ -30,7 +31,7 @@ Rules:
 - Server owns game state. Validate every remote argument server-side. Never use InvokeClient.
 - Use strict Luau for new modules, task APIs, connection cleanup, and streaming-aware design.
 - Never invent Roblox APIs. If current API evidence is missing, propose an official-doc read action first.
-- Prefer multi_edit for persistent source changes. Do not propose execute_luau, keyboard/mouse input, or play controls.
+- Prefer multi_edit for persistent source changes. For scene, UI instances, lighting, geometry or other object/property changes, execute_luau is available in Edit mode with bounded code and _zenless_expected_instances: exact game paths mapped to all properties that should change, with expected JSON values. Rubra snapshots those properties, checks concurrent changes, applies once, and reads them back. Do not use it for background loops. Do not propose keyboard/mouse input or play controls; Rubra owns the test lifecycle.
 - Use Roblox's rbx-docs-search skill/http_get when an API needs current verification.
 - For a 3D asset that must land directly in Studio, prefer the available Roblox generate_mesh or
   generate_procedural_model tool. Treat those as persistent actions that require user approval.
@@ -104,10 +105,27 @@ Every field must be concrete enough to reproduce the same object from every dire
 
 
 def compact_json(value: Any, limit: int) -> str:
-    text = json.dumps(value, ensure_ascii=False, indent=2, default=str)
+    text = json.dumps(value, ensure_ascii=False, separators=(',', ':'), default=str)
     if len(text) <= limit:
         return text
-    return text[:limit] + "\n...[context truncated by Rubra]"
+
+    def clip(item: Any, string_limit: int, list_limit: int, depth: int = 0) -> Any:
+        if depth > 16:
+            return '[nested context omitted]'
+        if isinstance(item, str):
+            return item if len(item) <= string_limit else item[:string_limit] + '\n[excerpt; additional evidence required]'
+        if isinstance(item, list):
+            return [clip(child, string_limit, list_limit, depth + 1) for child in item[:list_limit]]
+        if isinstance(item, dict):
+            return {str(key): clip(child, string_limit, list_limit, depth + 1) for key, child in item.items()}
+        return item
+
+    for scale in (4096, 2048, 1024, 512, 256, 128, 64, 16):
+        clipped = clip(value, scale, max(1, scale // 32))
+        text = json.dumps(clipped, ensure_ascii=False, separators=(',', ':'), default=str)
+        if len(text) <= limit:
+            return text
+    return json.dumps({'rubra_context_omitted': True, 'reason': 'Request narrower live evidence.'})
 
 
 def principal_prompt(

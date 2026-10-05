@@ -147,3 +147,60 @@ test('reduced-motion preference removes CSS transitions', async ({ page }) => {
   await expect(button).toBeVisible();
   expect(await button.evaluate((node) => getComputedStyle(node).transitionDuration)).toBe('0s');
 });
+
+test('modern chat offers review prompts and keeps a growing composer in view', async ({ page }) => {
+  await page.setViewportSize({ width: 1000, height: 650 });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'CHAT', exact: true }).click();
+  await expect(page.getByPlaceholder('Message Rubra')).toBeVisible();
+  await store(page, { messages: [], jobs: [], currentJobId: null, streamingMessageId: null, activities: [], studioProjectName: 'Existing place' });
+  await expect(page.getByText('What should we work on?')).toBeVisible();
+  await page.getByRole('button', { name: 'Find and fix errors', exact: true }).click();
+  const composer = page.getByPlaceholder('Message Rubra');
+  await expect(composer).toHaveValue(/reproduce its errors/);
+  await composer.fill('Review the game\nInspect all scripts\nRun Play\nCheck UI\nRepair failures\nRetest\nReport actual evidence');
+  const box = await composer.boundingBox();
+  expect(box!.height).toBeGreaterThan(48);
+  expect(box!.y + box!.height).toBeLessThan(650);
+  await page.screenshot({ path: 'test-results/chat-1000.png' });
+});
+
+test('inventory error preserves the connected editor and Play action', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'EDITOR', exact: true }).click();
+  await expect(page.getByText('Workspace', { exact: true }).first()).toBeVisible();
+  await page.evaluate(async () => {
+    const { handleEvent } = await import('/src/store/eventHandler.ts');
+    handleEvent({ type: 'STUDIO_STATE_CHANGED', data: { state: 'ONLINE', treeError: 'Tree summary has no objects', projectName: 'Existing place' } });
+    handleEvent({ type: 'STUDIO_TREE_UPDATED', data: { tree: [] } });
+  });
+  await expect(page.getByText(/Play remains available/)).toBeVisible();
+  await expect(page.locator('header')).toContainText('Existing place');
+  await page.getByRole('button', { name: 'TEST', exact: true }).click();
+  await store(page, { currentJobId: null, activeTestJobId: null, testState: { status: 'IDLE', elapsedMs: 0, fixAttempt: 0, maxFixAttempts: 3 } });
+  await expect(page.getByRole('button', { name: 'PLAY', exact: true })).toBeEnabled();
+});
+
+test('test captures display exact dimensions and stale completion does not stop another run', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'TEST', exact: true }).click();
+  await store(page, { currentJobId: null, activeTestJobId: null, testCaptures: [], testState: { status: 'IDLE', elapsedMs: 0, fixAttempt: 0, maxFixAttempts: 3 } });
+  await page.getByRole('button', { name: 'PLAY', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'STOP', exact: true })).toBeVisible();
+  await page.evaluate(async () => {
+    const { handleEvent } = await import('/src/store/eventHandler.ts');
+    const { useStore } = await import('/src/store/index.ts');
+    const jobId = useStore.getState().activeTestJobId!;
+    handleEvent({ type: 'TEST_CAPTURE', data: { jobId, capture: { id: 'frame', imageUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nGAAAAAASUVORK5CYII=', width: 1920, height: 1080, timestamp: Date.now() } } });
+    handleEvent({ type: 'TEST_FINISHED', data: { jobId: 'old-test', passed: true } });
+  });
+  await expect(page.getByRole('img', { name: /Studio test frame/ })).toBeVisible();
+  await expect(page.getByText('1920 × 1080')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'STOP', exact: true })).toBeVisible();
+  await page.evaluate(async () => {
+    const { handleEvent } = await import('/src/store/eventHandler.ts');
+    const { useStore } = await import('/src/store/index.ts');
+    handleEvent({ type: 'TEST_FINISHED', data: { jobId: useStore.getState().activeTestJobId!, passed: false, cancelled: true } });
+  });
+  await expect(page.getByText('STOPPED', { exact: true })).toBeVisible();
+});

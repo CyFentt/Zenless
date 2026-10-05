@@ -6,6 +6,7 @@ import hashlib
 import json
 import math
 import re
+import struct
 import threading
 import time
 import uuid
@@ -19,7 +20,15 @@ from .orchestrator import AgentTransport, OrchestratorError, TaskCancelled
 from .protocol import ProtocolError, extract_json_object
 from .static_quality import StaticQualityRunner
 from .store import SQLiteStore
-from .studio_mcp import MCPError, MCPToolResult, StudioMCPClient, select_studio_target, validate_json_schema
+from .studio_data import export_sources, read_sources, studio_edit_mode
+from .studio_mcp import (
+    MCPBusyError,
+    MCPError,
+    MCPToolResult,
+    StudioMCPClient,
+    select_studio_target,
+    validate_json_schema,
+)
 
 MULTIPLAYER_HARNESS_PROTOCOL = "ZENLESS_QA_MULTIPLAYER_V1"
 MAX_STUDIO_TEST_CLIENTS = 8
@@ -214,6 +223,7 @@ class QABreaker:
         self.tripwire = tripwire
         self.capture_root = (capture_root or Path.cwd() / "qa-captures").resolve()
         self.capture_root.mkdir(parents=True, exist_ok=True)
+        self._play_captures: dict[str, list[Path]] = {}
         self.local_ai_callback = local_ai_callback
         self.portable_root = (portable_root or self.capture_root.parent.parent).resolve()
         self.static_quality = StaticQualityRunner(self.portable_root)
@@ -364,6 +374,19 @@ class QABreaker:
                 )
                 self._enforce_bound(started_at, profile, cancel_event)
 
+                output, play_outcome = self._run_play_case(
+                    run_id,
+                    job_id,
+                    studio_id,
+                    profile,
+                    cancel_event,
+                    failures,
+                    logs,
+                    seed,
+                )
+                outcomes.append(play_outcome)
+                self._enforce_bound(started_at, profile, cancel_event)
+
                 outcomes.append(
                     self._run_case(
                         run_id,
@@ -378,19 +401,6 @@ class QABreaker:
                         skip_is_ok=True,
                     )
                 )
-                self._enforce_bound(started_at, profile, cancel_event)
-
-                output, play_outcome = self._run_play_case(
-                    run_id,
-                    job_id,
-                    studio_id,
-                    profile,
-                    cancel_event,
-                    failures,
-                    logs,
-                    seed,
-                )
-                outcomes.append(play_outcome)
                 self._enforce_bound(started_at, profile, cancel_event)
 
                 if profile.name in {"STANDARD", "DEEP", "EXHAUSTIVE"}:
@@ -533,7 +543,17 @@ class QABreaker:
         try:
             if not self.studio.running:
                 self.studio.start()
-            studios = self.studio.list_studios()
+            studios = []
+            for attempt in range(3):
+                if cancel.is_set():
+                    raise TaskCancelled("Play Test cancelled before startup.")
+                try:
+                    studios = self.studio.list_studios()
+                    break
+                except MCPBusyError:
+                    if attempt == 2:
+                        raise
+                    cancel.wait(0.5)
             task = self.store.load_task(job_id) or {}
             target = select_studio_target(studios, str(task.get("studio_id") or ""))
             self.run(
@@ -545,6 +565,7 @@ class QABreaker:
             )
         except TaskCancelled:
             self._log(job_id, "ZEN", "Play Test stopped by the user.")
+            self.events.publish("TEST_FINISHED", {"passed": False, "cancelled": True, "jobId": job_id})
         except Exception as exc:
             self._log(job_id, "ERR", f"Manual QA failed: {exc}")
             self.events.publish("TEST_FINISHED", {"passed": False, "jobId": job_id})
@@ -553,7 +574,7 @@ class QABreaker:
             if (task.get("context") or {}).get("manual_test"):
                 latest = self.store.latest_test_run(job_id)
                 passed = latest is not None and latest.get("status") == "PASSED"
-                cancelled = latest is not None and latest.get("status") == "CANCELLED"
+                cancelled = cancel.is_set() or latest is not None and latest.get("status") == "CANCELLED"
                 finished = passed or cancelled
                 self.store.update_task(
                     job_id,
@@ -703,7 +724,7 @@ class QABreaker:
             "map",
             "environment",
         )
-        return any(term in prompt for term in visual_terms)
+        return profile.name in {"STANDARD", "DEEP", "EXHAUSTIVE"} or any(term in prompt for term in visual_terms)
 
     def _run_official_playtest_subagent(
         self,
@@ -782,21 +803,50 @@ class QABreaker:
             return "PASSED", expected, text
         return "SKIPPED", expected, "The playtest returned no explicit verification result.\n" + text
 
+    def _qa_project_root(self, job_id: str, *, refresh: bool = False) -> str:
+        task = self.store.load_task(job_id) or {}
+        context = task.get("context") or {}
+        if context.get('manual_test') and not context.get('studio_project_root'):
+            source_root = self.capture_root.parent / 'runs' / job_id / 'studio-project'
+            snapshot = read_sources(self.studio, str(task.get('studio_id') or ''))
+            export_sources(source_root, str(task.get('studio_id') or ''), snapshot)
+            context.update({'studio_project_root': str(source_root), 'studio_source_snapshot': True})
+            self.store.update_task(job_id, context_json=context)
+            refresh = False
+        root = str(context.get("studio_project_root") or "")
+        if root and context.get("studio_source_snapshot") is True:
+            path = Path(root).resolve()
+            if not path.is_relative_to(self.capture_root.parent.resolve()):
+                raise MCPError("Studio source snapshot is outside Rubra data storage.")
+            if refresh:
+                snapshot = read_sources(self.studio, str(task.get("studio_id") or ""))
+                export_sources(path, str(task.get("studio_id") or ""), snapshot)
+            return str(path)
+        settings = self.store.get_setting("ui.settings", {})
+        return str(settings.get("projectRoot") or "").strip() if isinstance(settings, dict) else ""
+
     def _run_static_quality(self, job_id: str) -> tuple[str, str, str]:
         expected = "Pinned external Roblox quality tools report no gating failures"
-        settings = self.store.get_setting("ui.settings", {})
-        project_root = str(settings.get("projectRoot") or "").strip() if isinstance(settings, dict) else ""
+        project_root = self._qa_project_root(job_id, refresh=True)
         if not project_root:
-            return "SKIPPED", expected, "No filesystem project is configured for static quality tools"
+            return "SKIPPED", expected, "No readable Studio source snapshot or local project is available"
         project = Path(project_root).expanduser().resolve()
         if not project.is_dir():
             return "FAILED", expected, f"Configured project directory does not exist: {project}"
         checks = self.static_quality.run(project)
         lines = [f"{item.name}: {item.status}\n{item.output}" for item in checks]
+        marker = project / "rubra-studio.json"
+        coverage_gap = False
+        if marker.is_file():
+            manifest = json.loads(marker.read_text(encoding="utf-8"))
+            coverage_gap = not manifest.get("complete") or bool(manifest.get("errors"))
+            lines.insert(0, f"Studio sources checked: {manifest.get('readable', 0)}/{manifest.get('total', 0)}")
+            if coverage_gap:
+                lines.append("Coverage incomplete: protected or unreadable sources were not checked.")
         failed = [item for item in checks if item.status == "FAILED"]
         if failed:
             return "FAILED", expected, "\n\n".join(lines)[-16000:]
-        if not any(item.status == "PASSED" for item in checks):
+        if coverage_gap or not any(item.status == "PASSED" for item in checks):
             return "SKIPPED", expected, "\n\n".join(lines)[-16000:] or "No static checks ran."
         return "PASSED", expected, "\n\n".join(lines)[-16000:]
 
@@ -804,10 +854,9 @@ class QABreaker:
         expected = "Tripwire reports zero unvalidated client-trust findings in the configured source tree"
         if self.tripwire is None:
             return "SKIPPED", expected, "Portable Tripwire server is unavailable"
-        settings = self.store.get_setting("ui.settings", {})
-        project_root = str(settings.get("projectRoot") or "").strip() if isinstance(settings, dict) else ""
+        project_root = self._qa_project_root(job_id)
         if not project_root:
-            return "SKIPPED", expected, "No filesystem project is configured for Tripwire static analysis"
+            return "SKIPPED", expected, "No readable Studio source snapshot or local project is available"
         project = Path(project_root).expanduser().resolve()
         if not project.is_dir():
             return "FAILED", expected, f"Configured project directory does not exist: {project}"
@@ -877,10 +926,18 @@ class QABreaker:
         path = self._persist_capture(job_id, seed, capture.images[0])
         if path is None:
             return "FAILED", expected, "Viewport image evidence could not be decoded"
+        paths = [*self._play_captures.get(job_id, []), path]
         task = self.store.load_task(job_id) or {}
         objective = str(task.get("prompt", "")).strip()
+        frame_context = (
+            "The first images are successive gameplay frames captured before Stop; the final image is the post-test editor viewport. "
+            if self._play_captures.get(job_id)
+            else "Only the post-test editor viewport is attached; no gameplay frame is available. "
+        )
         prompt = (
-            "Review the attached Roblox Studio viewport as independent visual QA for the implemented task. "
+            "Review the attached full-resolution Roblox Studio viewports as independent visual QA for the implemented task. "
+            + frame_context
+            + "Compare only observed frames; they do not prove every state or interaction was exercised. "
             "Look for broken layout, clipping, unreadable text, missing assets, obvious z-order problems, visual "
             "inconsistency, unintended default materials, malformed geometry, and visible regressions. "
             "Do not invent unseen problems. Return JSON only with this schema: "
@@ -895,7 +952,7 @@ class QABreaker:
                 uploaded = self.bridge.request(
                     provider,
                     "upload_files",
-                    {"files": [str(path)]},
+                    {"files": [str(item) for item in paths]},
                     task_id=job_id,
                     timeout=90,
                 )
@@ -911,6 +968,7 @@ class QABreaker:
                     {
                         "provider": provider,
                         "capture": str(path),
+                        "gameplay_captures": [str(item) for item in self._play_captures.get(job_id, [])],
                         "approved": approved,
                         "issues": issues,
                         "summary": summary,
@@ -925,7 +983,7 @@ class QABreaker:
             except Exception as exc:
                 errors.append(f"{provider}: {exc}")
         return (
-            "FAILED",
+            "SKIPPED",
             expected,
             "Viewport was captured but no visual reviewer produced valid evidence. " + " | ".join(errors),
         )
@@ -942,11 +1000,59 @@ class QABreaker:
         if not payload or len(payload) > 24 * 1024 * 1024:
             return None
         suffix = ".jpg" if "jpeg" in mime or "jpg" in mime else ".png"
+        width = height = 0
+        if suffix == ".png":
+            if not payload.startswith(b"\x89PNG\r\n\x1a\n") or len(payload) < 24 or payload[12:16] != b"IHDR":
+                return None
+            width, height = struct.unpack(">II", payload[16:24])
+            if not 1 <= width <= 16384 or not 1 <= height <= 16384:
+                return None
+        elif not payload.startswith(b"\xff\xd8\xff"):
+            return None
         root = self.capture_root / re.sub(r"[^A-Za-z0-9_.-]+", "_", job_id)[:96]
         root.mkdir(parents=True, exist_ok=True)
         path = root / f"viewport-{seed:08x}{suffix}"
         path.write_bytes(payload)
+        asset_id = hashlib.sha256(payload).hexdigest()[:32]
+        self.store.register_asset(asset_id, job_id=job_id, name=path.name, kind="VIEW", path=path, mime=mime)
+        self.events.publish(
+            "TEST_CAPTURE",
+            {
+                "jobId": job_id,
+                "capture": {
+                    "id": asset_id,
+                    "imageUrl": f"/api/assets/{asset_id}/content",
+                    "width": width,
+                    "height": height,
+                    "timestamp": int(time.time() * 1000),
+                },
+            },
+        )
         return path
+
+    def _capture_play_frame(self, job_id: str, studio_id: str, seed: int) -> None:
+        tool = self.studio.tools.get("screen_capture")
+        if tool is None:
+            return
+        properties = tool.input_schema.get("properties", {})
+        arguments = {"capture_id": f"RubraPlay_{seed:08x}"} if "capture_id" in properties else {}
+        required = tool.input_schema.get("required", [])
+        if any(key not in arguments and key != "studio_id" for key in required):
+            self._log(job_id, "WARN", "Gameplay capture is unavailable for this MCP schema.")
+            return
+        try:
+            capture = self.studio.call_tool("screen_capture", arguments, studio_id=studio_id, timeout=15)
+            path = (
+                self._persist_capture(job_id, seed, capture.images[0])
+                if not capture.is_error and capture.images
+                else None
+            )
+            if path:
+                self._play_captures.setdefault(job_id, []).append(path)
+            else:
+                self._log(job_id, "WARN", "Studio returned no valid gameplay image evidence.")
+        except MCPError as exc:
+            self._log(job_id, "WARN", "Gameplay capture failed: " + str(exc))
 
     def _run_play_case(
         self,
@@ -960,6 +1066,7 @@ class QABreaker:
         seed: int,
     ) -> tuple[str, str]:
         output_holder = {"text": ""}
+        self._play_captures[job_id] = []
 
         def play() -> tuple[str, str, str]:
             if "start_stop_play" not in self.studio.tools:
@@ -970,15 +1077,23 @@ class QABreaker:
                 if result.is_error:
                     return "FAILED", "Play Test starts", result.compact(3000)
                 started = True
-                deadline = time.monotonic() + min(self.play_test_seconds, profile.max_duration / 3)
+                started_at = time.monotonic()
+                duration = min(self.play_test_seconds, profile.max_duration / 3)
+                deadline = started_at + duration
+                checkpoint = 0
                 while time.monotonic() < deadline:
                     self._check_cancel(cancel_event)
+                    if checkpoint < 3 and time.monotonic() - started_at >= duration * (checkpoint + 1) / 4:
+                        self._capture_play_frame(job_id, studio_id, (seed + checkpoint + 1) & 0xFFFFFFFF)
+                        checkpoint += 1
                     cancel_event.wait(0.1)
                 if "get_console_output" in self.studio.tools:
                     console = self.studio.call_tool("get_console_output", {}, studio_id=studio_id, timeout=60)
                     if console.is_error:
                         return "FAILED", "Output can be read", console.compact(3000)
-                    output_holder["text"] = console.text
+                    output_holder["text"] = console.compact(24000)
+                else:
+                    return "SKIPPED", "Runtime output is observable", "Play ran, but console output is unavailable."
                 if self.ERROR_PATTERN.search(output_holder["text"]):
                     return "FAILED", "No runtime errors", output_holder["text"][-6000:]
                 return "PASSED", "No runtime errors", output_holder["text"][-6000:]
@@ -1118,7 +1233,7 @@ class QABreaker:
         result = self.studio.call_tool("get_studio_state", {}, studio_id=studio_id, timeout=30)
         if result.is_error:
             return "FAILED", "Studio mode can be read", result.compact(3000)
-        edit = "current studio mode: edit" in result.text.casefold()
+        edit = studio_edit_mode(result) is True
         return ("PASSED" if edit else "FAILED", "Studio is in Edit mode", result.compact(3000))
 
     def _run_virtual_input_smoke(self, studio_id: str) -> tuple[str, str, str]:

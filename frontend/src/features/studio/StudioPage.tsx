@@ -8,6 +8,7 @@ import { Search, RefreshCw, Play, Folder, FileCode2, ChevronRight, Lock, Unlock,
 import type { StudioNode } from '@/types';
 
 export function StudioPage() {
+  const treeError = useStore((s) => s.studioTreeError);
   const studioState = useStore((s) => s.studioState);
   const studioTree = useStore((s) => s.studioTree);
   const setStudioTree = useStore((s) => s.setStudioTree);
@@ -27,6 +28,7 @@ export function StudioPage() {
       .then(([state, tree]) => {
         if (version !== useStore.getState().studioVersion) return;
         setStudioState(state.state); setStudioTree(tree);
+        useStore.setState({ studioTreeError: state.treeError || '' });
         if (state.projectName !== undefined) useStore.setState({ studioProjectName: state.projectName });
       })
       .catch((error) => frontendDiagnostics.capture(error, 'studio', 'Failed to load Studio state'));
@@ -140,7 +142,7 @@ export function StudioPage() {
                 <span className="text-2xs text-ink-400 ml-auto font-mono truncate">{node.path}</span>
               </button>
             ))
-          ) : studioTree.length ? renderTree(studioTree) : <div className="p-4 text-xs text-ink-300 leading-relaxed">Open a place in Roblox Studio and enable Assistant → MCP Servers. Rubra reconnects automatically.</div>}
+          ) : studioTree.length ? renderTree(studioTree) : <div className="p-4 text-xs text-ink-300 leading-relaxed">{studioState === 'ONLINE' ? treeError ? 'Studio is connected. The object list is temporarily unavailable; Rubra will retry. Play remains available.' : 'Reading objects from your open game…' : 'Open a place in Roblox Studio and enable Assistant → MCP Servers. Rubra reconnects automatically.'}</div>}
         </div>
       </div>
 
@@ -162,6 +164,8 @@ export function StudioPage() {
               {selectedNode.usedAsContext && <DetailRow label="CONTEXT" value="USED" />}
             </div>
             {selectedNode.source !== undefined && <pre className="overflow-auto p-3 bg-ink-950 border border-ink-700 text-xs text-ink-50 font-mono whitespace-pre-wrap">{selectedNode.source}</pre>}
+            {selectedNode.detailsError && <p className="text-xs text-zen-warnBright">{selectedNode.detailsError}</p>}
+            {selectedNode.details !== undefined && <div className="space-y-2"><p className="text-2xs uppercase tracking-wider text-ink-300">Instance properties</p><pre className="overflow-auto p-3 bg-ink-950 border border-ink-700 text-xs text-ink-50 font-mono whitespace-pre-wrap">{typeof selectedNode.details === 'string' ? selectedNode.details : JSON.stringify(selectedNode.details, null, 2)}</pre></div>}
             {!!selectedNode.children?.length && (
               <div>
                 <div className="text-2xs uppercase tracking-wider text-ink-300 mb-2">CHILDREN</div>

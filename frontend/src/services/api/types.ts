@@ -71,7 +71,7 @@ export interface ZenlessAPI {
 
   getAssets(): Promise<Asset[]>;
 
-  getStudioState(): Promise<{ state: StudioState; projectName?: string }>;
+  getStudioState(): Promise<{ state: StudioState; projectName?: string; treeError?: string }>;
   getStudioTree(): Promise<StudioNode[]>;
   searchStudio(query: string): Promise<StudioNode[]>;
   refreshStudio(): Promise<{ ok: boolean }>;

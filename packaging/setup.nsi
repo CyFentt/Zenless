@@ -20,6 +20,7 @@ VIAddVersionKey "LegalCopyright" "Rubra contributors"
 !define MUI_WELCOMEPAGE_TEXT "Rubra installs for your Windows account without administrator access. Python is included. Roblox Studio and Microsoft WebView2 are platform dependencies.$\r$\n$\r$\nClose Rubra before updating. Existing data and downloaded tools are preserved."
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_LICENSE "${PACKAGE}/LICENSE"
+!define MUI_DIRECTORYPAGE_TEXT_TOP "Choose where Rubra will be installed. Select an empty writable folder, or the existing Rubra installation to update it."
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
 !define MUI_FINISHPAGE_RUN "$INSTDIR\Rubra.exe"
@@ -44,6 +45,7 @@ Function .onVerifyInstDir
   ReadINIStr $0 "$INSTDIR\rubra-install.ini" "Application" "Product"
   StrCmp $0 "Rubra" valid
   IfFileExists "$INSTDIR\*" 0 valid
+  MessageBox MB_OK|MB_ICONEXCLAMATION "Choose an empty folder or the existing Rubra installation."
   Abort
   valid:
 FunctionEnd
@@ -56,6 +58,12 @@ Section "Rubra"
   MessageBox MB_OK|MB_ICONSTOP "Choose an empty folder or the existing installed Rubra folder."
   Abort
   extract:
+  CreateDirectory "$INSTDIR"
+  ClearErrors
+  FileOpen $1 "$INSTDIR\.rubra-write-check" w
+  IfErrors unwritable
+  FileClose $1
+  Delete "$INSTDIR\.rubra-write-check"
   SetOutPath "$INSTDIR"
   File /r "${PACKAGE}/*"
   WriteUninstaller "$INSTDIR\Uninstall.exe"
@@ -69,10 +77,17 @@ Section "Rubra"
   WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Rubra" "NoRepair" 1
   CreateDirectory "$SMPROGRAMS\Rubra"
   CreateShortcut "$SMPROGRAMS\Rubra\Rubra.lnk" "$INSTDIR\Rubra.exe" "" "$INSTDIR\Rubra.exe"
+  CreateShortcut "$DESKTOP\Rubra.lnk" "$INSTDIR\Rubra.exe" "" "$INSTDIR\Rubra.exe"
+  Goto done
+  unwritable:
+  MessageBox MB_OK|MB_ICONSTOP "Rubra cannot write to this folder. Choose a folder that your Windows account can access."
+  Abort
+  done:
 SectionEnd
 
 Section "Uninstall"
   SetShellVarContext current
+  Delete "$DESKTOP\Rubra.lnk"
   Delete "$SMPROGRAMS\Rubra\Rubra.lnk"
   RMDir "$SMPROGRAMS\Rubra"
   RMDir /r "$INSTDIR\app"

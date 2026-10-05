@@ -23,6 +23,7 @@ import type {
   StudioState,
   StorageInfo,
   TestLog,
+  TestCapture,
   TestCaseResult,
   TestFailure,
   TestState,
@@ -93,6 +94,7 @@ interface AppState {
   assets: Asset[];
   studioState: StudioState;
   studioProjectName: string;
+  studioTreeError: string;
   studioVersion: number;
   activeTestJobId: string | null;
   studioTree: StudioNode[];
@@ -101,7 +103,9 @@ interface AppState {
   studioQuery: string;
   setStudioQuery: (q: string) => void;
   testState: TestState;
+  testVersion: number;
   testLogs: TestLog[];
+  testCaptures: TestCapture[];
   testCases: TestCaseResult[];
   testFailures: TestFailure[];
   logFilter: string;
@@ -231,6 +235,7 @@ export const useStore = create<AppState>((set) => ({
 
   studioState: 'OFFLINE',
   studioProjectName: '',
+  studioTreeError: '',
   studioVersion: 0,
   activeTestJobId: null,
   studioTree: [],
@@ -240,7 +245,9 @@ export const useStore = create<AppState>((set) => ({
   setStudioQuery: (q) => set({ studioQuery: q }),
 
   testState: { status: 'IDLE', elapsedMs: 0, fixAttempt: 0, maxFixAttempts: 3 },
+  testVersion: 0,
   testLogs: [],
+  testCaptures: [],
   testCases: [],
   testFailures: [],
   logFilter: 'ALL',
@@ -320,7 +327,7 @@ export const useStore = create<AppState>((set) => ({
   setAssets: (a) => set({ assets: a }),
   setStudioState: (s) => set({ studioState: s }),
   setStudioTree: (t) => set({ studioTree: t }),
-  setTestState: (t) => set({ testState: t }),
+  setTestState: (t) => set((state) => ({ testState: t, testVersion: state.testVersion + 1 })),
   addTestLog: (log) => set((state) => ({ testLogs: [...state.testLogs, log] })),
   setTestLogs: (logs) => set({ testLogs: logs }),
   upsertTestCase: (testCase) =>
@@ -333,7 +340,7 @@ export const useStore = create<AppState>((set) => ({
       };
     }),
   addTestFailure: (failure) => set((state) => ({ testFailures: [...state.testFailures, failure] })),
-  resetTestDetails: () => set({ testCases: [], testFailures: [] }),
+  resetTestDetails: () => set({ testCases: [], testFailures: [], testCaptures: [] }),
   setSettings: (s) => set({ settings: s }),
   addDiagnostic: (d) => set((state) => ({ diagnostics: [...state.diagnostics, d] })),
   setDiagnostics: (d) => set({ diagnostics: d }),

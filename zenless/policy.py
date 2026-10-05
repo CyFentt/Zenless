@@ -30,7 +30,6 @@ ORCHESTRATOR_ONLY_TOOLS = {
 }
 
 DISALLOWED_AUTOMATED_TOOLS = {
-    "execute_luau",
     "character_navigation",
 }
 
@@ -70,9 +69,15 @@ def classify_action(action: ProposalAction, available_tools: set[str]) -> Policy
     if not isinstance(action.arguments, dict):
         return PolicyDecision(False, "blocked", ("Arguments are not a JSON object",))
     if action.tool == "subagent":
-        kinds = [action.arguments[key] for key in ("type", "subagent_type", "agent_type", "kind") if key in action.arguments]
+        kinds = [
+            action.arguments[key] for key in ("type", "subagent_type", "agent_type", "kind") if key in action.arguments
+        ]
         if not kinds or any(kind != "explore" for kind in kinds):
-            return PolicyDecision(False, "blocked", ("Only explore subagents may run as read-only actions; playtests are controlled internally",))
+            return PolicyDecision(
+                False,
+                "blocked",
+                ("Only explore subagents may run as read-only actions; playtests are controlled internally",),
+            )
 
     serialized = json.dumps(action.arguments, ensure_ascii=False, default=str)
     if len(serialized.encode("utf-8")) > 512_000:
@@ -81,7 +86,35 @@ def classify_action(action: ProposalAction, available_tools: set[str]) -> Policy
     if is_read_only(action.tool):
         return PolicyDecision(True, "low")
 
-    risk = "medium"
+    if action.tool == "execute_luau":
+        code = action.arguments.get("code")
+        expected = action.arguments.get("_zenless_expected_instances")
+        if (
+            action.arguments.get("datamodel_type") != "Edit"
+            or not isinstance(code, str)
+            or not code.strip()
+            or len(code) > 64000
+        ):
+            return PolicyDecision(False, "blocked", ("Scene execution requires bounded code in Edit mode",))
+        if (
+            not isinstance(expected, dict)
+            or not 1 <= len(expected) <= 16
+            or any(
+                not isinstance(path, str)
+                or not path.startswith("game.")
+                or not isinstance(properties, dict)
+                or not properties
+                or len(properties) > 40
+                for path, properties in expected.items()
+            )
+        ):
+            return PolicyDecision(
+                False, "blocked", ("Scene execution requires expected properties for each changed game instance",)
+            )
+        if re.search(r"\bwhile\s+true\s+do\b|\brepeat\b[\s\S]*\buntil\s+false\b", code):
+            return PolicyDecision(False, "blocked", ("Scene execution cannot contain an unbounded loop",))
+
+    risk = "high" if action.tool == "execute_luau" else "medium"
     for pattern in DESTRUCTIVE_PATTERNS:
         if re.search(pattern, serialized, flags=re.IGNORECASE):
             risk = "critical"
