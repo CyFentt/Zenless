@@ -261,11 +261,22 @@ def test_development_bridge_accepts_rubra_session_contract():
 def test_installer_replaces_immutable_payload_before_extracting_update():
     root = Path(__file__).resolve().parents[1]
     source = (root / "packaging" / "setup.nsi").read_text(encoding="utf-8")
+    update_gate = source.index('StrCmp $0 "Rubra" update_cleanup install_payload')
+    launcher_cleanup = source.index('Delete "$INSTDIR\\Rubra.exe"')
     app_cleanup = source.index('RMDir /r "$INSTDIR\\app"')
     python_cleanup = source.index('RMDir /r "$INSTDIR\\runtime\\python"')
     extraction = source.index('File /r "${PACKAGE}/*"')
-    assert app_cleanup < extraction
-    assert python_cleanup < extraction
-    assert "IfErrors close_required" in source[app_cleanup:extraction]
+    assert update_gate < launcher_cleanup < app_cleanup < extraction
+    assert launcher_cleanup < python_cleanup < extraction
+    assert "IfErrors close_required" in source[launcher_cleanup:extraction]
     assert 'RMDir /r "$INSTDIR\\runtime"' not in source[:extraction]
+
+
+def test_uninstaller_removes_user_state_and_release_files():
+    root = Path(__file__).resolve().parents[1]
+    source = (root / "packaging" / "setup.nsi").read_text(encoding="utf-8")
+    uninstall = source[source.index('Section "Uninstall"'):]
+    assert 'RMDir /r "$INSTDIR\\data"' in uninstall
+    for name in ("NOTICE.md", "README.md", "RUBRA.md", "NSIS-LICENSE.txt"):
+        assert f'Delete "$INSTDIR\\{name}"' in uninstall
 
