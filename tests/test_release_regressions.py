@@ -154,9 +154,13 @@ def test_set_model_requires_exact_provider_confirmation_and_invalidates_cache():
 
 def test_manual_play_button_always_uses_standalone_studio_test():
     root = Path(__file__).resolve().parents[1]
-    source = (root / 'frontend' / 'src' / 'features' / 'test' / 'TestPage.tsx').read_text(encoding='utf-8')
-    assert 'const result = await getApi().startStudioTest();' in source
-    assert 'startTest(currentJobId)' not in source
+    for relative in (
+        ('frontend', 'src', 'features', 'test', 'TestPage.tsx'),
+        ('frontend', 'src', 'features', 'studio', 'StudioPage.tsx'),
+    ):
+        source = (root.joinpath(*relative)).read_text(encoding='utf-8')
+        assert 'const result = await getApi().startStudioTest();' in source
+        assert 'startTest(currentJobId)' not in source
 
 
 def test_studio_monitor_defers_inventory_retry_while_work_is_active():
