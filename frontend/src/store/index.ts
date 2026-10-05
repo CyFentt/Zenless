@@ -193,7 +193,13 @@ export const useStore = create<AppState>((set) => ({
 
   jobs: [],
   currentJobId: null,
-  setCurrentJobId: (id) => set({ currentJobId: id }),
+  setCurrentJobId: (id) => set((state) => {
+    const testActive = ['STARTING', 'RUNNING', 'STOPPING'].includes(state.testState.status);
+    return {
+      currentJobId: id,
+      activeTestJobId: testActive || state.activeTestJobId === id ? state.activeTestJobId : null,
+    };
+  }),
 
   messages: [],
   activities: [],
