@@ -462,6 +462,7 @@ class StudioMCPClient:
                         pass
             self._reader = None
             self._stderr_reader = None
+            self.tools = {}
 
     def _read_stdout(self) -> None:
         process = self.process
