@@ -1418,8 +1418,25 @@ class ZenlessCore:
         if event.stage == Stage.WAITING_CHANGE_APPROVAL:
             self.events.publish("CHANGES_UPDATED", {"files": self.changes(event.task_id)})
             self.events.publish("REVIEW_READY", {"review": self.review(event.task_id)})
+        elif event.stage == Stage.GENERATING_CONCEPT:
+            self.events.publish("VISUAL_GENERATION_CHANGED", {"state": "GENERATING"})
         elif event.stage == Stage.WAITING_IMAGE_APPROVAL:
-            self.events.publish("VISUAL_GENERATION_CHANGED", {"state": "READY"})
+            visual = self.visual(event.task_id)
+            concept = visual.get("concept") if isinstance(visual, dict) else {}
+            self.events.publish(
+                "VISUAL_GENERATION_CHANGED",
+                {
+                    "state": "READY",
+                    "version": int(concept.get("version") or 0) if isinstance(concept, dict) else 0,
+                    "prompt": str(concept.get("prompt") or "") if isinstance(concept, dict) else "",
+                },
+            )
+            for view in visual.get("views", []) if isinstance(visual, dict) else []:
+                if isinstance(view, dict) and view.get("imageUrl") and view.get("name"):
+                    self.events.publish(
+                        "VISUAL_READY",
+                        {"view": str(view["name"]), "imageUrl": str(view["imageUrl"])},
+                    )
         elif event.stage == Stage.GENERATING_3D:
             self.events.publish("MODEL_GENERATION_CHANGED", {"target": "geometry", "state": "GENERATING"})
         elif event.stage == Stage.WAITING_3D_APPROVAL:
