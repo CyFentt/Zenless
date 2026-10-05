@@ -3,12 +3,12 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { WebSocket, WebSocketServer } from 'ws';
 import { createMockAdapter } from './mockAdapter.ts';
 
-const HOST = process.env.ZENLESS_HOST || '127.0.0.1';
-const PORT = Number(process.env.ZENLESS_PORT || 8787);
+const HOST = process.env.RUBRA_HOST || process.env.ZENLESS_HOST || '127.0.0.1';
+const PORT = Number(process.env.RUBRA_PORT || process.env.ZENLESS_PORT || 8787);
 const SESSION_TOKEN = process.env.RUBRA_TOKEN || process.env.ZENLESS_TOKEN || randomBytes(32).toString('hex');
 const DEV_ORIGINS = [`http://${HOST}:${PORT}`, 'http://127.0.0.1:5173', 'http://localhost:5173'];
 const ALLOWED_ORIGINS = new Set(
-  (process.env.ZENLESS_ALLOWED_ORIGINS || DEV_ORIGINS.join(','))
+  (process.env.RUBRA_ALLOWED_ORIGINS || process.env.ZENLESS_ALLOWED_ORIGINS || DEV_ORIGINS.join(','))
     .split(',')
     .map((value) => value.trim())
     .filter(Boolean),
