@@ -130,7 +130,11 @@ class BrowserRuntimeManager:
             except subprocess.TimeoutExpired:
                 if cancel is not None and cancel.is_set():
                     process.terminate()
-                    output_text, _ = process.communicate(timeout=10)
+                    try:
+                        output_text, _ = process.communicate(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        output_text, _ = process.communicate(timeout=5)
                     raise BridgeError("Managed browser installation cancelled.")
         if process.returncode != 0:
             raise BridgeError("Managed Chromium preparation failed: " + output_text[-3000:])
