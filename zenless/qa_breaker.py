@@ -567,10 +567,14 @@ class QABreaker:
             )
         except TaskCancelled:
             self._log(job_id, "RUBRA", "Play Test stopped by the user.")
-            self.events.publish("TEST_FINISHED", {"passed": False, "cancelled": True, "jobId": job_id})
+            latest = self.store.latest_test_run(job_id)
+            if latest is None or str(latest.get("status") or "") == "RUNNING":
+                self.events.publish("TEST_FINISHED", {"passed": False, "cancelled": True, "jobId": job_id})
         except Exception as exc:
             self._log(job_id, "ERR", f"Manual QA failed: {exc}")
-            self.events.publish("TEST_FINISHED", {"passed": False, "jobId": job_id})
+            latest = self.store.latest_test_run(job_id)
+            if latest is None or str(latest.get("status") or "") == "RUNNING":
+                self.events.publish("TEST_FINISHED", {"passed": False, "jobId": job_id})
         finally:
             task = self.store.load_task(job_id) or {}
             if (task.get("context") or {}).get("manual_test"):
