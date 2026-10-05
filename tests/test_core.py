@@ -139,6 +139,27 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(loaded["context"], {"live": True})
             self.assertEqual(len(store.task_events(task_id)), 1)
 
+    def test_file_assets_are_scoped_to_their_job_and_survive_other_job_rollback(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            core = object.__new__(ZenlessCore)
+            core.data_root = root
+            core.store = SQLiteStore(root / "state.db")
+            core.store.create_task("job-a", "A", TaskOptions())
+            core.store.create_task("job-b", "B", TaskOptions())
+            attachment = root / "shared.rbxm"
+            attachment.write_bytes(b"same attachment")
+
+            first = core._register_file_asset(attachment, job_id="job-a", kind="RBX")
+            second = core._register_file_asset(attachment, job_id="job-b", kind="RBX")
+
+            self.assertNotEqual(first, second)
+            self.assertEqual(len(core.store.assets("job-a")), 1)
+            self.assertEqual(len(core.store.assets("job-b")), 1)
+            self.assertTrue(core.store.delete_task("job-b"))
+            self.assertEqual(len(core.store.assets("job-a")), 1)
+            self.assertEqual(core.store.assets("job-b"), [])
+
     def test_recovery_pauses_pre_mutation_work_and_blocks_uncertain_writes(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             store = SQLiteStore(Path(folder) / "state.db")
