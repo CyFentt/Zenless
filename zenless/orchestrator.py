@@ -385,7 +385,7 @@ class ZenlessOrchestrator:
         if options.create_3d_asset:
             required.append(("hunyuan", "3D Generator"))
         for provider, label in required:
-            if not self.bridge.wait_for_provider(provider, timeout=2):
+            if not self._provider_ready(provider, timeout=2, options=options):
                 raise BridgeError(f"{label} requires login.")
         self._emit(task_id, Stage.COLLECTING_CONTEXT, "Reading the active Studio project.")
         if not self.studio.running:
@@ -465,7 +465,7 @@ class ZenlessOrchestrator:
                 raise BridgeError("Gemini requires login because Research is explicitly enabled.")
         self.store.update_task(task_id, context_json=context)
 
-        if not self.bridge.wait_for_provider("chatgpt", timeout=2):
+        if not self._provider_ready("chatgpt", timeout=2, options=options):
             raise BridgeError("Builder requires login.")
         if attachment_paths:
             self._emit(task_id, Stage.COLLECTING_CONTEXT, "Uploading validated attachments to the builder.")
@@ -822,7 +822,7 @@ class ZenlessOrchestrator:
     ) -> tuple[AgentProposal, ReviewResult | None]:
         if not options.independent_review:
             return proposal, None
-        if not self.bridge.wait_for_provider("deepseek", timeout=2):
+        if not self._provider_ready("deepseek", timeout=2, options=options):
             raise BridgeError("Reviewer requires login for independent review.")
 
         review: ReviewResult | None = None
@@ -1615,7 +1615,7 @@ class ZenlessOrchestrator:
         cancel_event: threading.Event,
         studio_id: str,
     ) -> tuple[AgentProposal, list[dict[str, Any]], str]:
-        if not self.bridge.wait_for_provider("deepseek", timeout=2):
+        if not self._provider_ready("deepseek", timeout=2, options=options):
             raise BridgeError("Reviewer requires login for the mandatory independent final review.")
         revisions = 0
         while True:
@@ -1846,6 +1846,13 @@ class ZenlessOrchestrator:
         if not output.strip():
             return False
         return bool(re.search(r"(?im)(\bexception\b|\btraceback\b|stack begin|(^|\s)error[:\s])", output))
+
+    def _provider_ready(self, provider: str, *, timeout: float, options: TaskOptions) -> bool:
+        if not options.smart_routing and provider in {"chatgpt", "deepseek"}:
+            web_only = getattr(self.bridge, "wait_for_web_provider", None)
+            if callable(web_only):
+                return bool(web_only(provider, timeout))
+        return self.bridge.wait_for_provider(provider, timeout)
 
     @staticmethod
     def _should_research(options: TaskOptions, analysis: BrainAnalysis) -> bool:
