@@ -66,13 +66,6 @@ export function handleEvent(event: ZenlessEvent) {
     case 'CHAT_ARTIFACT':
       store.addArtifact(event.data.artifact);
       break;
-    case 'PROVIDER_LOGIN_STATE':
-      store.setLoginState(event.data.provider, event.data.state);
-      if (event.data.state === 'READY') {
-        store.upsertProvider(event.data.provider, { status: 'READY', loginState: 'READY' });
-        store.setConnections({ [event.data.provider]: 'READY' } as Partial<Record<string, unknown>> as never);
-      }
-      break;
     case 'READINESS_CHANGED':
       store.setReadiness(event.data.readiness);
       break;
