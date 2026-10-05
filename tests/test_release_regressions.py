@@ -445,6 +445,26 @@ def test_user_facing_diagnostic_log_uses_rubra_branding():
     assert 'zenless.log' not in source
 
 
+def test_portable_source_wheels_use_pinned_offline_build_tools():
+    root = Path(__file__).resolve().parents[1]
+    manifest = json.loads((root / "packaging" / "windows-runtime.json").read_text(encoding="utf-8"))
+    tools = {item["name"]: item for item in manifest["build_tools"]}
+    assert tools["pip"]["version"] == "26.2.1"
+    assert tools["pip"]["sha256"] == "71138adf1f4ca900cdb7d289c21b7494329f2332b6d85f0e1c42108c0384ed3e"
+    assert tools["setuptools"]["version"] == "84.0.0"
+    assert tools["setuptools"]["sha256"] == "51a52592b3b99e102b609654876bd65f19f999935166d1352678931132b0c670"
+
+    source = (root / "scripts" / "build_portable.py").read_text(encoding="utf-8")
+    assert '"--require-hashes"' in source
+    assert '"--no-build-isolation"' in source
+    assert '"--no-index"' in source
+    assert 'source-build-env' in source
+    assert 'build_python' in source
+
+    workflow = (root / ".github" / "workflows" / "rubra-ci.yml").read_text(encoding="utf-8")
+    assert workflow.count('python-version: "3.14.7"') == 2
+
+
 def test_frontend_lockfile_keeps_resolved_package_versions_consistent():
     root = Path(__file__).resolve().parents[1]
     lock = json.loads((root / "frontend" / "package-lock.json").read_text(encoding="utf-8"))
