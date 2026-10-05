@@ -64,8 +64,19 @@ Section "Rubra"
   IfErrors unwritable
   FileClose $1
   Delete "$INSTDIR\.rubra-write-check"
+
+  ; Application code and bundled Python are immutable release payloads.
+  ; Replace them completely on update so removed/renamed files from an older
+  ; release cannot survive and shadow the new code. User data, downloaded
+  ; tools, models and caches elsewhere under runtime are intentionally kept.
+  RMDir /r "$INSTDIR\app"
+  RMDir /r "$INSTDIR\runtime\python"
+  Delete "$INSTDIR\Rubra.exe"
+
   SetOutPath "$INSTDIR"
+  ClearErrors
   File /r "${PACKAGE}/*"
+  IfErrors install_failed
   WriteUninstaller "$INSTDIR\Uninstall.exe"
   WriteINIStr "$INSTDIR\rubra-install.ini" "Application" "Product" "Rubra"
   WriteRegStr HKCU "Software\Rubra" "InstallDir" "$INSTDIR"
@@ -79,6 +90,9 @@ Section "Rubra"
   CreateShortcut "$SMPROGRAMS\Rubra\Rubra.lnk" "$INSTDIR\Rubra.exe" "" "$INSTDIR\Rubra.exe"
   CreateShortcut "$DESKTOP\Rubra.lnk" "$INSTDIR\Rubra.exe" "" "$INSTDIR\Rubra.exe"
   Goto done
+  install_failed:
+  MessageBox MB_OK|MB_ICONSTOP "Rubra could not update all application files. Close Rubra completely and run the installer again."
+  Abort
   unwritable:
   MessageBox MB_OK|MB_ICONSTOP "Rubra cannot write to this folder. Choose a folder that your Windows account can access."
   Abort
