@@ -45,20 +45,23 @@ def model_options_script(model: str = "") -> str:
         const b = node.getBoundingClientRect(), style = getComputedStyle(node);
         return b.width > 0 && b.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
       }};
-      const textOf = node => (node.getAttribute('data-model') || node.innerText || node.textContent || '').trim();
+      const dataValue = node => (node.getAttribute('data-model') || '').trim();
+      const textValue = node => (node.innerText || node.textContent || '').trim();
+      const catalogValue = node => dataValue(node) || textValue(node);
       const modelLabel = value => /^(?:gpt[- ]|o[1-9](?:[- ]|$)|chatgpt|deepseek|gemini|qwen|hunyuan|hunyuan3d)/i.test(value);
       const options = [...document.querySelectorAll('[data-model], [role="option"], [role="menuitem"]')].filter(node => {{
-        const text = textOf(node);
-        return visible(node) && (node.hasAttribute('data-model') || modelLabel(text)) && text.length <= 120;
+        const data = dataValue(node), text = textValue(node);
+        return visible(node) && (data || modelLabel(text)) && Math.max(data.length, text.length) <= 120;
       }});
       if (wanted) {{
-        const found = options.find(node => textOf(node).toLowerCase() === wanted);
+        const found = options.find(node => dataValue(node).toLowerCase() === wanted || textValue(node).toLowerCase() === wanted);
         if (!found) return {{ok: false}};
+        const selected = dataValue(found).toLowerCase() === wanted ? dataValue(found) : textValue(found);
         found.click();
-        return {{ok: true, selected: textOf(found)}};
+        return {{ok: true, selected}};
       }}
-      const buttons = [...document.querySelectorAll('button[data-model]')].filter(node => visible(node) && modelLabel(textOf(node)));
-      return [...new Set([...options, ...buttons].map(textOf).filter(Boolean))].slice(0,30);
+      const buttons = [...document.querySelectorAll('button[data-model]')].filter(node => visible(node) && (dataValue(node) || modelLabel(textValue(node))));
+      return [...new Set([...options, ...buttons].map(catalogValue).filter(Boolean))].slice(0,30);
     }})()"""
 
 
