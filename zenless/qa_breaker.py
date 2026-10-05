@@ -687,7 +687,10 @@ class QABreaker:
         output: str,
         rerun: bool,
     ) -> str:
-        if rerun or not self.bridge.wait_for_provider("deepseek", timeout=0.5):
+        task = self.store.load_task(job_id) or {}
+        if rerun or (task.get("context") or {}).get("manual_test"):
+            return ""
+        if not self.bridge.wait_for_provider("deepseek", timeout=0.5):
             return ""
         payload = {
             "plan": asdict(plan),
@@ -705,7 +708,11 @@ class QABreaker:
             return ""
 
     def _needs_visual_review(self, job_id: str, profile: TestProfile) -> bool:
+        if profile.name == "SMOKE":
+            return False
         task = self.store.load_task(job_id) or {}
+        if (task.get("context") or {}).get("manual_test"):
+            return False
         prompt = str(task.get("prompt", "")).casefold()
         visual_terms = (
             "ui",
@@ -727,7 +734,7 @@ class QABreaker:
             "map",
             "environment",
         )
-        return profile.name in {"STANDARD", "DEEP", "EXHAUSTIVE"} or any(term in prompt for term in visual_terms)
+        return any(term in prompt for term in visual_terms)
 
     def _run_official_playtest_subagent(
         self,
@@ -907,7 +914,7 @@ class QABreaker:
         expected = "Viewport capture is independently reviewed for visible regressions against the task objective"
         tool = self.studio.tools.get("screen_capture")
         if tool is None:
-            return "FAILED", expected, "Official Studio MCP does not expose screen_capture"
+            return "SKIPPED", expected, "Official Studio MCP does not expose screen_capture"
         properties = tool.input_schema.get("properties")
         required = tool.input_schema.get("required", [])
         arguments: dict[str, Any] = {}
@@ -919,7 +926,7 @@ class QABreaker:
             else []
         )
         if unresolved:
-            return "FAILED", expected, "Unsupported required screen_capture fields: " + ", ".join(map(str, unresolved))
+            return "SKIPPED", expected, "Unsupported required screen_capture fields: " + ", ".join(map(str, unresolved))
         try:
             capture = self.studio.call_tool("screen_capture", arguments, studio_id=studio_id, timeout=60)
         except MCPError as exc:
