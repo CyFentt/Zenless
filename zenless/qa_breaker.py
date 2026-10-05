@@ -662,7 +662,7 @@ class QABreaker:
             'Respond only with JSON {"scenarios":["..."]}.\n'
             f"Objective: {feature}\nChanges: {changed_tools}\nRisks: {risks}"
         )
-        if self.local_ai_callback is not None:
+        if self._smart_routing(job_id) and self.local_ai_callback is not None:
             try:
                 local_raw = self.local_ai_callback(prompt)
                 if local_raw:
@@ -673,7 +673,7 @@ class QABreaker:
                         return result
             except Exception:
                 pass
-        if not self.bridge.wait_for_provider("chatgpt", timeout=0.5):
+        if not self._provider_ready(job_id, "chatgpt", timeout=0.5):
             return []
         try:
             raw = self.bridge.send_prompt("chatgpt", prompt, task_id=job_id, timeout=120)
@@ -691,7 +691,7 @@ class QABreaker:
         output: str,
         rerun: bool,
     ) -> str:
-        if rerun or not self.bridge.wait_for_provider("deepseek", timeout=0.5):
+        if rerun or not self._provider_ready(job_id, "deepseek", timeout=0.5):
             return ""
         payload = {
             "plan": asdict(plan),
@@ -707,6 +707,22 @@ class QABreaker:
             return self.bridge.send_prompt("deepseek", prompt, task_id=job_id, timeout=120).strip()[:3000]
         except RuntimeError:
             return ""
+
+    def _smart_routing(self, job_id: str) -> bool:
+        task = self.store.load_task(job_id) or {}
+        options = task.get("options") if isinstance(task.get("options"), dict) else {}
+        return bool(options.get("smart_routing", True))
+
+    def _provider_ready(self, job_id: str, provider: str, *, timeout: float) -> bool:
+        if not self._smart_routing(job_id) and provider in {"chatgpt", "deepseek"}:
+            return self._web_provider_ready(provider, timeout=timeout)
+        return self.bridge.wait_for_provider(provider, timeout=timeout)
+
+    def _web_provider_ready(self, provider: str, *, timeout: float) -> bool:
+        web_only = getattr(self.bridge, "wait_for_web_provider", None)
+        if callable(web_only):
+            return bool(web_only(provider, timeout))
+        return self.bridge.wait_for_provider(provider, timeout=timeout)
 
     def _needs_visual_review(self, job_id: str, profile: TestProfile) -> bool:
         task = self.store.load_task(job_id) or {}
@@ -953,7 +969,7 @@ class QABreaker:
         )
         errors: list[str] = []
         for provider in ("gemini", "chatgpt"):
-            if not self.bridge.wait_for_provider(provider, timeout=0.5):
+            if not self._web_provider_ready(provider, timeout=0.5):
                 continue
             try:
                 uploaded = self.bridge.request(
