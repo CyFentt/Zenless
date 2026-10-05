@@ -108,7 +108,6 @@ export interface Job {
 }
 
 export type EffortLevel = "AUTO" | "MIN" | "MED" | "MAX";
-export type ChatMode = "PROJECT" | "TEMP";
 export type ApprovalMode = "ASK" | "SAFE_AUTO" | "FULL_AUTO";
 
 export interface TaskOptions {
@@ -122,10 +121,10 @@ export interface TaskOptions {
   risk: "low" | "medium" | "high";
   revisions: number;
   fixAttempts: number;
+  smartRouting?: boolean;
   continuousVerification?: boolean;
   effort?: EffortLevel;
   research?: "AUTO" | "ON" | "OFF";
-  chatMode?: ChatMode;
 }
 
 export const DEFAULT_TASK_OPTIONS: TaskOptions = {
@@ -139,10 +138,10 @@ export const DEFAULT_TASK_OPTIONS: TaskOptions = {
   risk: "medium",
   revisions: 3,
   fixAttempts: 3,
+  smartRouting: true,
   continuousVerification: true,
   effort: "AUTO",
   research: "AUTO",
-  chatMode: "PROJECT",
 };
 
 export type ChatRole = "user" | "zenless" | "system";
