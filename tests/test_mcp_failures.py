@@ -100,10 +100,12 @@ def test_close_kills_unresponsive_owned_child_without_closing_active_reader():
     reader = Mock()
     reader.is_alive.return_value = True
     client.process, client._reader = process, reader
+    client.tools["stale"] = Mock()
     client.close()
     process.kill.assert_called_once()
     process.stdout.close.assert_not_called()
     assert client.process is None
+    assert client.tools == {}
 
 
 def test_stream_failure_releases_waiters():
