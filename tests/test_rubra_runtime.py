@@ -140,7 +140,7 @@ class RubraRuntimeTests(unittest.TestCase):
                 self.killed = False
 
             def communicate(self, timeout: float | None = None):
-                return "timed out", None
+                raise subprocess.TimeoutExpired("stylua", timeout or 0)
 
             def terminate(self) -> None:
                 raise AssertionError("timeout must kill the process directly")
