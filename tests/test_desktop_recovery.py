@@ -163,8 +163,10 @@ def test_standalone_play_does_not_interrupt_build(core):
     core.qa.start_manual.assert_not_called()
 
 
-def test_local_roles_work_without_launching_web_login(tmp_path):
+def test_local_roles_fallback_only_after_web_is_unavailable_without_launching_login(tmp_path):
     browser = Mock()
+    browser.provider_status.return_value = {}
+    browser.wait_for_provider.return_value = False
     prompts = []
     gateway = AgentGateway(
         managed=browser,
@@ -173,14 +175,13 @@ def test_local_roles_work_without_launching_web_login(tmp_path):
         local_complete=lambda prompt: prompts.append(prompt) or '{"ok": true}',
     )
     for provider in ("chatgpt", "deepseek"):
-        assert gateway.wait_for_provider(provider)
+        assert gateway.wait_for_provider(provider, timeout=0.1)
         assert gateway.send_prompt(provider, "Code and protocol", task_id="job") == '{"ok": true}'
     assert prompts[0].startswith("Role: Builder")
     assert prompts[1].startswith("Role: Reviewer")
-    browser.wait_for_provider.assert_not_called()
+    assert browser.wait_for_provider.call_count >= 2
     browser.login.assert_not_called()
-    browser.wait_for_provider.return_value = False
-    assert not gateway.wait_for_provider("hunyuan")
+    assert not gateway.wait_for_provider("hunyuan", timeout=0.1)
 
 
 def test_local_attachments_are_scoped_to_task_and_reject_images(tmp_path):
