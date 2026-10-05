@@ -4,8 +4,8 @@ import json
 import tempfile
 import threading
 import unittest
-from unittest.mock import Mock
 from pathlib import Path
+from unittest.mock import Mock
 
 from zenless.core import CoreError, ZenlessCore
 from zenless.event_bus import EventBus
