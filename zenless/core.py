@@ -960,8 +960,18 @@ class ZenlessCore:
             status="running",
             context_json={"manual_test": True},
         )
+        try:
+            self.start_test(job_id, profile)
+        except Exception as exc:
+            self.store.update_task(
+                job_id,
+                stage=Stage.FAILED,
+                status="failed",
+                error=str(exc),
+                final_text="Play Test could not start.",
+            )
+            raise
         self._studio_test_id = job_id
-        self.start_test(job_id, profile)
         return {"ok": True, "jobId": job_id}
 
     def stop_test(self, job_id: str) -> bool:
