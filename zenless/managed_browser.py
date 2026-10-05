@@ -13,7 +13,7 @@ from urllib.parse import urlparse
 
 from .browser_bridge import BridgeError, StatusCallback
 from .diagnostics import ErrorBus
-from .provider_auth import authentication_script, model_options_script
+from .provider_auth import authentication_script, model_options_script, open_model_menu_script
 
 
 @dataclass(frozen=True, slots=True)
@@ -540,13 +540,25 @@ class ManagedBrowserController:
     def _select_model(self, command: _Command) -> dict[str, Any]:
         page = self._ensure_page(command.provider)
         model = str(command.payload.get("model") or "").strip()
+        if not model:
+            raise BridgeError("Model option is empty.")
         result = page.evaluate(model_options_script(model))
-        if not model or not isinstance(result, dict) or not result.get("ok"):
-            raise BridgeError(f"Model option not found: {model}. Open the provider's model menu and refresh Models.")
+        if not isinstance(result, dict) or not result.get("ok"):
+            opened = bool(page.evaluate(open_model_menu_script()))
+            if opened:
+                page.wait_for_timeout(350)
+                result = page.evaluate(model_options_script(model))
+        if not isinstance(result, dict) or not result.get("ok"):
+            raise BridgeError(f"Model option not found: {model}. Refresh Models after the provider finishes loading.")
         return {"status": "ok", "selected": str(result.get("selected") or model), "transport": "playwright"}
 
     def _discover_models(self, command: _Command) -> dict[str, Any]:
-        values = self._ensure_page(command.provider).evaluate(model_options_script())
+        page = self._ensure_page(command.provider)
+        values = page.evaluate(model_options_script())
+        if not isinstance(values, list) or len(values) <= 1:
+            if bool(page.evaluate(open_model_menu_script())):
+                page.wait_for_timeout(350)
+                values = page.evaluate(model_options_script())
         return {"status": "ok", "models": values if isinstance(values, list) else [], "transport": "playwright"}
 
     def _cancel_generation(self, command: _Command) -> dict[str, Any]:
