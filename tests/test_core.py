@@ -160,6 +160,39 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(len(core.store.assets("job-a")), 1)
             self.assertEqual(core.store.assets("job-b"), [])
 
+    def test_chat_returns_prepared_message_identity_without_post_start_message_read(self) -> None:
+        core = object.__new__(ZenlessCore)
+        core.settings = lambda: json.loads(json.dumps(ZenlessCore.DEFAULT_SETTINGS))
+        core._preflight_providers = Mock()
+        core._create_job = Mock(return_value=({"id": "job"}, 41))
+        core.messages = Mock(side_effect=AssertionError("post-start message read"))
+
+        result = core.send_chat("Continue", None, (), None)
+
+        self.assertEqual(result, {"messageId": "msg-41", "jobId": "job"})
+        core.messages.assert_not_called()
+
+    def test_job_snapshot_is_prepared_before_submit_returns(self) -> None:
+        core = object.__new__(ZenlessCore)
+        core.orchestrator = Mock()
+        core._studio_target_id = ""
+        core.connections = Mock(return_value={"studio": "OFF"})
+        timeline: list[str] = []
+        core.job = Mock(side_effect=lambda task_id: timeline.append("snapshot") or {"id": task_id})
+
+        def submit(_title, _options, **kwargs):
+            timeline.append("submit")
+            kwargs["ready_callback"]("job", 9)
+            timeline.append("return")
+            return "job"
+
+        core.orchestrator.submit.side_effect = submit
+        job, message_id = core._create_job("Build")
+
+        self.assertEqual(job, {"id": "job"})
+        self.assertEqual(message_id, 9)
+        self.assertEqual(timeline, ["submit", "snapshot", "return"])
+
     def test_recovery_pauses_pre_mutation_work_and_blocks_uncertain_writes(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             store = SQLiteStore(Path(folder) / "state.db")
