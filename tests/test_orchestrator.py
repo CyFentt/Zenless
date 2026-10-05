@@ -546,6 +546,21 @@ class OrchestratorTests(unittest.TestCase):
             self.assertEqual(store.load_task(task_id)["stage"], Stage.COMPLETE.value)
             self.assertIn("multi_edit", [name for name, _ in studio.calls])
 
+    def test_approval_gate_accepts_only_the_first_decision(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            orchestrator, store = self.make_system(folder, FakeBridge({}), FakeStudio())
+            store.create_task("approval-race", "test", TaskOptions())
+            gate = "changes:race"
+            from zenless.orchestrator import _ApprovalGate
+            with orchestrator._state_lock:
+                orchestrator._gates[("approval-race", gate)] = _ApprovalGate()
+            self.assertTrue(orchestrator.approve("approval-race", gate, "approve", "first"))
+            self.assertFalse(orchestrator.approve("approval-race", gate, "reject", "second"))
+            with orchestrator._state_lock:
+                target = orchestrator._gates[("approval-race", gate)]
+                self.assertEqual(target.decision, "approve")
+                self.assertEqual(target.note, "first")
+
     def test_second_task_is_rejected_while_approval_is_pending(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             bridge = FakeBridge({"chatgpt": [proposal()], "deepseek": [review()]})
