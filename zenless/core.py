@@ -825,15 +825,18 @@ class ZenlessCore:
                         preferred_id=self._studio_target_id,
                         active_title=active_studio_title(),
                     )
+                    studio_idle = (
+                        not self.orchestrator.current_task_id
+                        and not self.qa.running(self._studio_test_id)
+                    )
+                    inventory_due = (
+                        bool(getattr(self, "_studio_tree_error", ""))
+                        or time.monotonic() - getattr(self, "_last_studio_inventory", 0) >= 30
+                    )
                     if (
                         target.studio_id != self._studio_target_id
                         or target.label != self._studio_label
-                        or getattr(self, "_studio_tree_error", "")
-                        or (
-                            time.monotonic() - getattr(self, "_last_studio_inventory", 0) >= 30
-                            and not self.orchestrator.current_task_id
-                            and not self.qa.running(self._studio_test_id)
-                        )
+                        or (studio_idle and inventory_due)
                     ):
                         self.refresh_studio(report_error=False)
                 self._set_boot("STUDIO", "READY")
