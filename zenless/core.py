@@ -345,6 +345,7 @@ class ZenlessCore:
         options: dict[str, Any] | None = None,
         *,
         attachments: tuple[Path, ...] = (),
+        parent_job_id: str = "",
     ) -> dict[str, Any]:
         try:
             task_id = self.orchestrator.submit(
@@ -352,6 +353,7 @@ class ZenlessCore:
                 TaskOptions.from_api(options),
                 attachment_paths=attachments,
                 studio_id=self._studio_target_id if self.connections()["studio"] == "READY" else "",
+                parent_task_id=parent_job_id,
             )
         except OrchestratorError as exc:
             raise CoreError("JOB_BUSY", str(exc), status=409) from exc
@@ -401,7 +403,9 @@ class ZenlessCore:
             objective = "Analyze the submitted attachments and implement the compatible Studio request."
         if job_id:
             existing = self.store.load_task(job_id)
-            if existing and str(existing.get("status")) in {"running", "waiting"}:
+            if existing is None:
+                raise CoreError("JOB_NOT_FOUND", "The conversation task no longer exists.", status=404)
+            if str(existing.get("status")) in {"running", "waiting"}:
                 raise CoreError(
                     "JOB_ALREADY_RUNNING",
                     "The current job is still running. Pause, complete, or cancel it before sending another request.",
@@ -423,7 +427,12 @@ class ZenlessCore:
         )
         task_options = TaskOptions.from_api(effective_options)
         self._preflight_providers(task_options)
-        job = self.create_job(objective, options=effective_options, attachments=attachments)
+        job = self.create_job(
+            objective,
+            options=effective_options,
+            attachments=attachments,
+            parent_job_id=job_id or "",
+        )
         user_messages = [message for message in self.messages(job["id"]) if message["role"] == "user"]
         message_id = user_messages[-1]["id"] if user_messages else uuid.uuid4().hex
         return {"messageId": message_id, "jobId": job["id"]}
