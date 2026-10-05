@@ -241,7 +241,7 @@ class LocalAIService:
                 raise LocalAIError("Local model server exited during startup. " + output)
             try:
                 with urlopen(f"http://127.0.0.1:{self._port}/health", timeout=1.0) as response:
-                    if 200 <= response.status < 500:
+                    if 200 <= response.status < 300:
                         return
             except URLError as exc:
                 last_error = str(exc)
