@@ -349,6 +349,20 @@ def test_installer_updates_keep_a_rollback_copy_until_extraction_succeeds():
     assert 'RMDir /r "$INSTDIR\\runtime"' not in source[:extraction]
 
 
+def test_chat_attachment_limit_matches_backend_contract():
+    root = Path(__file__).resolve().parents[1]
+    source = (root / 'frontend' / 'src' / 'features' / 'chat' / 'ChatPage.tsx').read_text(encoding='utf-8')
+    assert 'Array.from(files).slice(0, 5)' in source
+    assert 'combined.slice(0, 5)' in source
+
+
+def test_model_discovery_does_not_treat_menu_buttons_as_options():
+    root = Path(__file__).resolve().parents[1]
+    source = (root / 'zenless' / 'provider_auth.py').read_text(encoding='utf-8')
+    assert "[data-model]:not(button)" in source
+    assert 'open_model_menu_script' in source
+
+
 def test_uninstaller_removes_user_state_and_release_files():
     root = Path(__file__).resolve().parents[1]
     source = (root / "packaging" / "setup.nsi").read_text(encoding="utf-8")
