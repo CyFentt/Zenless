@@ -138,6 +138,29 @@ def test_manual_play_button_always_uses_standalone_studio_test():
     assert 'startTest(currentJobId)' not in source
 
 
+def test_studio_monitor_defers_inventory_retry_while_work_is_active():
+    core = ZenlessCore.__new__(ZenlessCore)
+    core._closing = Mock()
+    core._closing.is_set.return_value = False
+    core._closing.wait.return_value = True
+    core._studio_target_id = "studio"
+    core._studio_label = "Game"
+    core._studio_tree_error = "inventory unavailable"
+    core._last_studio_inventory = 0.0
+    core.studio = Mock(running=True)
+    core.studio.list_studios.return_value = [Mock(studio_id="studio", label="Game", raw={})]
+    core.orchestrator = Mock(current_task_id="active-job")
+    core.qa = Mock()
+    core.qa.running.return_value = True
+    core.connections = Mock(return_value={"studio": "READY"})
+    core.refresh_studio = Mock()
+    core._set_boot = Mock()
+
+    core._monitor_studio()
+
+    core.refresh_studio.assert_not_called()
+
+
 def test_manual_test_plan_never_waits_for_an_ai_account(tmp_path):
     store = SQLiteStore(tmp_path / 'state.db')
     store.create_task('manual', 'Play Test', TaskOptions())
