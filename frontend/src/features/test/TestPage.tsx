@@ -19,19 +19,22 @@ export function TestPage() {
   const setTestLogs = useStore((s) => s.setTestLogs);
   const resetTestDetails = useStore((s) => s.resetTestDetails);
   const currentJobId = useStore((s) => s.currentJobId);
+  const testJobId = useStore((s) => s.activeTestJobId);
+  const [pending, setPending] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [selectedLog, setSelectedLog] = useState<TestLog | null>(null);
 
   useEffect(() => {
-    if (!currentJobId) {
+    const session = testJobId || currentJobId;
+    if (!session) {
       setTestState({ status: "IDLE", elapsedMs: 0, fixAttempt: 0, maxFixAttempts: 3 });
       return;
     }
     getApi()
-      .getTestState(currentJobId)
+      .getTestState(session)
       .then(setTestState)
       .catch((error) => frontendDiagnostics.capture(error, "test", "Failed to load test state"));
-  }, [currentJobId, setTestState]);
+  }, [currentJobId, testJobId, setTestState]);
 
   useEffect(() => {
     if (testState.status !== "RUNNING") return;
@@ -43,33 +46,38 @@ export function TestPage() {
   }, [testState.elapsedMs, testState.status]);
 
   const handlePlay = async () => {
-    if (!currentJobId) {
-      frontendDiagnostics.report("warning", "test", "No active job");
-      return;
-    }
+    if (pending) return;
+    setPending(true);
     try {
       setTestLogs([]);
       resetTestDetails();
       setElapsed(0);
       setTestState({ ...testState, status: "STARTING" });
-      await getApi().startTest(currentJobId);
-      setTestState({ ...testState, status: "RUNNING" });
+      if (currentJobId) {
+        await getApi().startTest(currentJobId);
+        useStore.setState({ activeTestJobId: currentJobId });
+      } else {
+        const result = await getApi().startStudioTest();
+        useStore.setState({ activeTestJobId: result.jobId });
+      }
     } catch (error) {
       frontendDiagnostics.capture(error, "test", "Failed to start Play Test");
       setTestState({ ...testState, status: "FAILED" });
-    }
+    } finally { setPending(false); }
   };
 
   const handleStop = async () => {
-    if (!currentJobId) return;
+    const activeTest = testJobId || currentJobId;
+    if (!activeTest || pending) return;
+    setPending(true);
     try {
       setTestState({ ...testState, status: "STOPPING" });
-      await getApi().stopTest(currentJobId);
-      setTestState({ ...testState, status: "STOPPED" });
+      await getApi().stopTest(activeTest);
+
     } catch (error) {
       frontendDiagnostics.capture(error, "test", "Failed to stop Play Test");
       setTestState({ ...testState, status: "FAILED" });
-    }
+    } finally { setPending(false); }
   };
 
   const filteredLogs =
@@ -113,6 +121,7 @@ export function TestPage() {
           ) : (
             <button
               onClick={handlePlay}
+              disabled={pending || testState.status === "STARTING" || testState.status === "STOPPING"}
               className="flex items-center gap-1.5 px-2.5 h-7 text-2xs uppercase tracking-wider text-zen-okBright border border-ink-600 hover:bg-ink-800 transition-colors"
             >
               <Play size={10} /> PLAY

@@ -1,25 +1,15 @@
-# Rubra 2.0.3 prerelease
+# Rubra 2.1.0 prerelease
 
-This maintenance build extends the 2.0.2 desktop fixes with bounded session initialization and response-body timeouts, recovery from unavailable saved tasks, MCP process shutdown and transport error handling, schema composition validation, bounded chunked JSON requests and cross-task idempotency protection.
+This release addresses the desktop failures reported during 2.0.3 testing.
 
-Validation includes real local HTTP requests, real child processes, 32 concurrent out-of-order MCP responses and property-based schema checks. See REVIEW_REPORT.md for evidence and remaining platform limitations.
+- Studio reconnects when opened after Rubra; late MCP installation is rediscovered. Structured tree results, hierarchy, project identity, and script content are exposed in the editor.
+- Play Test works for the open place without an AI build task. Its session is persisted, can be stopped across pages, and closes owned Play execution on cancellation.
+- Guest text fields no longer count as authentication. Login waits for stable account evidence; closing a window releases it for retry. Different provider requests run independently, and busy health probes respond without waiting behind a login.
+- Slow MCP, chat preflight, indexing, and model operations run outside the HTTP event loop. Tool preparation starts after the desktop is available.
+- Local models can build and review text/code, with separate inference contexts, bounded completion continuation, sequential model loading, and Vulkan-to-CPU fallback. Qwen2.5 Coder 7B is pinned to an upstream revision and SHA-256.
+- Settings rows are aligned, tooltips use Radix collision handling, model controls report supported options, and labels have improved contrast. The frameless shell has its own window controls, one brand icon, notifications, motion respecting reduced-motion, and concise chat process updates.
+- Existing Roblox skill sources use the correct portable runtime root. Ordinary code tasks no longer require the optional web 3D generator.
 
-## Previous 2.0.2 changes
+Install `Rubra-Setup.exe`; the default is `%LOCALAPPDATA%\Programs\Rubra`. Existing data and downloaded runtimes are preserved during updates. Initial model preparation requires several GB of downloads and free disk space; progress is visible in Settings → Models.
 
-The installer defaults to `%LOCALAPPDATA%\Programs\Rubra`, creates a Start menu shortcut and registers an uninstaller. Updates preserve application data and downloaded tools. Uninstall removes program files while keeping data. The ZIP remains portable.
-
-The supplied ruby icon is included in the launcher, installer and desktop window. The interface follows the OpenCode Studio navigation structure with a collapsible sidebar, recent tasks and a spacious workspace, using angular controls and black, red and white. Green and amber indicate success and pending/warning states.
-
-A startup defect exposed the native window through the JavaScript API, causing pywebview to recursively inspect native objects. The window reference is now private and only the folder picker is exposed; a regression test runs the real pywebview API discovery. UI readiness no longer waits for Studio discovery. Failed hydration offers a retry instead of directing users to inaccessible settings. Legacy partial provider settings are merged with current defaults.
-
-Additional fixes cover MCP pagination and structured content, ambiguous Studio selection, complete script readback verification, sequential edits, creation preconditions, playtest cleanup and evidence, skipped static checks, optional tool installation failures, provider status routing and WebSocket reconnection.
-
-## Requirements
-
-Windows 10 or later, x64; Internet access for first-launch tool downloads and provider login; Microsoft WebView2; Roblox Studio with MCP enabled and the intended place open. Close Rubra before updating. An older portable folder can be retained separately; this installer does not silently migrate it.
-
-## Validation
-
-Ruff and Pyright pass. Backend: 98 passed, one Windows-only test skipped. Frontend: ESLint, TypeScript and 56 tests pass; production build succeeds. Windows package structure is checked separately by `scripts/verify_portable.py`.
-
-Windows execution, real provider authentication and live Roblox round trips remain unverified in this Linux environment. The screenshot symptoms informed the fixes but are not proof of a successful Windows retest. GitHub Actions was blocked by the repository account billing lock during the previous validation attempt. This build remains a prerelease.
+Validation: Python, frontend unit, HTTP/child-process integration, and Chromium UI tests pass. This package has not been executed on native Windows or against real Roblox Studio and provider accounts in this environment. Authentication selectors, Windows window controls, Vulkan allocation, live model output quality, and real Studio lifecycle must still be confirmed on the target PC. The local model path handles text/code; it does not replace web image or 3D generation.

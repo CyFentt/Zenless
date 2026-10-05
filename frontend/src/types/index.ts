@@ -129,8 +129,8 @@ export interface TaskOptions {
 }
 
 export const DEFAULT_TASK_OPTIONS: TaskOptions = {
-  visualFirst: true,
-  create3D: true,
+  visualFirst: false,
+  create3D: false,
   review: true,
   autoTest: true,
   autoFix: true,
@@ -329,6 +329,7 @@ export interface StudioNode {
   children?: StudioNode[];
   locked?: boolean;
   usedAsContext?: boolean;
+  source?: string;
 }
 
 export type TestStatus = "IDLE" | "STARTING" | "RUNNING" | "STOPPING" | "STOPPED" | "FAILED";
@@ -578,14 +579,14 @@ export interface ZenlessEventMap {
   MODEL_READY: { modelUrl: string; filename?: string };
   MODEL_APPROVED: Record<string, never>;
   ASSETS_UPDATED: { assets: Asset[] };
-  STUDIO_STATE_CHANGED: { state: StudioState };
+  STUDIO_STATE_CHANGED: { state: StudioState; projectName?: string };
   STUDIO_TREE_UPDATED: { tree: StudioNode[] };
   TEST_STARTED: { jobId?: string };
   TEST_CASE_STARTED: { jobId?: string; testCase: TestCaseResult };
   TEST_CASE_FINISHED: { jobId?: string; testCase: TestCaseResult };
   TEST_FAILURE: { jobId?: string; failure: TestFailure };
   TEST_LOG: { log: TestLog };
-  TEST_FINISHED: { passed: boolean; jobId?: string };
+  TEST_FINISHED: { passed: boolean; cancelled?: boolean; jobId?: string };
   SETTINGS_CHANGED: { settings: Partial<Settings> };
   DIAGNOSTIC_EVENT: { diagnostic: Diagnostic };
 }
@@ -595,3 +596,12 @@ export type ZenlessEvent = {
 }[keyof ZenlessEventMap];
 
 export type ZenlessEventHandler = (event: ZenlessEvent) => void;
+
+export interface LocalAIState {
+  enabled: boolean;
+  available: boolean;
+  running: boolean;
+  model: string;
+  models?: { name: string; installed: boolean }[];
+  setup: { state: string; detail: string };
+}

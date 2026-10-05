@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import type { ReactNode } from 'react';
 
 export interface TabItem {
   id: string;
@@ -84,34 +84,13 @@ interface SelectProps {
 }
 
 export function Select({ value, options, onChange, label }: SelectProps) {
-  const [open, setOpen] = useState(false);
-  const current = options.find((o) => o.id === value);
   return (
-    <div className="relative">
-      {label && <span className="block text-2xs text-ink-300 uppercase tracking-wider mb-1">{label}</span>}
-      <button
-        onClick={() => setOpen(!open)}
-        className="flex items-center justify-between w-full h-7 px-2 text-xs text-ink-50 bg-ink-800 border border-ink-600 hover:border-ink-500 transition-colors"
-      >
-        <span>{current?.label ?? value}</span>
-        <span className="text-ink-300 text-2xs">▾</span>
-      </button>
-      {open && (
-        <>
-          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute z-50 mt-1 w-full bg-ink-800 border border-ink-600 max-h-40 overflow-y-auto scrollbar-zen">
-            {options.map((opt) => (
-              <button
-                key={opt.id}
-                onClick={() => { onChange(opt.id); setOpen(false); }}
-                className={`block w-full text-left px-2 h-7 text-xs hover:bg-ink-700 transition-colors ${opt.id === value ? 'text-ink-0' : 'text-ink-100'}`}
-              >
-                {opt.label}
-              </button>
-            ))}
-          </div>
-        </>
-      )}
-    </div>
+    <label className="block w-full min-w-0">
+      {label && <span className="block text-xs text-ink-300 mb-1">{label}</span>}
+      <select aria-label={label || 'Model or setting'} value={value} onChange={(event) => onChange(event.target.value)}
+        className="w-full h-8 px-2 text-xs text-ink-50 bg-ink-800 border border-ink-500 focus:border-zen-red">
+        {options.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
+      </select>
+    </label>
   );
 }

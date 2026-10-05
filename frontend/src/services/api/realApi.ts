@@ -1,3 +1,4 @@
+import type { LocalAIState } from '@/types';
 import type { ZenlessAPI } from './types';
 import { frontendDiagnostics } from '@/services/diagnostics';
 import type {
@@ -207,15 +208,16 @@ export class RealZenlessAPI implements ZenlessAPI {
 
   getAssets(): Promise<Asset[]> { return request('/api/assets'); }
 
-  getStudioState(): Promise<{ state: StudioState }> { return request('/api/studio/state'); }
+  getStudioState(): Promise<{ state: StudioState; projectName?: string }> { return request('/api/studio/state'); }
   getStudioTree(): Promise<StudioNode[]> { return request('/api/studio/tree'); }
   searchStudio(query: string): Promise<StudioNode[]> { return request(`/api/studio/search?q=${encodeURIComponent(query)}`); }
-  refreshStudio(): Promise<{ ok: boolean }> { return request('/api/studio/refresh', { method: 'POST' }); }
+  refreshStudio(): Promise<{ ok: boolean }> { return request('/api/studio/refresh', { method: 'POST', timeout: 60000 }); }
   inspectStudio(nodeId: string): Promise<StudioNode> { return request(`/api/studio/${encodeURIComponent(nodeId)}`); }
   lockStudioReference(nodeId: string): Promise<{ ok: boolean }> { return request(`/api/studio/${encodeURIComponent(nodeId)}/lock`, { method: 'POST' }); }
   unlockStudioReference(nodeId: string): Promise<{ ok: boolean }> { return request(`/api/studio/${encodeURIComponent(nodeId)}/unlock`, { method: 'POST' }); }
   useStudioAsContext(nodeId: string): Promise<{ ok: boolean }> { return request(`/api/studio/${encodeURIComponent(nodeId)}/context`, { method: 'POST' }); }
 
+  startStudioTest(): Promise<{ ok: boolean; jobId: string }> { return request('/api/studio/test', { method: 'POST', timeout: 60000 }); }
   startTest(jobId: string): Promise<{ ok: boolean }> { return request(`/api/jobs/${encodeURIComponent(jobId)}/test`, { method: 'POST' }); }
   stopTest(jobId: string): Promise<{ ok: boolean }> { return request(`/api/jobs/${encodeURIComponent(jobId)}/test/stop`, { method: 'POST' }); }
   getTestState(jobId: string): Promise<TestState> { return request(`/api/jobs/${encodeURIComponent(jobId)}/test/state`); }
@@ -228,6 +230,8 @@ export class RealZenlessAPI implements ZenlessAPI {
     return request(`/api/project/search?q=${encodeURIComponent(query)}&semantic=${semantic ? '1' : '0'}&limit=${Math.max(1, Math.min(30, limit))}`, { timeout: 120000 });
   }
 
+  getLocalAIState(): Promise<LocalAIState> { return request('/api/local-ai'); }
+  prepareLocalAI(): Promise<{ ok: boolean }> { return request('/api/local-ai/prepare', { method: 'POST' }); }
   getSettings(): Promise<Settings> { return request('/api/settings'); }
   updateSettings(partial: Partial<Settings>): Promise<Settings> { return request('/api/settings', { method: 'PATCH', body: partial }); }
   getModels(): Promise<ModelCatalog> { return request('/api/settings/models'); }

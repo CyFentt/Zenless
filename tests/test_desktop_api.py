@@ -27,6 +27,27 @@ def test_desktop_api_does_not_expose_or_walk_native_window() -> None:
         inject_pywebview("edgechromium", window)
         assert loaded.wait(2)
     exposed = json.loads(scripts[-1])
-    assert [item["func"] for item in exposed] == ["select_project_folder"]
+    assert [item["func"] for item in exposed] == [
+        "close_window",
+        "minimize_window",
+        "select_project_folder",
+        "toggle_maximize",
+    ]
     assert api.select_project_folder() == "C:/Projects/Game"
     native.create_file_dialog.assert_called_once()
+
+
+def test_window_controls_follow_native_maximize_and_restore_events():
+    api = DesktopAPI()
+    native = SimpleNamespace(maximize=Mock(), restore=Mock(), minimize=Mock(), destroy=Mock())
+    api._bind(native)
+    api.toggle_maximize()
+    native.maximize.assert_called_once()
+    api._on_maximized()
+    api.toggle_maximize()
+    native.restore.assert_called_once()
+    api._on_restored()
+    api.minimize_window()
+    api.close_window()
+    native.minimize.assert_called_once()
+    native.destroy.assert_called_once()

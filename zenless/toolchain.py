@@ -29,13 +29,14 @@ class InstallResult:
 
 
 class ToolchainManager:
-    def __init__(self, *, resource_root: Path, portable_root: Path, status_callback: Callable[[str, str], None] | None = None) -> None:
+    def __init__(self, *, resource_root: Path, portable_root: Path, status_callback: Callable[[str, str], None] | None = None, cancel_event: threading.Event | None = None) -> None:
         self.resource_root = resource_root.resolve()
         self.portable_root = portable_root.resolve()
         self.runtime_root = self.portable_root / "runtime"
         self.download_root = self.runtime_root / "downloads"
         self.state_path = self.runtime_root / "toolchain-state.json"
         self.status_callback = status_callback
+        self.cancel_event = cancel_event or threading.Event()
         self._lock = threading.RLock()
         self.runtime_root.mkdir(parents=True, exist_ok=True)
         self.download_root.mkdir(parents=True, exist_ok=True)
@@ -46,6 +47,8 @@ class ToolchainManager:
         with self._lock:
             results: list[InstallResult] = []
             for item in self.manifest.get("artifacts", []):
+                if self.cancel_event.is_set():
+                    break
                 if item.get("auto", True) is False:
                     results.append(InstallResult(str(item["id"]), "optional", "Available on demand"))
                     continue
@@ -60,6 +63,8 @@ class ToolchainManager:
                     if item.get("critical"):
                         raise
             for item in self.manifest.get("sources", []):
+                if self.cancel_event.is_set():
+                    break
                 if item.get("auto", True) is False:
                     results.append(InstallResult(str(item["id"]), "optional", "Available on demand"))
                     continue
@@ -259,7 +264,18 @@ class ToolchainManager:
         request = urllib.request.Request(url, headers={"User-Agent": "Rubra/1"})
         try:
             with urllib.request.urlopen(request, timeout=90) as response, partial.open("wb") as stream:
-                shutil.copyfileobj(response, stream, length=1024 * 1024)
+                total = int(response.headers.get("Content-Length") or 0)
+                copied = 0
+                last_percent = -1
+                while chunk := response.read(1024 * 1024):
+                    if self.cancel_event.is_set():
+                        raise ToolchainError("Tool preparation cancelled.")
+                    stream.write(chunk)
+                    copied += len(chunk)
+                    percent = int(copied * 100 / total) if total else -1
+                    if percent != last_percent:
+                        self._status(target.stem, f"Downloading {percent}%" if total else f"Downloading {copied // (1024 * 1024)} MB")
+                        last_percent = percent
             os.replace(partial, target)
         except Exception:
             partial.unlink(missing_ok=True)

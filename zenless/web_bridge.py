@@ -220,6 +220,7 @@ class LocalWebBridge:
         app.router.add_get("/api/studio/tree", self._sync_handler(self.core.studio_tree))
         app.router.add_get("/api/studio/search", self._search_studio)
         app.router.add_post("/api/studio/refresh", self._refresh_studio)
+        app.router.add_post("/api/studio/test", self._start_studio_test)
         app.router.add_get("/api/studio/{node_id}", self._inspect_studio)
         app.router.add_post("/api/studio/{node_id}/{action}", self._studio_action)
 
@@ -234,6 +235,8 @@ class LocalWebBridge:
         app.router.add_get("/api/settings", self._sync_handler(self.core.settings))
         app.router.add_patch("/api/settings", self._update_settings)
         app.router.add_get("/api/settings/models", self._sync_handler(self.core.model_catalog))
+        app.router.add_get("/api/local-ai", self._sync_handler(self.core.local_ai_state))
+        app.router.add_post("/api/local-ai/prepare", self._sync_handler(lambda: {"ok": self.core.prepare_tools()}))
         app.router.add_put("/api/settings/models", self._set_model)
         app.router.add_put("/api/settings/smart-routing", self._set_smart_routing)
         app.router.add_get("/api/diagnostics", self._sync_handler(self.core.diagnostics_payload))
@@ -292,7 +295,7 @@ class LocalWebBridge:
         async def dispatch() -> dict[str, Any]:
             nonlocal dispatched
             dispatched = True
-            return self.core.send_chat(content, job_id, tuple(attachment_paths), options)
+            return await asyncio.to_thread(self.core.send_chat, content, job_id, tuple(attachment_paths), options)
 
         try:
             response = await self._idempotent(request, "chat", job_id or "", dispatch)
@@ -385,16 +388,20 @@ class LocalWebBridge:
         return self._json(self.core.search_studio(request.query.get("q", "")))
 
     async def _refresh_studio(self, _request: web.Request) -> web.Response:
-        return self._json({"ok": self.core.refresh_studio()})
+        return self._json({"ok": await asyncio.to_thread(self.core.refresh_studio)})
 
     async def _inspect_studio(self, request: web.Request) -> web.Response:
-        return self._json(self.core.inspect_studio(request.match_info["node_id"]))
+        return self._json(await asyncio.to_thread(self.core.inspect_studio, request.match_info["node_id"]))
 
     async def _studio_action(self, request: web.Request) -> web.Response:
         action = request.match_info["action"]
         if action not in {"lock", "unlock", "context"}:
             raise CoreError("INVALID_STUDIO_ACTION", "Invalid Studio action.", status=404)
         return self._json({"ok": self.core.set_studio_reference(request.match_info["node_id"], action)})
+
+    async def _start_studio_test(self, request: web.Request) -> web.Response:
+        body = await self._optional_json_body(request)
+        return self._json(await asyncio.to_thread(self.core.start_studio_test, str(body.get("profile") or "STANDARD")))
 
     async def _start_test(self, request: web.Request) -> web.Response:
         body = await self._optional_json_body(request)
@@ -421,14 +428,20 @@ class LocalWebBridge:
             limit = max(1, min(30, int(request.query.get("limit") or 12)))
         except ValueError:
             limit = 12
-        return self._json(self.core.search_project(query, semantic=semantic, limit=limit))
+        return self._json(await asyncio.to_thread(self.core.search_project, query, semantic=semantic, limit=limit))
 
     async def _update_settings(self, request: web.Request) -> web.Response:
-        return self._json(self.core.update_settings(await self._json_body(request)))
+        return self._json(await asyncio.to_thread(self.core.update_settings, await self._json_body(request)))
 
     async def _set_model(self, request: web.Request) -> web.Response:
         body = await self._json_body(request)
-        return self._json({"ok": self.core.set_model(str(body.get("agent") or ""), str(body.get("model") or ""))})
+        return self._json(
+            {
+                "ok": await asyncio.to_thread(
+                    self.core.set_model, str(body.get("agent") or ""), str(body.get("model") or "")
+                )
+            }
+        )
 
     async def _set_smart_routing(self, request: web.Request) -> web.Response:
         body = await self._json_body(request)
@@ -603,7 +616,7 @@ class LocalWebBridge:
 
     def _sync_handler(self, callback: Callable[[], Any]) -> Callable[[web.Request], Awaitable[web.Response]]:
         async def handler(_request: web.Request) -> web.Response:
-            return self._json(callback())
+            return self._json(await asyncio.to_thread(callback))
 
         return handler
 

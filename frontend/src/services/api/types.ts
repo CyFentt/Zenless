@@ -1,3 +1,4 @@
+import type { LocalAIState } from '@/types';
 import type {
   AgentInfo,
   Asset,
@@ -70,7 +71,7 @@ export interface ZenlessAPI {
 
   getAssets(): Promise<Asset[]>;
 
-  getStudioState(): Promise<{ state: StudioState }>;
+  getStudioState(): Promise<{ state: StudioState; projectName?: string }>;
   getStudioTree(): Promise<StudioNode[]>;
   searchStudio(query: string): Promise<StudioNode[]>;
   refreshStudio(): Promise<{ ok: boolean }>;
@@ -79,6 +80,7 @@ export interface ZenlessAPI {
   unlockStudioReference(nodeId: string): Promise<{ ok: boolean }>;
   useStudioAsContext(nodeId: string): Promise<{ ok: boolean }>;
 
+  startStudioTest(): Promise<{ ok: boolean; jobId: string }>;
   startTest(jobId: string): Promise<{ ok: boolean }>;
   stopTest(jobId: string): Promise<{ ok: boolean }>;
   getTestState(jobId: string): Promise<TestState>;
@@ -87,6 +89,8 @@ export interface ZenlessAPI {
   reindexProject(incremental?: boolean): Promise<{ projectRoot: string; result: string; indexed: boolean }>;
   searchProject(query: string, semantic?: boolean, limit?: number): Promise<ProjectSearchResult>;
 
+  getLocalAIState(): Promise<LocalAIState>;
+  prepareLocalAI(): Promise<{ ok: boolean }>;
   getSettings(): Promise<Settings>;
   updateSettings(partial: Partial<Settings>): Promise<Settings>;
   getModels(): Promise<ModelCatalog>;

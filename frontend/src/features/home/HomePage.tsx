@@ -49,7 +49,14 @@ export function HomePage() {
               <Pipeline stage={currentJob.stage} />
             </div>
           ) : (
-            <span className="text-sm text-ink-300">—</span>
+            <div className="border border-ink-600 bg-ink-900 p-5 space-y-3">
+              <p className="text-sm text-ink-50">Ready for your next Roblox project.</p>
+              <p className="text-xs text-ink-300">Open a place in Studio to explore its scripts or run a Play Test. Describe what you want to build in the chat.</p>
+              <div className="flex gap-3">
+                <button onClick={() => setActivePage('chat')} className="px-3 py-2 bg-zen-red text-white text-xs">Start building</button>
+                <button onClick={() => setActivePage('studio')} className="px-3 py-2 border border-ink-500 text-ink-50 text-xs">Open editor</button>
+              </div>
+            </div>
           )}
         </section>
 

@@ -10,13 +10,13 @@ from zenless.webview2_browser import WebView2BrowserController
 
 
 class PortableStartupTests(unittest.TestCase):
-    def test_toolchain_failure_is_logged_and_closes_startup_resources(self) -> None:
+    def test_toolchain_environment_failure_is_logged_and_closes_startup_resources(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             diagnostics = MagicMock()
             splash = MagicMock()
             toolchain = MagicMock()
-            toolchain.ensure_default.side_effect = RuntimeError("Pinned runtime download failed")
+            toolchain.environment.side_effect = RuntimeError("Pinned runtime download failed")
             stream = MagicMock()
             with (
                 patch.object(application, "_data_root", return_value=root),

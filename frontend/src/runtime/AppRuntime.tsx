@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { getApi, getSocket } from '@/services';
 import type { ZenlessAPI } from '@/services/api/types';
 import { frontendDiagnostics } from '@/services/diagnostics';
+import { notify } from '@/services/notifications';
 import type { ZenlessSocket } from '@/services/websocket/socket';
 import { useStore } from '@/store';
 import { handleEvent } from '@/store/eventHandler';
@@ -24,7 +25,10 @@ export class ApplicationRuntime {
     this.started = true;
     this.active = true;
     frontendDiagnostics.init();
-    this.unsubscribeDiagnostics = frontendDiagnostics.on((diagnostic) => useStore.getState().addDiagnostic(diagnostic));
+    this.unsubscribeDiagnostics = frontendDiagnostics.on((diagnostic) => {
+      useStore.getState().addDiagnostic(diagnostic);
+      if (diagnostic.severity === 'error' || diagnostic.severity === 'critical') notify(diagnostic.message, 'error');
+    });
     try {
       const result = await this.api.bootstrap();
       if (!this.active) return;
@@ -86,6 +90,7 @@ export class ApplicationRuntime {
   }
 
   private async loadSnapshot(): Promise<void> {
+    const studioVersion = useStore.getState().studioVersion;
     const [bootstrap, connections, agents, tools, jobs, settings, diagnostics, assets, studioState, studioTree] = await Promise.all([
       this.api.bootstrap(),
       this.api.getConnections(),
@@ -111,8 +116,11 @@ export class ApplicationRuntime {
     const backendIds = new Set(diagnostics.map((diagnostic) => diagnostic.id));
     store.setDiagnostics([...diagnostics, ...frontend.filter((diagnostic) => !backendIds.has(diagnostic.id))]);
     store.setAssets(assets);
-    store.setStudioState(studioState.state);
-    store.setStudioTree(studioTree);
+    if (studioVersion === useStore.getState().studioVersion) {
+      store.setStudioState(studioState.state);
+      if (studioState.projectName !== undefined) useStore.setState({ studioProjectName: studioState.projectName });
+      store.setStudioTree(studioTree);
+    }
     const current = this.selectCurrentJob(jobs, store.currentJobId);
     store.setCurrentJobId(current?.id ?? null);
     if (current) {

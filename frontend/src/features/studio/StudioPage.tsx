@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useStore } from '@/store';
 import { getApi } from '@/services';
 import { frontendDiagnostics } from '@/services/diagnostics';
@@ -17,12 +17,18 @@ export function StudioPage() {
   const studioQuery = useStore((s) => s.studioQuery);
   const setStudioQuery = useStore((s) => s.setStudioQuery);
   const currentJobId = useStore((s) => s.currentJobId);
+  const inspectRequest = useRef(0);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [searchResults, setSearchResults] = useState<StudioNode[] | null>(null);
 
   useEffect(() => {
+    const version = useStore.getState().studioVersion;
     Promise.all([getApi().getStudioState(), getApi().getStudioTree()])
-      .then(([state, tree]) => { setStudioState(state.state); setStudioTree(tree); })
+      .then(([state, tree]) => {
+        if (version !== useStore.getState().studioVersion) return;
+        setStudioState(state.state); setStudioTree(tree);
+        if (state.projectName !== undefined) useStore.setState({ studioProjectName: state.projectName });
+      })
       .catch((error) => frontendDiagnostics.capture(error, 'studio', 'Failed to load Studio state'));
   }, [setStudioTree, setStudioState]);
 
@@ -53,7 +59,9 @@ export function StudioPage() {
   };
 
   const handleInspect = async (node: StudioNode) => {
-    try { setSelectedNode(await getApi().inspectStudio(node.id)); }
+    const request = ++inspectRequest.current;
+    setSelectedNode(node);
+    try { const result = await getApi().inspectStudio(node.id); if (request === inspectRequest.current) setSelectedNode(result); }
     catch (error) { frontendDiagnostics.capture(error, 'studio', 'Studio inspect failed'); }
   };
 
@@ -75,11 +83,11 @@ export function StudioPage() {
   };
 
   const handlePlay = async () => {
-    if (!currentJobId) {
-      frontendDiagnostics.report('warning', 'studio', 'No active job for Play Test');
-      return;
+    try {
+      if (currentJobId) await getApi().startTest(currentJobId);
+      else { const result = await getApi().startStudioTest(); useStore.setState({ activeTestJobId: result.jobId }); }
+      useStore.getState().setActivePage('test');
     }
-    try { await getApi().startTest(currentJobId); }
     catch (error) { frontendDiagnostics.capture(error, 'studio', 'Failed to start Play Test'); }
   };
 
@@ -92,7 +100,7 @@ export function StudioPage() {
         <div
           className={`flex items-center h-7 px-2 hover:bg-ink-850 cursor-pointer transition-colors group ${selectedNode?.id === node.id ? 'bg-ink-800' : ''}`}
           style={{ paddingLeft: `${depth * 12 + 8}px` }}
-          onClick={() => { setSelectedNode(node); if (hasChildren) toggleNode(node.id); }}
+          onClick={() => { void handleInspect(node); if (hasChildren) toggleNode(node.id); }}
         >
           {hasChildren ? <ChevronRight size={10} className={`text-ink-400 transition-transform shrink-0 ${isExpanded ? 'rotate-90' : ''}`} /> : <span className="w-2.5 shrink-0" />}
           {isFolder ? <Folder size={12} className="text-ink-300 shrink-0 ml-1" /> : <FileCode2 size={12} className="text-ink-100 shrink-0 ml-1" />}
@@ -132,7 +140,7 @@ export function StudioPage() {
                 <span className="text-2xs text-ink-400 ml-auto font-mono truncate">{node.path}</span>
               </button>
             ))
-          ) : renderTree(studioTree)}
+          ) : studioTree.length ? renderTree(studioTree) : <div className="p-4 text-xs text-ink-300 leading-relaxed">Open a place in Roblox Studio and enable Assistant → MCP Servers. Rubra reconnects automatically.</div>}
         </div>
       </div>
 
@@ -153,6 +161,7 @@ export function StudioPage() {
               <DetailRow label="PATH" value={selectedNode.path} mono />
               {selectedNode.usedAsContext && <DetailRow label="CONTEXT" value="USED" />}
             </div>
+            {selectedNode.source !== undefined && <pre className="overflow-auto p-3 bg-ink-950 border border-ink-700 text-xs text-ink-50 font-mono whitespace-pre-wrap">{selectedNode.source}</pre>}
             {!!selectedNode.children?.length && (
               <div>
                 <div className="text-2xs uppercase tracking-wider text-ink-300 mb-2">CHILDREN</div>

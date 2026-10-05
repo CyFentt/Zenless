@@ -6,7 +6,7 @@ import { Tabs, Toggle, Select } from '@/components/Tabs';
 import { Tooltip } from '@/components/Tooltip';
 import { StatusDot, StatusBadge } from '@/components/StatusDot';
 import { Modal } from '@/components/Modal';
-import type { ConnectionInfo, Diagnostic, ModelCatalog, ModelSettings, ProviderId, Settings } from '@/types';
+import type { ConnectionInfo, Diagnostic, LocalAIState, ModelCatalog, ModelSettings, ProviderId, Settings } from '@/types';
 
 type SettingsTab = 'general' | 'models' | 'links' | 'library' | 'logs';
 
@@ -86,7 +86,7 @@ function GeneralTab({ settings, onChange }: { settings: Settings | null; onChang
   };
 
   return (
-    <div className="p-4 max-w-md space-y-4 animate-fade-in">
+    <div className="p-6 max-w-2xl mx-auto w-full space-y-6 animate-fade-in">
       <Section title="BEHAVIOR">
         <Row label="Default Approval" hint="ASK requires confirmation. SAFE AUTO skips only reviewed low-risk write gates. FULL AUTO skips local approval gates without bypassing policy blocks.">
           <Select
@@ -112,7 +112,7 @@ function GeneralTab({ settings, onChange }: { settings: Settings | null; onChang
       </Section>
       <Section title="PROJECT">
         <Row label="Folder" hint="Rojo or local project folder used for semantic code indexing">
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-2 w-full">
             <input
               value={projectDraft}
               onChange={(event) => setProjectDraft(event.target.value)}
@@ -121,7 +121,7 @@ function GeneralTab({ settings, onChange }: { settings: Settings | null; onChang
               }}
               spellCheck={false}
               placeholder="Project folder"
-              className="w-52 h-6 px-2 text-2xs font-mono text-ink-50 bg-ink-800 border border-ink-600 focus:border-zen-red"
+              className="w-full min-w-0 h-8 px-2 text-2xs font-mono text-ink-50 bg-ink-800 border border-ink-600 focus:border-zen-red"
             />
             <button
               onClick={() => {
@@ -144,7 +144,7 @@ function GeneralTab({ settings, onChange }: { settings: Settings | null; onChang
         <Row label="Semantic Index" hint="Local semantic and keyword index powered by mcp-code-search">
           <Toggle checked={settings.semanticIndex} onChange={(value) => void persist({ semanticIndex: value })} />
         </Row>
-        <Row label="Local Scout" hint="Use the bundled local Qwen model for lightweight planning and QA scenario generation">
+        <Row label="Local AI" hint="Use the installed Qwen model for building, review, planning, and QA when web text providers are unavailable">
           <Toggle checked={settings.localAI} onChange={(value) => void persist({ localAI: value })} />
         </Row>
         <Row label="Index" hint="Incrementally index changed project files">
@@ -177,15 +177,6 @@ function ModelsTab({ settings, catalog, onChange }: { settings: Settings | null;
   if (!settings || !catalog) return <EmptyState />;
   const models = settings.models;
 
-  const persistModels = async (nextModels: ModelSettings) => {
-    try {
-      const next = await getApi().updateSettings({ models: nextModels });
-      onChange(next);
-    } catch (error) {
-      frontendDiagnostics.capture(error, 'settings', 'Failed to update model settings');
-    }
-  };
-
   const selectModel = async (provider: 'chatgpt' | 'deepseek' | 'gemini' | 'hunyuan', value: string) => {
     try {
       await getApi().setModel(provider, value);
@@ -210,46 +201,64 @@ function ModelsTab({ settings, catalog, onChange }: { settings: Settings | null;
   const available = (items: { id: string; label: string; available?: boolean }[]) => items.filter((item) => item.available !== false);
 
   return (
-    <div className="p-4 max-w-md space-y-4 animate-fade-in">
+    <div className="p-6 max-w-2xl mx-auto w-full space-y-6 animate-fade-in">
+      <p className="text-xs text-ink-300 leading-relaxed">Model choices are loaded from connected providers. Reasoning and generation quality follow their available controls. Task effort is configured in the chat.</p>
+      <LocalModelsPanel />
       <Section title="BUILDER">
         <Row label="Model">
           <Select value={models.chatgpt.model} options={available(catalog.chatgpt.models)} onChange={(value) => void selectModel('chatgpt', value)} />
-        </Row>
-        <Row label="Reasoning" hint="Enable extended reasoning">
-          <Toggle checked={models.chatgpt.reasoning} onChange={(value) => void persistModels({ ...models, chatgpt: { ...models.chatgpt, reasoning: value } })} />
         </Row>
       </Section>
       <Section title="REVIEWER">
         <Row label="Model">
           <Select value={models.deepseek.model} options={available(catalog.deepseek.models)} onChange={(value) => void selectModel('deepseek', value)} />
         </Row>
-        <Row label="Reasoning" hint="Enable extended reasoning">
-          <Toggle checked={models.deepseek.reasoning} onChange={(value) => void persistModels({ ...models, deepseek: { ...models.deepseek, reasoning: value } })} />
-        </Row>
       </Section>
       <Section title="RESEARCH">
         <Row label="Model">
           <Select value={models.gemini.model} options={available(catalog.gemini.models)} onChange={(value) => void selectModel('gemini', value)} />
-        </Row>
-        <Row label="Reasoning" hint="Enable extended reasoning">
-          <Toggle checked={models.gemini.reasoning} onChange={(value) => void persistModels({ ...models, gemini: { ...models.gemini, reasoning: value } })} />
         </Row>
       </Section>
       <Section title="3D GENERATOR">
         <Row label="Version">
           <Select value={models.hunyuan.version} options={available(catalog.hunyuan.versions)} onChange={(value) => void selectModel('hunyuan', value)} />
         </Row>
-        <Row label="Quality">
-          <Select value={models.hunyuan.quality} options={available(catalog.hunyuan.qualities)} onChange={(value) => void persistModels({ ...models, hunyuan: { ...models.hunyuan, quality: value } })} />
-        </Row>
+        <p className="text-xs text-ink-300 py-2">Quality follows the options available in the provider window.</p>
       </Section>
       <Section title="ROUTING">
-        <Row label="Smart Routing" hint="Automatically select best model per task">
+        <Row label="Smart Routing" hint="Route text work to the configured providers or the available local model">
           <Toggle checked={models.smartRouting} onChange={(value) => void setRouting(value)} />
         </Row>
       </Section>
     </div>
   );
+}
+
+function LocalModelsPanel() {
+  const [state, setState] = useState<LocalAIState | null>(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    let active = true;
+    const refresh = () => getApi().getLocalAIState().then((value) => { if (active) setState(value); }).catch((error) => frontendDiagnostics.capture(error, 'local-ai', 'Unable to load local model status'));
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 5000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, []);
+  return <Section title="LOCAL AI">
+    <Row label={state?.model || 'Local model'} hint="Runs one inference at a time. Uses Qwen Coder 7B for building and Qwen3 4B for review when both are installed. Models are unloaded before switching. Vulkan is tried first, then CPU. Web research and 3D generation require their own providers.">
+      <span className="text-xs text-ink-50">{state?.available ? state.running ? 'Running' : 'Ready' : 'Setup needed'}</span>
+    </Row>
+    {state?.models?.map((model) => <div key={model.name} className="flex justify-between py-2 text-xs"><span className="text-ink-100">{model.name}</span><span className="text-ink-300">{model.installed ? 'Installed' : 'Setup needed'}</span></div>)}
+    <div className="flex items-center justify-between gap-4 pt-3">
+      <p className="text-xs text-ink-300" role="status">{state?.setup.detail || 'Checking local tools'}</p>
+      <button disabled={busy || state?.setup.state === 'INSTALLING'} onClick={async () => {
+        setBusy(true);
+        try { await getApi().prepareLocalAI(); setState(await getApi().getLocalAIState()); }
+        catch (error) { frontendDiagnostics.capture(error, 'local-ai', 'Local setup failed'); }
+        finally { setBusy(false); }
+      }} className="shrink-0 px-3 py-2 text-xs border border-ink-500 text-ink-50 hover:border-zen-red disabled:opacity-50">{state?.setup.state === 'INSTALLING' ? 'Preparing…' : state?.available ? 'Verify tools' : 'Prepare local AI'}</button>
+    </div>
+  </Section>;
 }
 
 function LinksTab({ connections }: { connections: ConnectionInfo }) {
@@ -284,7 +293,7 @@ function LinksTab({ connections }: { connections: ConnectionInfo }) {
   };
 
   return (
-    <div className="p-4 max-w-md space-y-4 animate-fade-in">
+    <div className="p-6 max-w-2xl mx-auto w-full space-y-6 animate-fade-in">
       <Section title="CONNECTIONS">
         {labels.map(({ key, name, provider }) => {
           const status = connections[key];
@@ -293,7 +302,8 @@ function LinksTab({ connections }: { connections: ConnectionInfo }) {
               <span className="text-xs text-ink-100">{name}</span>
               <div className="flex items-center gap-2">
                 <StatusBadge status={status} />
-                {(status === 'LOGIN' || status === 'OFF' || status === 'ERR') && provider && (
+                {key === 'studio' && <button onClick={() => void getApi().refreshStudio().catch((error) => frontendDiagnostics.capture(error, 'studio', 'Studio reconnection failed'))} className="px-2 h-7 text-xs border border-ink-500 text-ink-50 hover:border-zen-red">Reconnect</button>}
+                {provider && (
                   <button onClick={() => setLoginModal(provider)} className="px-2 h-6 text-2xs uppercase tracking-wider text-ink-50 border border-ink-500 hover:bg-ink-800 transition-colors">LOGIN</button>
                 )}
                 {status === 'OFF' && isMockMode() && (
@@ -406,12 +416,13 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 
 function Row({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
-    <Tooltip content={hint ?? label} side="left">
-      <div className="flex items-center justify-between py-2 border-b border-ink-700">
-        <span className="text-2xs uppercase tracking-wider text-ink-300">{label}</span>
-        {children}
+    <div className="grid grid-cols-[minmax(0,1fr)_minmax(180px,260px)] items-center gap-6 py-3 border-b border-ink-700">
+      <div className="min-w-0">
+        <span className="text-xs font-medium text-ink-50">{label}</span>
+        {hint && <p className="mt-1 text-xs leading-relaxed text-ink-300">{hint}</p>}
       </div>
-    </Tooltip>
+      <div className="flex items-center justify-end gap-2 min-w-0 [&>div]:w-full">{children}</div>
+    </div>
   );
 }
 

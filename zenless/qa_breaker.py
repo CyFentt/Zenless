@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .event_bus import EventBus
+from .models import Stage
 from .orchestrator import AgentTransport, OrchestratorError, TaskCancelled
 from .protocol import ProtocolError, extract_json_object
 from .static_quality import StaticQualityRunner
@@ -290,6 +291,20 @@ class QABreaker:
         cancel.set()
         return True
 
+    def stop_all(self) -> None:
+        with self._manual_lock:
+            cancellations = tuple(self._manual_cancel.values())
+        for cancel in cancellations:
+            cancel.set()
+
+    def wait_for_manual_tests(self, timeout: float = 3.0) -> None:
+        with self._manual_lock:
+            threads = tuple(self._manual_threads.values())
+        deadline = time.monotonic() + max(0.0, timeout)
+        for thread in threads:
+            if thread is not threading.current_thread():
+                thread.join(timeout=max(0.0, deadline - time.monotonic()))
+
     def running(self, job_id: str) -> bool:
         with self._manual_lock:
             thread = self._manual_threads.get(job_id)
@@ -503,7 +518,7 @@ class QABreaker:
                 return joined or "QA completed without detected errors."
             except TaskCancelled:
                 self.store.finish_test_run(run_id, "CANCELLED", {"profile": profile.name, "seed": seed})
-                self.events.publish("TEST_FINISHED", {"passed": False, "jobId": job_id})
+                self.events.publish("TEST_FINISHED", {"passed": False, "cancelled": True, "jobId": job_id})
                 raise
             except Exception as exc:
                 self.store.finish_test_run(
@@ -528,10 +543,28 @@ class QABreaker:
                 evidence=[],
                 cancel_event=cancel,
             )
+        except TaskCancelled:
+            self._log(job_id, "ZEN", "Play Test stopped by the user.")
         except Exception as exc:
             self._log(job_id, "ERR", f"Manual QA failed: {exc}")
             self.events.publish("TEST_FINISHED", {"passed": False, "jobId": job_id})
         finally:
+            task = self.store.load_task(job_id) or {}
+            if (task.get("context") or {}).get("manual_test"):
+                latest = self.store.latest_test_run(job_id)
+                passed = latest is not None and latest.get("status") == "PASSED"
+                cancelled = latest is not None and latest.get("status") == "CANCELLED"
+                finished = passed or cancelled
+                self.store.update_task(
+                    job_id,
+                    stage=Stage.COMPLETE if finished else Stage.FAILED,
+                    status="complete" if finished else "failed",
+                    final_text="Play Test stopped."
+                    if cancelled
+                    else "Play Test passed."
+                    if passed
+                    else "Play Test failed.",
+                )
             with self._manual_lock:
                 self._manual_threads.pop(job_id, None)
                 self._manual_cancel.pop(job_id, None)
@@ -561,11 +594,13 @@ class QABreaker:
             "Start Play, collect Output, Stop, and reject runtime errors",
         ]
         if profile.name in {"STANDARD", "DEEP", "EXHAUSTIVE"}:
-            scenarios.extend([
-                "Run the official Roblox playtest subagent when available",
-                "Run Tripwire security analysis against the configured project source",
-                "Execute a bounded no-op VirtualInput transport smoke in Client mode",
-            ])
+            scenarios.extend(
+                [
+                    "Run the official Roblox playtest subagent when available",
+                    "Run Tripwire security analysis against the configured project source",
+                    "Execute a bounded no-op VirtualInput transport smoke in Client mode",
+                ]
+            )
         if self._needs_visual_review(job_id, profile):
             scenarios.append("Capture the Studio viewport and obtain an independent visual review")
         if profile.name in {"DEEP", "EXHAUSTIVE"}:
@@ -615,7 +650,7 @@ class QABreaker:
         try:
             raw = self.bridge.send_prompt("chatgpt", prompt, task_id=job_id, timeout=120)
             payload = extract_json_object(raw)
-        except (MCPError, OrchestratorError, ProtocolError, RuntimeError, ValueError):
+        except MCPError, OrchestratorError, ProtocolError, RuntimeError, ValueError:
             return []
         scenarios = payload.get("scenarios", [])
         return [str(item).strip()[:300] for item in scenarios if str(item).strip()][:4]
@@ -715,11 +750,11 @@ class QABreaker:
             if isinstance(schema, dict) and schema.get("type") == "string":
                 arguments[candidate] = instruction
                 break
-        unresolved = [
-            name
-            for name in required
-            if name not in arguments and name != "studio_id"
-        ] if isinstance(required, list) else []
+        unresolved = (
+            [name for name in required if name not in arguments and name != "studio_id"]
+            if isinstance(required, list)
+            else []
+        )
         if unresolved:
             return "SKIPPED", expected, "Unsupported required subagent fields: " + ", ".join(map(str, unresolved))
         try:
@@ -826,11 +861,11 @@ class QABreaker:
         arguments: dict[str, Any] = {}
         if isinstance(properties, dict) and "capture_id" in properties:
             arguments["capture_id"] = f"RubraQA_{seed:08x}"
-        unresolved = [
-            name
-            for name in required
-            if name not in arguments and name != "studio_id"
-        ] if isinstance(required, list) else []
+        unresolved = (
+            [name for name in required if name not in arguments and name != "studio_id"]
+            if isinstance(required, list)
+            else []
+        )
         if unresolved:
             return "FAILED", expected, "Unsupported required screen_capture fields: " + ", ".join(map(str, unresolved))
         try:
@@ -873,7 +908,13 @@ class QABreaker:
                 issues = payload.get("issues", [])
                 summary = str(payload.get("summary") or "").strip()
                 detail = json.dumps(
-                    {"provider": provider, "capture": str(path), "approved": approved, "issues": issues, "summary": summary},
+                    {
+                        "provider": provider,
+                        "capture": str(path),
+                        "approved": approved,
+                        "issues": issues,
+                        "summary": summary,
+                    },
                     ensure_ascii=False,
                 )
                 if approved is True:
@@ -883,7 +924,11 @@ class QABreaker:
                 errors.append(f"{provider}: review response had no boolean approved field")
             except Exception as exc:
                 errors.append(f"{provider}: {exc}")
-        return "FAILED", expected, "Viewport was captured but no visual reviewer produced valid evidence. " + " | ".join(errors)
+        return (
+            "FAILED",
+            expected,
+            "Viewport was captured but no visual reviewer produced valid evidence. " + " | ".join(errors),
+        )
 
     def _persist_capture(self, job_id: str, seed: int, image: dict[str, str]) -> Path | None:
         data = str(image.get("data") or "")
@@ -892,7 +937,7 @@ class QABreaker:
             return None
         try:
             payload = base64.b64decode(data, validate=True)
-        except (ValueError, binascii.Error):
+        except ValueError, binascii.Error:
             return None
         if not payload or len(payload) > 24 * 1024 * 1024:
             return None
@@ -990,6 +1035,8 @@ class QABreaker:
         started = time.monotonic()
         try:
             status, expected, actual = callback()
+        except TaskCancelled:
+            raise
         except Exception as exc:
             status, expected, actual = "FAILED", "Case completes without exception", str(exc)
         if status == "SKIPPED" and not skip_is_ok:

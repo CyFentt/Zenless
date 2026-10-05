@@ -61,8 +61,10 @@ def main() -> int:
                 portable_root=_portable_root(),
                 status_callback=splash.update,
             )
-            toolchain.ensure_default()
             os.environ.update(toolchain.environment())
+            os.environ["RUBRA_PREPARE_TOOLS"] = "1"
+        else:
+            os.environ["RUBRA_PREPARE_TOOLS"] = "0"
 
         return run_web_app(
             data_root=_data_root(),

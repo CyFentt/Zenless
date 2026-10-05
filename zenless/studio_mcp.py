@@ -200,7 +200,7 @@ class StudioMCPClient:
     def list_studios(self) -> list[StudioTarget]:
         if "list_roblox_studios" not in self.tools:
             raise MCPError("The current StudioMCP version does not provide list_roblox_studios.")
-        result = self.call_tool("list_roblox_studios", {}, timeout=30)
+        result = self.call_tool("list_roblox_studios", {}, timeout=5)
         if result.is_error:
             raise MCPError(result.text or "Failed to list Studio instances.")
         payload = result.structured_content

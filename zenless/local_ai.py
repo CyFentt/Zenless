@@ -27,11 +27,31 @@ class LocalAIService:
 
     @property
     def available(self) -> bool:
-        return self.model_path.is_file() and bool(self._server_candidates())
+        return any(path.is_file() for path in self._model_paths()) and bool(self._server_candidates())
+
+    def _model_paths(self) -> tuple[Path, Path]:
+        return (
+            self.runtime_root / "models" / "qwen2.5-coder-7b-instruct-q4_k_m.gguf",
+            self.runtime_root / "models" / "Qwen3-4B-Q4_K_M.gguf",
+        )
+
+    def model_status(self) -> list[dict[str, object]]:
+        return [{"name": path.stem, "installed": path.is_file()} for path in self._model_paths()]
+
+    def _select_model(self, prompt: str) -> None:
+        coder, general = self._model_paths()
+        if not coder.is_file() and not general.is_file():
+            return
+        preferred = general if prompt.startswith("Role: Reviewer") else coder
+        target = preferred if preferred.is_file() else general if general.is_file() else coder
+        if target != self.model_path:
+            self._stop_process()
+            self.model_path = target
 
     @property
     def running(self) -> bool:
-        return self._process is not None and self._process.poll() is None and self._port > 0
+        process = self._process
+        return process is not None and process.poll() is None and self._port > 0
 
     def complete(
         self,
@@ -55,6 +75,7 @@ class LocalAIService:
         value = prompt.strip()
         if not value:
             raise LocalAIError("Local prompt is empty.")
+        self._select_model(value)
         self._ensure_started()
         payload = {
             "model": "rubra-local",
@@ -62,9 +83,10 @@ class LocalAIService:
                 {
                     "role": "system",
                     "content": (
-                        "You are Rubra Local Scout. Work only as an analysis and planning assistant for legitimate "
-                        "Roblox Studio development. Be concise, technical, evidence-aware, and never claim a test ran "
-                        "unless the prompt contains test evidence. Respond in English."
+                        "You are Rubra, a Roblox Studio engineering assistant. Build, analyze, or review Luau according "
+                        "to the requested role. Follow the supplied JSON protocol exactly when requested. Use only "
+                        "advertised tools. Be evidence-aware and never claim a test ran without test evidence. "
+                        "Respond in English. /no_think"
                     ),
                 },
                 {"role": "user", "content": value},
@@ -73,22 +95,41 @@ class LocalAIService:
             "max_tokens": max(64, min(2048, int(max_tokens))),
             "stream": False,
         }
-        request = Request(
-            f"http://127.0.0.1:{self._port}/v1/chat/completions",
-            data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-            method="POST",
+        deadline = time.monotonic() + max(10.0, min(900.0, timeout))
+        parts: list[str] = []
+        for _ in range(3):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise LocalAIError("Local completion exceeded its time budget.")
+            request = Request(
+                f"http://127.0.0.1:{self._port}/v1/chat/completions",
+                data=json.dumps(payload).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            try:
+                with urlopen(request, timeout=remaining) as response:
+                    body = json.loads(response.read(2 * 1024 * 1024).decode("utf-8"))
+                choice = body["choices"][0]
+                content = choice["message"]["content"]
+                if not isinstance(content, str) or not content.strip():
+                    raise ValueError("Empty model content")
+            except Exception as exc:
+                raise LocalAIError(f"Local model request failed: {exc}") from exc
+            parts.append(content)
+            if choice.get("finish_reason") != "length":
+                return "".join(parts).strip()
+            payload["messages"] = [
+                *payload["messages"][:2],
+                {"role": "assistant", "content": "".join(parts)},
+                {
+                    "role": "user",
+                    "content": "Continue exactly where you stopped. Do not repeat any content or restart the JSON object.",
+                },
+            ]
+        raise LocalAIError(
+            "Local output is still truncated after three continuations. Reduce the task scope before applying changes."
         )
-        try:
-            with urlopen(request, timeout=max(10.0, min(300.0, timeout))) as response:
-                body = json.loads(response.read().decode("utf-8"))
-        except Exception as exc:
-            raise LocalAIError(f"Local model request failed: {exc}") from exc
-        try:
-            text = str(body["choices"][0]["message"]["content"]).strip()
-        except Exception as exc:
-            raise LocalAIError("Local model returned an invalid response.") from exc
-        return text[:16000]
 
     def close(self) -> None:
         self._stop_process()
@@ -129,14 +170,14 @@ class LocalAIService:
             "--port",
             str(port),
             "--ctx-size",
-            "4096",
+            "16384",
             "--threads",
             "4",
             "--parallel",
             "1",
             "--no-webui",
         ]
-        command.extend(["--n-gpu-layers", "24" if use_gpu else "0"])
+        command.extend(["--n-gpu-layers", "16" if use_gpu else "0"])
         environment = dict(os.environ)
         environment["LLAMA_CACHE"] = str(self.runtime_root / "model-cache" / "llama")
         self._log_path.parent.mkdir(parents=True, exist_ok=True)

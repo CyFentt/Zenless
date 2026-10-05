@@ -1,9 +1,11 @@
 import { useStore } from '@/store';
+import { Minus, Square, X } from 'lucide-react';
 import { StatusDot } from './StatusDot';
 
 export function TopBar() {
   const projectRoot = useStore((s) => s.settings?.projectRoot);
-  const projectName = projectRoot?.split(/[\\/]/).filter(Boolean).pop() || "Select a project";
+  const studioProjectName = useStore((s) => s.studioProjectName);
+  const projectName = studioProjectName || projectRoot?.split(/[\\/]/).filter(Boolean).pop() || "Open Roblox Studio";
   const jobs = useStore((s) => s.jobs);
   const currentJobId = useStore((s) => s.currentJobId);
   const connections = useStore((s) => s.connections);
@@ -28,7 +30,7 @@ export function TopBar() {
 
   return (
     <header className="h-12 shrink-0 bg-ink-900 border-b border-ink-600 flex items-center justify-between px-3 text-2xs uppercase tracking-wider">
-      <div className="flex items-center gap-3">
+      <div className="pywebview-drag-region flex-1 self-stretch flex items-center gap-3 min-w-0" onDoubleClick={() => void window.pywebview?.api?.toggle_maximize?.()}>
         <span className="text-ink-300">PROJECT</span>
         <span className="text-ink-50">/</span>
         <span className="text-ink-0 font-medium">{projectName}</span>
@@ -62,6 +64,11 @@ export function TopBar() {
             }
           />
         </span>
+        <div className="flex items-center ml-2">
+          <button aria-label="Minimize window" onClick={() => void window.pywebview?.api?.minimize_window?.()} className="w-10 h-10 flex items-center justify-center hover:bg-ink-800"><Minus size={14} /></button>
+          <button aria-label="Maximize or restore window" onClick={() => void window.pywebview?.api?.toggle_maximize?.()} className="w-10 h-10 flex items-center justify-center hover:bg-ink-800"><Square size={12} /></button>
+          <button aria-label="Close window" onClick={() => void window.pywebview?.api?.close_window?.()} className="w-10 h-10 flex items-center justify-center hover:bg-zen-red hover:text-white"><X size={16} /></button>
+        </div>
       </div>
     </header>
   );

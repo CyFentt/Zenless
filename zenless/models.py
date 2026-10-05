@@ -166,7 +166,7 @@ def validate_stage_transition(previous: Stage | str, next_stage: Stage | str) ->
 @dataclass(slots=True)
 class TaskOptions:
     visual_first: bool = False
-    create_3d_asset: bool = True
+    create_3d_asset: bool = False
     independent_review: bool = True
     automatic_play_test: bool = True
     auto_fix_errors: bool = True
@@ -191,9 +191,9 @@ class TaskOptions:
             except TypeError, ValueError:
                 return default
 
-        create_3d_asset = bool(raw.get("Create 3D Asset", True))
+        create_3d_asset = bool(raw.get("Create 3D Asset", False))
         return cls(
-            visual_first=bool(raw.get("Visual First", True)) or create_3d_asset,
+            visual_first=bool(raw.get("Visual First", False)) or create_3d_asset,
             create_3d_asset=create_3d_asset,
             independent_review=bool(raw.get("Independent Review", True)),
             automatic_play_test=bool(raw.get("Automatic Play Test", True)),
@@ -222,14 +222,14 @@ class TaskOptions:
             except TypeError, ValueError:
                 return default
 
-        create_3d_asset = bool(source.get("create3D", True))
+        create_3d_asset = bool(source.get("create3D", False))
         legacy_approval = bool(source.get("approval", True))
         approval_mode = cls._approval_mode(
             source.get("approvalMode"),
             "ask" if legacy_approval else "full_auto",
         )
         return cls(
-            visual_first=bool(source.get("visualFirst", True)) or create_3d_asset,
+            visual_first=bool(source.get("visualFirst", False)) or create_3d_asset,
             create_3d_asset=create_3d_asset,
             independent_review=bool(source.get("review", True)),
             automatic_play_test=bool(source.get("autoTest", True)),

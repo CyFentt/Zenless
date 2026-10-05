@@ -1,7 +1,7 @@
 {
   "name": "rubra-ui",
   "private": true,
-  "version": "2.0.3",
+  "version": "2.1.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -11,12 +11,15 @@
     "typecheck": "tsc --noEmit -p tsconfig.app.json",
     "test": "vitest run --no-file-parallelism --maxWorkers=1",
     "test:watch": "vitest",
-    "format": "prettier --write ."
+    "format": "prettier --write .",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
+    "@radix-ui/react-tooltip": "^1.2.16",
     "@react-three/drei": "^9.122.0",
     "@react-three/fiber": "^8.18.0",
     "lucide-react": "^0.446.0",
+    "motion": "^14.0.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "three": "^0.185.1",
@@ -24,6 +27,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.9.1",
+    "@playwright/test": "^1.56.1",
     "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.3.3",
     "@types/react": "^18.3.5",

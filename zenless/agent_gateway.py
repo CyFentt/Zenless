@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from .browser_bridge import BridgeError, BrowserBridge, StatusCallback
@@ -29,6 +30,8 @@ class AgentGateway:
         extension: BrowserBridge | None = None,
         status_callback: StatusCallback | None = None,
         allow_extension_fallback: bool = False,
+        local_available: Callable[[], bool] | None = None,
+        local_complete: Callable[[str], str] | None = None,
     ) -> None:
         self.managed = managed
         self.embedded = embedded
@@ -39,6 +42,12 @@ class AgentGateway:
         self._task_routes: dict[tuple[str, str], str] = {}
         self._route_lock = threading.Lock()
         self._stopping = threading.Event()
+        self.local_available = local_available
+        self.local_complete = local_complete
+        self._local_attachments: dict[tuple[str, str], str] = {}
+
+    def _can_use_local(self, provider: str) -> bool:
+        return provider in {"chatgpt", "deepseek"} and self.local_available is not None and self.local_available()
 
     @property
     def running(self) -> bool:
@@ -71,6 +80,8 @@ class AgentGateway:
             result = self.embedded.login(provider, timeout=timeout)
             route = "webview2"
         except BridgeError as embedded_error:
+            if "LOGIN_CANCELLED" in str(embedded_error):
+                raise
             if self._stopping.is_set():
                 raise BridgeError("Rubra is closing; provider login was cancelled.") from embedded_error
             result = self.managed.login(provider, install_if_missing=True, timeout=timeout)
@@ -83,10 +94,21 @@ class AgentGateway:
     def release_task_route(self, task_id: str) -> None:
         with self._route_lock:
             self._task_routes = {key: value for key, value in self._task_routes.items() if key[1] != task_id}
+            self._local_attachments = {
+                key: value for key, value in self._local_attachments.items() if key[1] != task_id
+            }
 
     def wait_for_provider(self, provider: str, timeout: float = 5.0) -> bool:
         if self._stopping.is_set():
             return False
+        if self._can_use_local(provider) and self._routes.get(provider) not in {"webview2", "playwright", "extension"}:
+            with self._route_lock:
+                self._routes[provider] = "local"
+            if self.status_callback is not None:
+                self.status_callback(
+                    provider, "Ready", "Local model; builder and review use separate inference contexts"
+                )
+            return True
         embedded_timeout = max(1.0, min(timeout, 20.0))
         if self.embedded.wait_for_provider(provider, embedded_timeout):
             with self._route_lock:
@@ -106,6 +128,10 @@ class AgentGateway:
                 self._routes[provider] = "extension"
             if self.status_callback is not None:
                 self.status_callback(provider, "Connected", "Extension fallback selected")
+            return True
+        if self._can_use_local(provider):
+            with self._route_lock:
+                self._routes[provider] = "local"
             return True
         return False
 
@@ -142,6 +168,25 @@ class AgentGateway:
         stream_callback: Callable[[str], None] | None = None,
     ) -> str:
         route = self._selected_route(provider)
+        if route == "local":
+            if not self._can_use_local(provider) or self.local_complete is None:
+                raise BridgeError("Local AI is unavailable. Install its runtime and model in Settings.")
+            with self._route_lock:
+                attachments = self._local_attachments.get((provider, task_id), "")
+            role = (
+                "Builder"
+                if provider == "chatgpt"
+                else "Reviewer: evaluate the supplied result independently and identify concrete defects"
+            )
+            try:
+                text = self.local_complete(f"Role: {role}.\n{attachments}\n{prompt}")
+            except Exception as exc:
+                raise BridgeError(f"Local {role.split(':')[0]} failed: {exc}") from exc
+            if not text.strip():
+                raise BridgeError("Local model returned empty output.")
+            if stream_callback is not None:
+                stream_callback(text)
+            return text
         if route == "playwright":
             if stream_callback is None:
                 return self.managed.send_prompt(provider, prompt, task_id=task_id, timeout=timeout)
@@ -176,6 +221,37 @@ class AgentGateway:
         timeout: float,
         stream_callback: Callable[[str], None] | None = None,
     ) -> dict[str, Any]:
+        if self._selected_route(provider) == "local":
+            if action == "upload_files":
+                parts = []
+                for filename in payload.get("files", []):
+                    path = Path(str(filename))
+                    if (
+                        path.suffix.casefold()
+                        not in {".lua", ".luau", ".json", ".md", ".txt", ".toml", ".yaml", ".yml"}
+                        or path.stat().st_size > 40000
+                    ):
+                        raise BridgeError(
+                            "Local AI accepts small text/code attachments. Images and large files require a web provider."
+                        )
+                    parts.append(f"File: {path.name}\n{path.read_text(encoding='utf-8')}")
+                combined = "\n".join(parts)
+                if len(combined) > 40000:
+                    raise BridgeError("Local attachments exceed the context budget.")
+                with self._route_lock:
+                    self._local_attachments[(provider, task_id)] = combined
+                return {"status": "ok", "transport": "local"}
+            if action == "get_models":
+                return {"status": "ok", "models": ["auto"], "transport": "local"}
+            if action == "capabilities":
+                return {
+                    "status": "ok",
+                    "capabilities": {"send_prompt": True, "upload_files": True},
+                    "transport": "local",
+                }
+            if action == "cancel":
+                return {"status": "idle", "cancelled": False, "transport": "local"}
+            raise BridgeError(f"Local route does not support {action}.")
         if provider == "hunyuan" and action in self._HUNYUAN_TRANSACTION_ACTIONS:
             route, capabilities = self._hunyuan_transaction_route(provider, task_id=task_id, timeout=timeout)
             if action == "capabilities":

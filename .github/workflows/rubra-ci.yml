@@ -74,6 +74,16 @@ jobs:
         working-directory: frontend
         run: npm run test
 
+      - name: Chromium browser
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+
+      - name: Desktop browser regressions
+        working-directory: frontend
+        env:
+          RUBRA_TEST_PYTHON: python
+        run: npm run test:e2e
+
       - name: Production frontend
         working-directory: frontend
         env:

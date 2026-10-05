@@ -108,6 +108,26 @@ describe('ApplicationRuntime', () => {
     expect(useStore.getState().socketStatus).toBe('CONNECTED');
     runtime.stop();
   });
+
+  it('preserves a new Studio connection when an older startup snapshot finishes later', async () => {
+    const api = new MockZenlessAPI();
+    const socket = new RuntimeSocket();
+    vi.spyOn(api, 'bootstrap').mockResolvedValue({ steps: [{ stage: 'UI', state: 'READY' }] });
+    vi.spyOn(api, 'getJobs').mockResolvedValue([]);
+    let release!: (value: { state: 'OFFLINE'; projectName: string }) => void;
+    const snapshot = vi.spyOn(api, 'getStudioState').mockReturnValue(new Promise((resolve) => { release = resolve; }));
+    const runtime = new ApplicationRuntime(api, socket);
+    const started = runtime.start();
+    await waitFor(() => expect(snapshot).toHaveBeenCalled());
+    socket.emit({ type: 'STUDIO_STATE_CHANGED', data: { state: 'ONLINE', projectName: 'New place' } });
+    socket.emit({ type: 'STUDIO_TREE_UPDATED', data: { tree: [{ id: 'Workspace', name: 'Workspace', className: 'Workspace', path: 'Workspace' }] } });
+    release({ state: 'OFFLINE', projectName: '' });
+    await started;
+    expect(useStore.getState().studioState).toBe('ONLINE');
+    expect(useStore.getState().studioProjectName).toBe('New place');
+    expect(useStore.getState().studioTree.map((node) => node.id)).toEqual(['Workspace']);
+    runtime.stop();
+  });
 });
 
 describe('startup failure isolation', () => {

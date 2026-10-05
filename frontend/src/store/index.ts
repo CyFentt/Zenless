@@ -92,6 +92,9 @@ interface AppState {
   modelInfo: ModelInfo;
   assets: Asset[];
   studioState: StudioState;
+  studioProjectName: string;
+  studioVersion: number;
+  activeTestJobId: string | null;
   studioTree: StudioNode[];
   selectedStudioNode: StudioNode | null;
   setSelectedStudioNode: (node: StudioNode | null) => void;
@@ -227,6 +230,9 @@ export const useStore = create<AppState>((set) => ({
   assets: [],
 
   studioState: 'OFFLINE',
+  studioProjectName: '',
+  studioVersion: 0,
+  activeTestJobId: null,
   studioTree: [],
   selectedStudioNode: null,
   setSelectedStudioNode: (node) => set({ selectedStudioNode: node }),

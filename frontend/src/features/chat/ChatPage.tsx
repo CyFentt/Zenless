@@ -9,6 +9,7 @@ import { DEFAULT_TASK_OPTIONS, type ChatMessage, type ProviderId, type TaskOptio
 const TaskOptionsPanel = lazy(() => import('./TaskOptionsPanel').then((m) => ({ default: m.TaskOptionsPanel })));
 
 export function ChatPage() {
+  const activities = useStore((s) => s.activities);
   const messages = useStore((s) => s.messages);
   const streamingMessageId = useStore((s) => s.streamingMessageId);
   const streamingContent = useStore((s) => s.streamingContent);
@@ -117,6 +118,17 @@ export function ChatPage() {
             {messages.map((msg) => (
               <ChatMessageRow key={msg.id} message={msg} logging={loggingProvider === msg.action?.provider} onLogin={handleProviderLogin} />
             ))}
+            {activities.filter((activity) => activity.jobId === currentJobId).slice(-6).length > 0 && (
+              <div className="mt-5 border-l border-zen-red pl-4 space-y-2" aria-live="polite">
+                {activities.filter((activity) => activity.jobId === currentJobId).slice(-6).map((activity) => (
+                  <div key={activity.id} className="text-xs animate-fade-in">
+                    <span className="text-zen-redBright mr-2">{activity.phase}</span>
+                    <span className="text-ink-50">{activity.title}</span>
+                    {activity.detail && <p className="text-ink-300 mt-1">{activity.detail}</p>}
+                  </div>
+                ))}
+              </div>
+            )}
             {streamingMessageId && (
               <ChatMessageRow message={{ id: streamingMessageId, role: 'zenless', content: streamingContent + '▊', timestamp: Date.now() }} streaming onLogin={handleProviderLogin} />
             )}

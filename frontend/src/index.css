@@ -74,3 +74,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }
+
+button:disabled { cursor: default; opacity: .5; }
+button { transition: color 150ms ease, background-color 150ms ease, border-color 150ms ease, transform 100ms ease; }
+button:active:not(:disabled) { transform: translateY(1px); }
+.pywebview-drag-region { user-select: none; }

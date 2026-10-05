@@ -343,6 +343,11 @@ export class MockZenlessAPI implements ZenlessAPI {
     if (!node) throw new Error("Node not found");
     return clone(node);
   }
+  async startStudioTest() {
+    await this.startTest('studio_test');
+    return { ok: true, jobId: 'studio_test' };
+  }
+
   async startTest(_jobId: string) {
     await delay(100);
     this.testState = { status: "RUNNING", elapsedMs: 0, fixAttempt: 0, maxFixAttempts: 3 };
@@ -372,6 +377,11 @@ export class MockZenlessAPI implements ZenlessAPI {
   async searchProject(query: string, _semantic = true, _limit = 12): Promise<ProjectSearchResult> {
     return { projectRoot: this.settings.projectRoot, query, result: "", available: false };
   }
+  async getLocalAIState() {
+    return { enabled: true, available: true, running: false, model: 'Qwen3 4B Q4_K_M', setup: { state: 'READY', detail: 'Tools and skills prepared' } };
+  }
+  async prepareLocalAI() { return { ok: true }; }
+
   async getSettings() {
     await delay(50);
     return clone(this.settings);

@@ -14,6 +14,7 @@ from typing import Any, BinaryIO, cast
 
 from .managed_browser import PROVIDERS, ProviderSpec
 from .native_host import read_native_message, write_native_message
+from .provider_auth import authentication_script, model_options_script
 
 
 def _specs_from_file(path: Path | None) -> dict[str, ProviderSpec]:
@@ -53,6 +54,7 @@ class WebViewHost:
         self._stop = threading.Event()
         self._requests: queue.Queue[dict[str, Any] | None] = queue.Queue()
         self._write_lock = threading.Lock()
+        self._provider_locks = {provider: threading.Lock() for provider in provider_specs}
 
     def run(self) -> int:
         import webview
@@ -88,15 +90,35 @@ class WebViewHost:
                     continue
                 if request is None:
                     break
-                response = self._handle_guarded(request)
-                self._write(response)
                 if request.get("action") == "shutdown":
+                    self._write(self._handle_guarded(request))
                     break
+                threading.Thread(target=self._dispatch, args=(request,), daemon=True).start()
         finally:
             self._stop.set()
             self._destroy_windows()
             if reader is not threading.current_thread():
                 reader.join(timeout=2)
+
+    def _dispatch(self, request: dict[str, Any]) -> None:
+        lock = self._provider_locks.get(str(request.get("provider") or ""))
+        if lock is not None and not lock.acquire(blocking=False):
+            if request.get("action") == "health":
+                self._write({"id": request.get("id"), "ok": True, "result": {"ready": False, "busy": True}})
+            else:
+                self._write(
+                    {
+                        "id": request.get("id"),
+                        "ok": False,
+                        "error": "Provider is busy. Complete or close its login window, then retry.",
+                    }
+                )
+            return
+        try:
+            self._write(self._handle_guarded(request))
+        finally:
+            if lock is not None:
+                lock.release()
 
     def _reader(self) -> None:
         try:
@@ -143,7 +165,7 @@ class WebViewHost:
             return {"state": "stopping"}
         if provider not in self.provider_specs:
             raise ValueError(f"Unknown provider: {provider}")
-        window = self._ensure_window(provider)
+        window = self._ensure_window(provider, visible=action == "login")
         spec = self.provider_specs[provider]
         if action == "health":
             state = self._composer_state(window, spec)
@@ -156,15 +178,25 @@ class WebViewHost:
             window.show()
             window.restore()
             deadline = time.monotonic() + max(30.0, min(900.0, float(payload.get("timeout", 600))))
+            ready_since = 0.0
             while time.monotonic() < deadline and not self._stop.wait(0.75):
+                if self._windows.get(provider) is not window:
+                    raise RuntimeError("LOGIN_CANCELLED: Login window was closed. Click Login to reopen it.")
                 state = self._composer_state(window, spec)
                 if state.get("ready"):
-                    time.sleep(1.5)
-                    window.hide()
-                    return {"state": "ready", "url": str(window.get_current_url() or spec.url)}
+                    ready_since = ready_since or time.monotonic()
+                    if time.monotonic() - ready_since >= 3.0:
+                        window.hide()
+                        return {
+                            "state": "ready",
+                            "authenticated": True,
+                            "url": str(window.get_current_url() or spec.url),
+                        }
+                else:
+                    ready_since = 0.0
             if self._stop.is_set():
                 raise RuntimeError("Login cancelled because Rubra is closing")
-            raise TimeoutError(f"Login timeout for {provider}")
+            raise TimeoutError(f"LOGIN_CANCELLED: Login timeout for {provider}")
         if action == "request":
             provider_action = str(payload.get("provider_action") or "send_prompt")
             if provider_action == "upload_files":
@@ -191,7 +223,7 @@ class WebViewHost:
             return self._send(window, spec, payload, stream_callback=stream_callback)
         raise ValueError(f"Unsupported WebView command: {action}")
 
-    def _ensure_window(self, provider: str) -> Any:
+    def _ensure_window(self, provider: str, *, visible: bool = False) -> Any:
         import webview
 
         existing = self._windows.get(provider)
@@ -207,12 +239,18 @@ class WebViewHost:
             url=spec.url,
             width=1050,
             height=780,
-            hidden=True,
+            hidden=not visible,
             background_color="#09090C",
         )
         if window is None:
             raise RuntimeError(f"Could not create WebView2 window for {provider}")
         self._windows[provider] = window
+
+        def on_closed() -> None:
+            if self._windows.get(provider) is window:
+                self._windows.pop(provider, None)
+
+        window.events.closed += on_closed
         deadline = time.monotonic() + 45.0
         while time.monotonic() < deadline and not self._stop.wait(0.25):
             try:
@@ -224,19 +262,7 @@ class WebViewHost:
         raise TimeoutError(f"Page load timeout for {provider}")
 
     def _composer_state(self, window: Any, spec: ProviderSpec) -> dict[str, Any]:
-        script = f"""
-        (() => {{
-          const selectors = {json.dumps(spec.inputs)};
-          const visible = (node) => {{
-            if (!node) return false;
-            const style = getComputedStyle(node);
-            const box = node.getBoundingClientRect();
-            return style.visibility !== 'hidden' && style.display !== 'none' && box.width > 0 && box.height > 0;
-          }};
-          return {{ready: selectors.some(selector => [...document.querySelectorAll(selector)].some(visible))}};
-        }})()
-        """
-        result = window.evaluate_js(script)
+        result = window.evaluate_js(authentication_script(spec.code, spec.inputs, spec.url))
         return result if isinstance(result, dict) else {"ready": False}
 
     def _capabilities(self, window: Any, spec: ProviderSpec) -> dict[str, Any]:
@@ -314,47 +340,15 @@ class WebViewHost:
 
     @staticmethod
     def _select_model(window: Any, model: str) -> dict[str, Any]:
-        if not model.strip():
-            raise ValueError("Model name is empty")
-        result = window.evaluate_js(
-            f"""
-            (() => {{
-              const wanted = {json.dumps(model.casefold())};
-              const nodes = [...document.querySelectorAll('[role="option"], [role="menuitem"], [data-model], button')];
-              const target = nodes.find(node => (node.innerText || node.textContent || '').trim().toLocaleLowerCase().includes(wanted));
-              if (!target) return {{ok: false}};
-              target.click();
-              return {{ok: true, selected: (target.innerText || target.textContent || '').trim()}};
-            }})()
-            """
-        )
+        result = window.evaluate_js(model_options_script(model))
         if not isinstance(result, dict) or not result.get("ok"):
-            raise RuntimeError(f"Model option not found: {model}")
+            raise RuntimeError(f"Model option not found: {model}. Open the provider's model menu and refresh Models.")
         return {"status": "ok", "selected": str(result.get("selected") or model), "transport": "webview2"}
 
     @staticmethod
     def _discover_models(window: Any) -> dict[str, Any]:
-        result = window.evaluate_js(
-            """
-            (() => {
-              const selectors = [
-                '[data-model]', '[role="option"]', '[role="menuitem"]',
-                'button[aria-haspopup="listbox"]', 'button[aria-haspopup="menu"]'
-              ];
-              const values = [];
-              for (const selector of selectors) {
-                for (const node of document.querySelectorAll(selector)) {
-                  const value = (node.getAttribute('data-model') || node.innerText || node.textContent || '').trim();
-                  if (value && value.length <= 120 && !values.includes(value)) values.push(value);
-                  if (values.length >= 30) return values;
-                }
-              }
-              return values;
-            })()
-            """
-        )
-        models = [str(item).strip() for item in result] if isinstance(result, list) else []
-        return {"status": "ok", "models": [item for item in models if item], "transport": "webview2"}
+        result = window.evaluate_js(model_options_script())
+        return {"status": "ok", "models": result if isinstance(result, list) else [], "transport": "webview2"}
 
     @staticmethod
     def _cancel(window: Any, spec: ProviderSpec) -> dict[str, Any]:

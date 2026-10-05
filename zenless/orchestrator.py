@@ -106,12 +106,13 @@ class ZenlessOrchestrator:
         qa_callback: QACallback | None = None,
         project_search_callback: ProjectSearchCallback | None = None,
         local_ai_callback: LocalAICallback | None = None,
+        portable_root: Path | None = None,
     ) -> None:
         self.store = store
         self.bridge = bridge
         self.studio = studio
         self.run_root = run_root
-        self.skills = SkillLibrary(run_root.parent)
+        self.skills = SkillLibrary(portable_root or run_root.parent)
         self.event_callback = event_callback
         self.play_test_seconds = max(1.0, min(30.0, play_test_seconds))
         self.brain = brain or ZenlessBrain()
@@ -363,6 +364,7 @@ class ZenlessOrchestrator:
         if skill_selection.text:
             context["rubra_skills"] = skill_selection.text
             context["rubra_skill_sources"] = list(skill_selection.names)
+            self._emit(task_id, Stage.COLLECTING_CONTEXT, f"Loaded {len(skill_selection.names)} Roblox skill references.", detail=", ".join(skill_selection.names))
         if self.project_search_callback is not None:
             try:
                 indexed = self.project_search_callback(objective)

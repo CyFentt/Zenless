@@ -1,3 +1,4 @@
+import { notify } from '@/services/notifications';
 import type { ZenlessEvent } from '@/types';
 import { useStore } from '@/store';
 
@@ -40,9 +41,11 @@ export function handleEvent(event: ZenlessEvent) {
       }
       break;
     case 'JOB_COMPLETE':
+      notify('Build completed. Review the result and test evidence.', 'success');
       store.updateJob(event.data.jobId, { status: 'COMPLETE', stage: 'COMPLETE' });
       break;
     case 'JOB_FAILED':
+      notify(event.data.reason, 'error');
       store.updateJob(event.data.jobId, { status: 'FAILED', stage: 'FAILED' });
       break;
     case 'CHAT_STREAM_STARTED':
@@ -126,11 +129,14 @@ export function handleEvent(event: ZenlessEvent) {
       break;
     case 'STUDIO_STATE_CHANGED':
       store.setStudioState(event.data.state);
+      useStore.setState((state) => ({ studioVersion: state.studioVersion + 1, studioProjectName: event.data.projectName ?? (event.data.state === 'OFFLINE' ? '' : state.studioProjectName) }));
       break;
     case 'STUDIO_TREE_UPDATED':
+      useStore.setState((state) => ({ studioVersion: state.studioVersion + 1 }));
       store.setStudioTree(event.data.tree);
       break;
     case 'TEST_STARTED':
+      if (event.data.jobId) useStore.setState({ activeTestJobId: event.data.jobId });
       store.setTestState({ ...useStore.getState().testState, status: 'RUNNING' });
       break;
     case 'TEST_CASE_STARTED':
@@ -161,7 +167,7 @@ export function handleEvent(event: ZenlessEvent) {
       store.addTestLog(event.data.log);
       break;
     case 'TEST_FINISHED':
-      store.setTestState({ ...useStore.getState().testState, status: event.data.passed ? 'IDLE' : 'FAILED' });
+      store.setTestState({ ...useStore.getState().testState, status: event.data.passed || event.data.cancelled ? 'STOPPED' : 'FAILED' });
       break;
     case 'SETTINGS_CHANGED':
       if (useStore.getState().settings) {
@@ -169,6 +175,7 @@ export function handleEvent(event: ZenlessEvent) {
       }
       break;
     case 'DIAGNOSTIC_EVENT':
+      if (event.data.diagnostic.severity === 'error' || event.data.diagnostic.severity === 'critical') notify(event.data.diagnostic.message, 'error');
       store.addDiagnostic(event.data.diagnostic);
       break;
   }

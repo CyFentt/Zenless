@@ -150,6 +150,8 @@ class WebView2BrowserController:
             self.start()
         self._set_state(provider, "Login Required", "Complete login in the Rubra WebView2 window")
         result = self._request("login", provider, {"timeout": timeout}, timeout=timeout + 5)
+        if result.get("state") != "ready" or not result.get("authenticated"):
+            raise BridgeError("Login has not been confirmed. Keep the provider window open and complete authentication.")
         self._set_state(provider, "Ready", "Authenticated WebView2 session")
         return result
 

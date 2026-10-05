@@ -26,6 +26,7 @@ from .storage import StorageManager
 from .store import SQLiteStore
 from .studio_mcp import MCPError, MCPToolResult, StudioMCPClient, find_studio_mcp, select_studio_target
 from .tool_registry import ToolRegistry
+from .toolchain import ToolchainManager
 from .webview2_browser import WebView2BrowserController
 
 PROVIDER_LABELS = {
@@ -112,10 +113,18 @@ class ZenlessCore:
         self.local_ai = LocalAIService(self.portable_root)
         self.tool_registry = ToolRegistry(self.portable_root, self.resource_root)
         self._closing = threading.Event()
+        self._tools_thread: threading.Thread | None = None
+        self._tools_state = {"state": "IDLE", "detail": ""}
         self._startup_thread: threading.Thread | None = None
         self._provider_threads: dict[str, threading.Thread] = {}
         self._provider_lock = threading.Lock()
         self._studio_lock = threading.RLock()
+        self._studio_refresh_lock = threading.Lock()
+        self._studio_thread: threading.Thread | None = None
+        self._studio_test_id = ""
+        self._test_start_lock = threading.Lock()
+        self._studio_target_id = ""
+        self._studio_label = ""
         self._studio_nodes: dict[str, dict[str, Any]] = {}
         self._studio_tree: list[dict[str, Any]] = []
         self._connections = {
@@ -154,9 +163,15 @@ class ZenlessCore:
             managed=self.managed_browser,
             embedded=self.embedded_browser,
             status_callback=self._on_provider_status,
+            local_available=lambda: bool(self.settings()["localAI"] and self.local_ai.available),
+            local_complete=lambda prompt: self.local_ai.complete(
+                prompt, max_tokens=2048, temperature=0.15, timeout=300
+            ),
         )
         try:
-            self.studio: Any = StudioMCPClient(find_studio_mcp(), notification_callback=self._on_mcp_notification)
+            self.studio: Any = StudioMCPClient(
+                find_studio_mcp(), notification_callback=self._on_mcp_notification, startup_timeout=8
+            )
         except MCPError as exc:
             self.studio = _UnavailableStudio(str(exc))
             self._connections["studio"] = "OFF"
@@ -194,6 +209,7 @@ class ZenlessCore:
             qa_callback=self.qa.run_for_orchestrator,
             project_search_callback=self._project_search_for_orchestrator,
             local_ai_callback=self._local_ai_complete,
+            portable_root=self.portable_root,
         )
         self._diagnostic_unsubscribe = self.diagnostics.subscribe(self._on_diagnostic)
 
@@ -215,8 +231,10 @@ class ZenlessCore:
         if current:
             self.orchestrator.cancel(current)
             self.qa.stop(current)
+        self.qa.stop_all()
         self.bridge.stop()
         self.orchestrator.wait_for_idle(3.0)
+        self.qa.wait_for_manual_tests(3.0)
         self.studio.close()
         if self.tripwire is not None:
             self.tripwire.close()
@@ -391,7 +409,10 @@ class ZenlessCore:
         effective_options.setdefault("revisions", int(current_settings.get("maxRevisions", 3)))
         effective_options.setdefault(
             "approvalMode",
-            str(current_settings.get("approvalMode") or ("FULL_AUTO" if bool(current_settings.get("autoApprove", False)) else "ASK")),
+            str(
+                current_settings.get("approvalMode")
+                or ("FULL_AUTO" if bool(current_settings.get("autoApprove", False)) else "ASK")
+            ),
         )
         task_options = TaskOptions.from_api(effective_options)
         self._preflight_providers(task_options)
@@ -705,15 +726,32 @@ class ZenlessCore:
         return {
             "state": "ONLINE"
             if self.connections()["studio"] == "READY"
-            else ("CONNECTING" if self.connections()["studio"] == "CONNECTING" else "OFFLINE")
+            else ("CONNECTING" if self.connections()["studio"] == "CONNECTING" else "OFFLINE"),
+            "projectName": self._studio_label,
         }
 
     def studio_tree(self) -> list[dict[str, Any]]:
         with self._studio_lock:
             return json.loads(json.dumps(self._studio_tree))
 
-    def refresh_studio(self) -> bool:
+    def refresh_studio(self, *, report_error: bool = True) -> bool:
+        if not self._studio_refresh_lock.acquire(blocking=False):
+            raise CoreError("STUDIO_BUSY", "Studio connection is being refreshed. Please wait.", status=409)
         try:
+            return self._refresh_studio(report_error=report_error)
+        finally:
+            self._studio_refresh_lock.release()
+
+    def _refresh_studio(self, *, report_error: bool) -> bool:
+        try:
+            if self._closing.is_set():
+                raise MCPError("Rubra is closing.")
+            if isinstance(self.studio, _UnavailableStudio):
+                self.studio = StudioMCPClient(
+                    find_studio_mcp(), notification_callback=self._on_mcp_notification, startup_timeout=8
+                )
+                self.qa.studio = self.studio
+                self.orchestrator.studio = self.studio
             if not self.studio.running:
                 self.studio.start()
             studios = self.studio.list_studios()
@@ -722,23 +760,56 @@ class ZenlessCore:
                 "search_game_tree",
                 {"datamodel_type": "Edit", "max_depth": 5, "head_limit": 500},
                 studio_id=target.studio_id,
-                timeout=90,
+                timeout=10,
             )
             if result.is_error:
                 raise MCPError(result.compact(4000))
-            tree, nodes = self._parse_studio_tree(result.text)
+            tree, nodes = self._parse_studio_tree(
+                result.structured_content if result.structured_content is not None else result.text
+            )
             with self._studio_lock:
                 self._studio_tree = tree
                 self._studio_nodes = nodes
+                self._studio_target_id = target.studio_id
+                self._studio_label = target.label
             self._set_connection("studio", "READY")
-            self.events.publish("STUDIO_STATE_CHANGED", {"state": "ONLINE"})
+            self.events.publish("STUDIO_STATE_CHANGED", self.studio_state())
             self.events.publish("STUDIO_TREE_UPDATED", {"tree": tree})
             return True
         except Exception as exc:
+            self._studio_label = ""
             self._set_connection("studio", "ERR")
             self.events.publish("STUDIO_STATE_CHANGED", {"state": "OFFLINE"})
-            self._report("studio", "refresh", exc, "Open Studio in Edit mode and enable MCP servers.")
+            if report_error:
+                self._report(
+                    "studio",
+                    "refresh",
+                    exc,
+                    "Open Studio in Edit mode and enable MCP servers. Rubra retries automatically.",
+                )
             raise CoreError("STUDIO_UNAVAILABLE", str(exc), status=503) from exc
+
+    def _monitor_studio(self) -> None:
+        while not self._closing.is_set():
+            try:
+                if self.connections()["studio"] != "READY" or not self.studio.running:
+                    self.refresh_studio(report_error=False)
+                else:
+                    target = select_studio_target(self.studio.list_studios())
+                    if target.studio_id != self._studio_target_id:
+                        self.refresh_studio(report_error=False)
+                self._set_boot("STUDIO", "READY")
+            except (CoreError, MCPError) as exc:
+                if isinstance(exc, CoreError) and exc.code == "STUDIO_BUSY":
+                    if self._closing.wait(5.0):
+                        break
+                    continue
+                if self.connections()["studio"] != "OFF":
+                    self._set_connection("studio", "OFF")
+                    self.events.publish("STUDIO_STATE_CHANGED", {"state": "OFFLINE", "projectName": ""})
+                self._set_boot("STUDIO", "OFF")
+            if self._closing.wait(5.0):
+                break
 
     def search_studio(self, query: str) -> list[dict[str, Any]]:
         needle = query.strip().casefold()
@@ -749,11 +820,29 @@ class ZenlessCore:
         return [item for item in values if needle in item["name"].casefold() or needle in item["path"].casefold()][:200]
 
     def inspect_studio(self, node_id: str) -> dict[str, Any]:
+        if self.connections()["studio"] != "READY":
+            raise CoreError("STUDIO_UNAVAILABLE", "Reconnect Studio before inspecting this object.", status=503)
         with self._studio_lock:
             node = self._studio_nodes.get(node_id)
         if node is None:
             raise CoreError("STUDIO_NODE_NOT_FOUND", "Studio object not found.", status=404)
-        return dict(node)
+        result = dict(node)
+        if node["className"] in {"Script", "LocalScript", "ModuleScript"}:
+            source = self.studio.call_tool(
+                "script_read",
+                {"target_file": node["path"], "should_read_entire_file": True},
+                studio_id=self._studio_target_id,
+                timeout=10,
+            )
+            if source.is_error:
+                raise CoreError("STUDIO_READ_FAILED", source.compact(2000), status=503)
+            structured = source.structured_content
+            result["source"] = (
+                str(structured.get("source") or structured.get("content") or source.text)
+                if isinstance(structured, dict)
+                else source.text
+            )
+        return result
 
     def set_studio_reference(self, node_id: str, action: str) -> bool:
         with self._studio_lock:
@@ -776,6 +865,34 @@ class ZenlessCore:
         if not self.qa.start_manual(job_id, profile):
             raise CoreError("TEST_ALREADY_RUNNING", "A test is already running.", status=409)
         return True
+
+    def start_studio_test(self, profile: str = "STANDARD") -> dict[str, Any]:
+        with self._test_start_lock:
+            return self._start_studio_test(profile)
+
+    def _start_studio_test(self, profile: str) -> dict[str, Any]:
+        if self.orchestrator.current_task_id:
+            raise CoreError(
+                "STUDIO_BUSY", "Wait for the active build to finish before testing the open place.", status=409
+            )
+        if self.connections()["studio"] != "READY":
+            self.refresh_studio()
+        if self.qa.running(self._studio_test_id):
+            raise CoreError("TEST_ALREADY_RUNNING", "A test is already running.", status=409)
+        job_id = uuid.uuid4().hex
+        self.store.create_task(
+            job_id, f"Play Test: {self._studio_label}", TaskOptions(create_3d_asset=False, independent_review=False)
+        )
+        self.store.update_task(
+            job_id,
+            studio_id=self._studio_target_id,
+            stage=Stage.TESTING,
+            status="running",
+            context_json={"manual_test": True},
+        )
+        self._studio_test_id = job_id
+        self.start_test(job_id, profile)
+        return {"ok": True, "jobId": job_id}
 
     def stop_test(self, job_id: str) -> bool:
         if not self.qa.stop(job_id):
@@ -809,6 +926,49 @@ class ZenlessCore:
             if isinstance(stored.get("models"), dict):
                 result["models"] = self._merge_models(result["models"], stored["models"])
         return result
+
+    def local_ai_state(self) -> dict[str, Any]:
+        return {
+            "enabled": bool(self.settings()["localAI"]),
+            "available": self.local_ai.available,
+            "running": self.local_ai.running,
+            "model": "Qwen Coder 7B + Qwen3 4B",
+            "models": self.local_ai.model_status(),
+            "setup": dict(self._tools_state),
+        }
+
+    def prepare_tools(self) -> bool:
+        with self._provider_lock:
+            if self._tools_thread is not None and self._tools_thread.is_alive():
+                return True
+            self._tools_thread = threading.Thread(target=self._prepare_tools, name="Rubra-Tools", daemon=True)
+            self._tools_thread.start()
+        return True
+
+    def _prepare_tools(self) -> None:
+        def progress(stage: str, detail: str) -> None:
+            self._tools_state = {"state": "INSTALLING", "detail": f"{stage}: {detail}"}
+
+        self._tools_state = {"state": "INSTALLING", "detail": "Preparing pinned tools and local model"}
+        try:
+            manager = ToolchainManager(
+                resource_root=self.resource_root,
+                portable_root=self.portable_root,
+                status_callback=progress,
+                cancel_event=self._closing,
+            )
+            results = manager.ensure_default()
+            os.environ.update(manager.environment())
+            failures = [item.item_id for item in results if item.state == "failed"]
+            self._tools_state = {
+                "state": "ERROR" if failures else "READY",
+                "detail": "Retry: " + ", ".join(failures) if failures else "Tools and skills prepared",
+            }
+            self._model_cache = None
+        except Exception as exc:
+            self._tools_state = {"state": "ERROR", "detail": str(exc)}
+            if not self._closing.is_set():
+                self._report("tools", "prepare", exc, "Retry preparation in Settings > Models.")
 
     def update_settings(self, patch: dict[str, Any]) -> dict[str, Any]:
         current = self.settings()
@@ -846,9 +1006,36 @@ class ZenlessCore:
             return json.loads(json.dumps(self._model_cache[1]))
         settings = self.settings()["models"]
         catalog: dict[str, Any] = {
-            "chatgpt": {"models": [{"id": settings["chatgpt"]["model"], "label": settings["chatgpt"]["model"]}]},
-            "deepseek": {"models": [{"id": settings["deepseek"]["model"], "label": settings["deepseek"]["model"]}]},
-            "gemini": {"models": [{"id": settings["gemini"]["model"], "label": settings["gemini"]["model"]}]},
+            "chatgpt": {
+                "models": [
+                    {
+                        "id": settings["chatgpt"]["model"],
+                        "label": "Provider default"
+                        if settings["chatgpt"]["model"] == "auto"
+                        else settings["chatgpt"]["model"],
+                    }
+                ]
+            },
+            "deepseek": {
+                "models": [
+                    {
+                        "id": settings["deepseek"]["model"],
+                        "label": "Provider default"
+                        if settings["deepseek"]["model"] == "auto"
+                        else settings["deepseek"]["model"],
+                    }
+                ]
+            },
+            "gemini": {
+                "models": [
+                    {
+                        "id": settings["gemini"]["model"],
+                        "label": "Provider default"
+                        if settings["gemini"]["model"] == "auto"
+                        else settings["gemini"]["model"],
+                    }
+                ]
+            },
             "hunyuan": {
                 "versions": [{"id": settings["hunyuan"]["version"], "label": settings["hunyuan"]["version"]}],
                 "qualities": [
@@ -867,7 +1054,10 @@ class ZenlessCore:
                 names = []
             if not names:
                 continue
-            options = [{"id": name, "label": name} for name in names]
+            options = [
+                {"id": name, "label": "Local model for this role" if response.get("transport") == "local" else name}
+                for name in names
+            ]
             if provider == "hunyuan":
                 catalog[provider]["versions"] = options
             else:
@@ -944,7 +1134,9 @@ class ZenlessCore:
         try:
             return self.local_ai.complete(prompt, max_tokens=700, temperature=0.1, timeout=120)
         except LocalAIError as exc:
-            self._report("local-ai", "inference", exc, "Rubra will continue with web providers and deterministic routing.")
+            self._report(
+                "local-ai", "inference", exc, "Rubra will continue with web providers and deterministic routing."
+            )
             return ""
 
     def _index_project_background(self) -> None:
@@ -955,7 +1147,12 @@ class ZenlessCore:
         try:
             self.project_index.index(project_root=root, incremental=True)
         except Exception as exc:
-            self._report("index", "background", exc, "Project indexing is optional; configure a valid project folder or retry manually.")
+            self._report(
+                "index",
+                "background",
+                exc,
+                "Project indexing is optional; configure a valid project folder or retry manually.",
+            )
 
     def diagnostics_payload(self) -> list[dict[str, Any]]:
         return [self._diagnostic_payload(event) for event in self.diagnostics.recent(200)]
@@ -992,20 +1189,27 @@ class ZenlessCore:
             )
         self._set_boot("UI", "READY")
         self.events.publish("BOOT_COMPLETE", {})
+        if os.environ.get("RUBRA_PREPARE_TOOLS") == "1":
+            self.prepare_tools()
+        self._studio_thread = threading.Thread(target=self._monitor_studio, name="Rubra-Studio-Monitor", daemon=True)
+        self._studio_thread.start()
         self._refresh_provider_states()
         index_thread = threading.Thread(target=self._index_project_background, name="Rubra-Project-Index", daemon=True)
         index_thread.start()
-        try:
-            self.refresh_studio()
-            self._set_boot("STUDIO", "READY")
-        except CoreError:
-            self._set_boot("STUDIO", "OFF")
 
     def _login_worker(self, provider: str) -> None:
         self._set_connection(provider, "LOGIN")
         self.events.publish("AGENT_STATUS_CHANGED", {"agent": provider, "status": "LOGIN"})
         try:
-            self.bridge.login(provider, timeout=600)
+            result = self.bridge.login(provider, timeout=600)
+            if result.get("state") != "ready":
+                deadline = time.monotonic() + 600
+                while not self._closing.is_set() and time.monotonic() < deadline:
+                    if self.bridge.wait_for_provider(provider, timeout=2):
+                        break
+                    self._closing.wait(1)
+                else:
+                    raise BridgeError("Login was not confirmed. Reopen the provider window and try again.")
             self._set_connection(provider, "READY")
             self.events.publish("AGENT_STATUS_CHANGED", {"agent": provider, "status": "READY"})
             self._set_boot("AI", "READY")
@@ -1027,7 +1231,7 @@ class ZenlessCore:
         self._set_boot("AI", "READY" if any_ready else "OFF")
 
     def _on_provider_status(self, provider: str, state: str, _detail: str) -> None:
-        if provider in {"chatgpt", "deepseek", "hunyuan"}:
+        if provider in {"chatgpt", "deepseek", "gemini", "hunyuan"}:
             normalized = self._normalize_connection(state)
             self._set_connection(provider, normalized)
             self.events.publish("AGENT_STATUS_CHANGED", {"agent": provider, "status": normalized})
@@ -1061,6 +1265,36 @@ class ZenlessCore:
         self.events.publish(
             "PIPELINE_STATE_CHANGED",
             {"jobId": event.task_id, "stage": event.stage.value},
+        )
+        phase = {
+            "COLLECTING_CONTEXT": "CONTEXT",
+            "PLANNING": "PLAN",
+            "BUILDING": "BUILD",
+            "REVIEWING": "REVIEW",
+            "APPLYING": "APPLY",
+            "TESTING": "TEST",
+            "FINAL_REVIEW": "FINAL",
+            "GENERATING_3D": "THREED",
+        }.get(event.stage.value, "PLAN")
+        self.events.publish(
+            "CHAT_ACTIVITY",
+            {
+                "activity": {
+                    "id": f"{event.task_id}:{event.stage.value}",
+                    "jobId": event.task_id,
+                    "phase": phase,
+                    "status": "FAILED"
+                    if event.stage == Stage.FAILED
+                    else "WARNING"
+                    if event.stage == Stage.BLOCKED
+                    else "DONE"
+                    if event.stage == Stage.COMPLETE
+                    else "RUNNING",
+                    "title": event.message,
+                    "detail": event.detail[:600],
+                    "timestamp": int(time.time() * 1000),
+                }
+            },
         )
         if event.stage == Stage.WAITING_CHANGE_APPROVAL:
             self.events.publish("CHANGES_UPDATED", {"files": self.changes(event.task_id)})
@@ -1236,31 +1470,63 @@ class ZenlessCore:
         }
 
     @staticmethod
-    def _parse_studio_tree(text: str) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
-        try:
-            payload = json.loads(text)
-        except json.JSONDecodeError:
-            payload = []
-        raw_items = (
-            payload
-            if isinstance(payload, list)
-            else payload.get("results", payload.get("instances", []))
-            if isinstance(payload, dict)
-            else []
-        )
-        nodes: dict[str, dict[str, Any]] = {}
+    def _parse_studio_tree(payload: Any) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
+        if isinstance(payload, str):
+            try:
+                payload = json.loads(payload)
+            except json.JSONDecodeError as exc:
+                raise MCPError("Studio tree returned invalid JSON.") from exc
+        while isinstance(payload, dict):
+            nested = next(
+                (payload[key] for key in ("results", "instances", "tree", "nodes", "data") if key in payload), None
+            )
+            if nested is None:
+                raise MCPError("Studio tree returned an unsupported response shape.")
+            payload = nested
+        if not isinstance(payload, list):
+            raise MCPError("Studio tree must be an instance list.")
+        paths: dict[str, dict[str, Any]] = {}
+
+        def add(raw: Any, parent: str = "", depth: int = 0) -> None:
+            if not isinstance(raw, dict) or depth > 64 or len(paths) >= 2000:
+                return
+            name = str(raw.get("name") or raw.get("Name") or "")
+            path = str(
+                raw.get("fullPath")
+                or raw.get("full_path")
+                or raw.get("path")
+                or raw.get("Path")
+                or ((parent + "." if parent else "") + name)
+            )
+            if not path:
+                return
+            node = {
+                "id": hashlib.sha256(path.encode("utf-8", "replace")).hexdigest()[:24],
+                "name": name or path.rsplit(".", 1)[-1],
+                "className": str(
+                    raw.get("className")
+                    or raw.get("class_name")
+                    or raw.get("ClassName")
+                    or raw.get("class")
+                    or "Instance"
+                ),
+                "path": path,
+                "children": [],
+            }
+            paths[path] = node
+            for child in raw.get("children", raw.get("Children", [])) or []:
+                add(child, path, depth + 1)
+
+        for raw in payload:
+            add(raw)
         roots: list[dict[str, Any]] = []
-        for index, raw in enumerate(raw_items if isinstance(raw_items, list) else []):
-            if not isinstance(raw, dict):
-                continue
-            path = str(raw.get("fullPath") or raw.get("path") or raw.get("name") or f"Instance{index}")
-            name = str(raw.get("name") or path.rsplit(".", 1)[-1])
-            class_name = str(raw.get("className") or raw.get("class") or "Instance")
-            node_id = hashlib.sha256(path.encode("utf-8", "replace")).hexdigest()[:24]
-            node = {"id": node_id, "name": name, "className": class_name, "path": path, "children": []}
-            nodes[node_id] = node
-            roots.append(node)
-        return roots[:500], nodes
+        for path, node in paths.items():
+            parent = paths.get(path.rpartition(".")[0])
+            if parent is not None:
+                parent["children"].append(node)
+            else:
+                roots.append(node)
+        return roots, {node["id"]: node for node in paths.values()}
 
     def _register_file_asset(self, path: Path, *, job_id: str, kind: str) -> str:
         resolved = path.resolve()

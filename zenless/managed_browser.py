@@ -13,6 +13,7 @@ from urllib.parse import urlparse
 
 from .browser_bridge import BridgeError, StatusCallback
 from .diagnostics import ErrorBus
+from .provider_auth import authentication_script, model_options_script
 
 
 @dataclass(frozen=True, slots=True)
@@ -222,12 +223,20 @@ class ManagedBrowserController:
         return bool(result.get("ready"))
 
     def login(self, provider: str, *, install_if_missing: bool = True, timeout: float = 180.0) -> dict[str, Any]:
-        return self._call(
+        result = self._call(
             "login",
             provider,
             {"install_if_missing": install_if_missing},
             timeout=timeout,
         )
+        deadline = time.monotonic() + timeout
+        while not self._stop.wait(0.5) and time.monotonic() < deadline:
+            status = self.provider_status().get(provider, {})
+            if status.get("state") == "Ready":
+                return {**result, "state": "ready", "authenticated": True}
+            if "window was closed" in str(status.get("detail") or ""):
+                raise BridgeError("LOGIN_CANCELLED: Login window was closed. Click Login to reopen it.")
+        raise BridgeError("LOGIN_CANCELLED: Managed login was not confirmed before timeout.")
 
     def send_prompt(
         self,
@@ -361,7 +370,7 @@ class ManagedBrowserController:
                 return {"ready": False, "runtime": "missing"}
             self._ensure_context(headed=False)
             page = self._ensure_page(command.provider)
-            ready = self._composer(page, self.provider_specs[command.provider]) is not None
+            ready = bool(page.evaluate(authentication_script(command.provider, self.provider_specs[command.provider].inputs, self.provider_specs[command.provider].url)).get("ready"))
             self._set_state(
                 command.provider,
                 "Ready" if ready else "Login Required",
@@ -511,34 +520,16 @@ class ManagedBrowserController:
         return {"status": "ok", "uploaded": len(files), "transport": "playwright"}
 
     def _select_model(self, command: _Command) -> dict[str, Any]:
-        model = str(command.payload.get("model") or "").strip()
-        if not model:
-            raise BridgeError("Model name is empty.")
         page = self._ensure_page(command.provider)
-        nodes = page.locator('[role="option"], [role="menuitem"], [data-model], button')
-        count = min(nodes.count(), 300)
-        for index in range(count):
-            node = nodes.nth(index)
-            try:
-                text = (node.inner_text(timeout=500) or "").strip()
-                if model.casefold() in text.casefold() and node.is_visible():
-                    node.click(timeout=3_000)
-                    return {"status": "ok", "selected": text or model, "transport": "playwright"}
-            except Exception:
-                continue
-        raise BridgeError(f"Model option not found: {model}")
+        model = str(command.payload.get("model") or "").strip()
+        result = page.evaluate(model_options_script(model))
+        if not model or not isinstance(result, dict) or not result.get("ok"):
+            raise BridgeError(f"Model option not found: {model}. Open the provider's model menu and refresh Models.")
+        return {"status": "ok", "selected": str(result.get("selected") or model), "transport": "playwright"}
 
     def _discover_models(self, command: _Command) -> dict[str, Any]:
-        page = self._ensure_page(command.provider)
-        values = page.locator(
-            '[data-model], [role="option"], [role="menuitem"], '
-            'button[aria-haspopup="listbox"], button[aria-haspopup="menu"]'
-        ).evaluate_all(
-            "nodes => nodes.map(node => (node.dataset.model || node.innerText || node.textContent || '').trim())"
-            ".filter((value, index, all) => value && value.length <= 120 && all.indexOf(value) === index)"
-            ".slice(0, 30)"
-        )
-        return {"status": "ok", "models": [str(item) for item in values], "transport": "playwright"}
+        values = self._ensure_page(command.provider).evaluate(model_options_script())
+        return {"status": "ok", "models": values if isinstance(values, list) else [], "transport": "playwright"}
 
     def _cancel_generation(self, command: _Command) -> dict[str, Any]:
         page = self._ensure_page(command.provider)
@@ -694,7 +685,7 @@ class ManagedBrowserController:
             self._login_provider = ""
             self._set_state(provider, "Login Required", "Managed login window was closed")
             return
-        if self._composer(page, self.provider_specs[provider]) is None:
+        if not page.evaluate(authentication_script(provider, self.provider_specs[provider].inputs, self.provider_specs[provider].url)).get("ready"):
             self._login_ready_at = 0.0
             return
         if not self._login_ready_at:

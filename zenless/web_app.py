@@ -13,9 +13,36 @@ from .web_bridge import LocalWebBridge
 class DesktopAPI:
     def __init__(self) -> None:
         self._window: Any = None
+        self._maximized = False
 
     def _bind(self, window: Any) -> None:
         self._window = window
+        self._maximized = bool(getattr(window, "maximized", False))
+        events = getattr(window, "events", None)
+        if events is not None:
+            events.maximized += self._on_maximized
+            events.restored += self._on_restored
+
+    def _on_maximized(self) -> None:
+        self._maximized = True
+
+    def _on_restored(self) -> None:
+        self._maximized = False
+
+    def minimize_window(self) -> None:
+        if self._window is not None:
+            self._window.minimize()
+
+    def toggle_maximize(self) -> None:
+        if self._window is not None:
+            if self._maximized:
+                self._window.restore()
+            else:
+                self._window.maximize()
+
+    def close_window(self) -> None:
+        if self._window is not None:
+            self._window.destroy()
 
     def select_project_folder(self, current: str = "") -> str:
         window = self._window
@@ -33,7 +60,6 @@ class DesktopAPI:
             return str(selected[0]) if selected else ""
         except Exception:
             return ""
-
 
 
 def run_web_app(
@@ -74,6 +100,9 @@ def run_web_app(
             height=880,
             min_size=(1000, 650),
             resizable=True,
+            frameless=True,
+            easy_drag=False,
+            shadow=True,
             background_color="#090405",
             text_select=True,
         )
