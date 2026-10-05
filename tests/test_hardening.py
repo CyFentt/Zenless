@@ -208,6 +208,22 @@ class HardeningTests(unittest.TestCase):
         self.assertEqual(status["state"], "Ready")
         self.assertEqual(status["transport"], "local")
 
+    def test_gateway_ignores_stale_ready_status_from_stopped_web_transport(self) -> None:
+        managed = FakeManaged(set())
+        embedded = FakeEmbedded(set())
+        embedded.running = False
+        embedded.provider_status = lambda: {"chatgpt": {"state": "Ready", "transport": "webview2"}}
+        gateway = AgentGateway(
+            managed=managed,
+            embedded=embedded,
+            local_available=lambda: True,
+            local_complete=lambda prompt: prompt,
+            selected_model=lambda _provider: "auto",
+        )
+        self.assertTrue(gateway.wait_for_provider("chatgpt", 0))
+        self.assertEqual(gateway._routes["chatgpt"], "local")
+        self.assertEqual(gateway.provider_status()["chatgpt"]["transport"], "local")
+
     def test_gateway_does_not_require_extension_by_default(self) -> None:
         gateway = AgentGateway(
             managed=FakeManaged(set()),
