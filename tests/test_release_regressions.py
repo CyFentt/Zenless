@@ -319,17 +319,21 @@ def test_development_bridge_accepts_rubra_session_contract():
     assert "X-Rubra-Token" in source
 
 
-def test_installer_replaces_immutable_payload_before_extracting_update():
+def test_installer_updates_keep_a_rollback_copy_until_extraction_succeeds():
     root = Path(__file__).resolve().parents[1]
     source = (root / "packaging" / "setup.nsi").read_text(encoding="utf-8")
-    update_gate = source.index('StrCmp $0 "Rubra" update_cleanup install_payload')
-    launcher_cleanup = source.index('Delete "$INSTDIR\\Rubra.exe"')
-    app_cleanup = source.index('RMDir /r "$INSTDIR\\app"')
-    python_cleanup = source.index('RMDir /r "$INSTDIR\\runtime\\python"')
+    update_gate = source.index('StrCmp $0 "Rubra" update_backup install_payload')
+    launcher_backup = source.index('Rename "$INSTDIR\\Rubra.exe" "$INSTDIR\\Rubra.exe.__rubra_old"')
+    app_backup = source.index('Rename "$INSTDIR\\app" "$INSTDIR\\app.__rubra_old"')
+    python_backup = source.index('Rename "$INSTDIR\\runtime\\python" "$INSTDIR\\runtime\\python.__rubra_old"')
     extraction = source.index('File /r "${PACKAGE}/*"')
-    assert update_gate < launcher_cleanup < app_cleanup < extraction
-    assert launcher_cleanup < python_cleanup < extraction
-    assert "IfErrors close_required" in source[launcher_cleanup:extraction]
+    cleanup = source.index('Delete "$INSTDIR\\Rubra.exe.__rubra_old"', extraction)
+    rollback = source.index('install_failed:', extraction)
+    assert update_gate < launcher_backup < app_backup < python_backup < extraction < cleanup
+    assert rollback > extraction
+    assert 'Rename "$INSTDIR\\Rubra.exe.__rubra_old" "$INSTDIR\\Rubra.exe"' in source[rollback:]
+    assert 'Rename "$INSTDIR\\app.__rubra_old" "$INSTDIR\\app"' in source[rollback:]
+    assert 'Rename "$INSTDIR\\runtime\\python.__rubra_old" "$INSTDIR\\runtime\\python"' in source[rollback:]
     assert 'RMDir /r "$INSTDIR\\runtime"' not in source[:extraction]
 
 
