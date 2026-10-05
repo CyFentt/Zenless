@@ -557,6 +557,10 @@ class ZenlessCore:
         context = dict(task.get("context") or {}) if isinstance(task.get("context"), dict) else {}
         if refresh:
             self.refresh_studio()
+            relevant_classes = {
+                "Script", "LocalScript", "ModuleScript", "RemoteEvent", "RemoteFunction",
+                "Folder", "Workspace", "ReplicatedStorage", "ServerScriptService", "StarterPlayer", "StarterGui",
+            }
             with self._studio_lock:
                 live_nodes = [
                     {
@@ -565,7 +569,7 @@ class ZenlessCore:
                         "className": str(node.get("className") or "Instance"),
                     }
                     for node in self._studio_nodes.values()
-                    if str(node.get("path") or "")
+                    if str(node.get("path") or "") and str(node.get("className") or "Instance") in relevant_classes
                 ][:500]
             context["live_studio_nodes"] = live_nodes
 
