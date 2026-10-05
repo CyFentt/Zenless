@@ -171,7 +171,7 @@ class RubraRuntimeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             process = Process()
-            cancel = __import__("threading").Event()
+            cancel = threading.Event()
             cancel.set()
             with patch("zenless.static_quality.subprocess.Popen", return_value=process):
                 check = StaticQualityRunner._run_command("StyLua", ["stylua"], root, 30, cancel)
