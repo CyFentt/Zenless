@@ -85,6 +85,30 @@ def test_invalid_tree_keeps_connection_and_play_available_but_reports_inventory_
     assert core.start_studio_test()["jobId"]
 
 
+def test_context_refresh_rebuilds_live_studio_items_and_preserves_locked_state(core):
+    core.store.create_task("context-job", "Inspect context", __import__("zenless.models", fromlist=["TaskOptions"]).TaskOptions())
+    core.store.replace_context_items(
+        "context-job",
+        [{
+            "id": "legacy-module",
+            "job_id": "context-job",
+            "name": "Module",
+            "type": "Module",
+            "path": "game.Workspace.Module",
+            "relevance": 0.9,
+            "state": "locked",
+            "raw": {},
+        }],
+    )
+
+    items = core.context("context-job", refresh=True)
+
+    module = next(item for item in items if item["path"] == "game.Workspace.Module")
+    assert module["type"] == "Module"
+    assert module["state"] == "locked"
+    assert any(item["path"] == "game.Workspace" for item in items)
+
+
 def test_late_studio_installation_rebinds_all_consumers(core):
     replacement = core.studio
     core.studio = _UnavailableStudio("not installed yet")
