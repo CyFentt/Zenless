@@ -579,7 +579,7 @@ export interface ZenlessEventMap {
   REVIEW_READY: { review: Review };
   VISUAL_GENERATION_CHANGED: { view?: ViewName; state: ViewState };
   VISUAL_READY: { view: ViewName; imageUrl: string };
-  VISUAL_APPROVED: { view: ViewName };
+  VISUAL_APPROVED: { view?: ViewName };
   MODEL_GENERATION_CHANGED: { target: "geometry" | "texture"; state: ModelGenState };
   MODEL_READY: { modelUrl: string; filename?: string };
   MODEL_APPROVED: Record<string, never>;
