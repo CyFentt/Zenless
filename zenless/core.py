@@ -594,7 +594,10 @@ class ZenlessCore:
             raise CoreError("CONTEXT_NOT_FOUND", "Context item not found.", status=404)
         item = self.store.context_item(item_id)
         if item:
-            self.events.publish("CONTEXT_UPDATED", {"items": self.context(str(item["job_id"]))})
+            self.events.publish(
+                "CONTEXT_UPDATED",
+                {"jobId": str(item["job_id"]), "items": self.context(str(item["job_id"]))},
+            )
         return True
 
     def changes(self, job_id: str) -> list[dict[str, Any]]:
@@ -751,7 +754,7 @@ class ZenlessCore:
     def approve_visual(self, job_id: str) -> bool:
         if not self.orchestrator.approve_active(job_id, ("visual",), "approve"):
             raise CoreError("NO_VISUAL_GATE", "No visual concept is waiting for approval.", status=409)
-        self.events.publish("VISUAL_APPROVED", {})
+        self.events.publish("VISUAL_APPROVED", {"jobId": job_id})
         return True
 
     def edit_visual(self, job_id: str, prompt: str) -> bool:
@@ -806,7 +809,7 @@ class ZenlessCore:
     def approve_model(self, job_id: str) -> bool:
         if not self.orchestrator.approve_active(job_id, ("3d",), "approve"):
             raise CoreError("NO_MODEL_GATE", "No 3D model is waiting for approval.", status=409)
-        self.events.publish("MODEL_APPROVED", {})
+        self.events.publish("MODEL_APPROVED", {"jobId": job_id})
         return True
 
     def regenerate_model(self, job_id: str, target: str) -> bool:
@@ -1566,16 +1569,17 @@ class ZenlessCore:
             },
         )
         if event.stage == Stage.WAITING_CHANGE_APPROVAL:
-            self.events.publish("CHANGES_UPDATED", {"files": self.changes(event.task_id)})
-            self.events.publish("REVIEW_READY", {"review": self.review(event.task_id)})
+            self.events.publish("CHANGES_UPDATED", {"jobId": event.task_id, "files": self.changes(event.task_id)})
+            self.events.publish("REVIEW_READY", {"jobId": event.task_id, "review": self.review(event.task_id)})
         elif event.stage == Stage.GENERATING_CONCEPT:
-            self.events.publish("VISUAL_GENERATION_CHANGED", {"state": "GENERATING"})
+            self.events.publish("VISUAL_GENERATION_CHANGED", {"jobId": event.task_id, "state": "GENERATING"})
         elif event.stage == Stage.WAITING_IMAGE_APPROVAL:
             visual = self.visual(event.task_id)
             concept = visual.get("concept") if isinstance(visual, dict) else {}
             self.events.publish(
                 "VISUAL_GENERATION_CHANGED",
                 {
+                    "jobId": event.task_id,
                     "state": "READY",
                     "version": int(concept.get("version") or 0) if isinstance(concept, dict) else 0,
                     "prompt": str(concept.get("prompt") or "") if isinstance(concept, dict) else "",
@@ -1585,10 +1589,13 @@ class ZenlessCore:
                 if isinstance(view, dict) and view.get("imageUrl") and view.get("name"):
                     self.events.publish(
                         "VISUAL_READY",
-                        {"view": str(view["name"]), "imageUrl": str(view["imageUrl"])},
+                        {"jobId": event.task_id, "view": str(view["name"]), "imageUrl": str(view["imageUrl"])},
                     )
         elif event.stage == Stage.GENERATING_3D:
-            self.events.publish("MODEL_GENERATION_CHANGED", {"target": "geometry", "state": "GENERATING"})
+            self.events.publish(
+                "MODEL_GENERATION_CHANGED",
+                {"jobId": event.task_id, "target": "geometry", "state": "GENERATING"},
+            )
         elif event.stage == Stage.WAITING_3D_APPROVAL:
             self._register_model_from_event(event)
         elif event.stage == Stage.COMPLETE:
@@ -1645,7 +1652,7 @@ class ZenlessCore:
         self.events.publish("ASSETS_UPDATED", {"assets": self.assets()})
         self.events.publish(
             "MODEL_READY",
-            {"modelUrl": f"/api/assets/{asset}/content", "filename": path.name},
+            {"jobId": event.task_id, "modelUrl": f"/api/assets/{asset}/content", "filename": path.name},
         )
 
     def _on_diagnostic(self, event: DiagnosticEvent) -> None:
