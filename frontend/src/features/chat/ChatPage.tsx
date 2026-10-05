@@ -22,6 +22,7 @@ export function ChatPage() {
   const upsertJob = useStore((s) => s.upsertJob);
   const currentJobId = useStore((s) => s.currentJobId);
   const setCurrentJobId = useStore((s) => s.setCurrentJobId);
+  const connections = useStore((s) => s.connections);
   const setConnections = useStore((s) => s.setConnections);
   const setAgents = useStore((s) => s.setAgents);
 
@@ -55,6 +56,12 @@ export function ChatPage() {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [messages, streamingContent]);
+
+  useEffect(() => {
+    if (!loggingProvider) return;
+    const state = connections[loggingProvider];
+    if (state === 'READY' || state === 'ERR' || state === 'OFF') setLoggingProvider(null);
+  }, [connections, loggingProvider]);
 
   const handleSend = async () => {
     const content = input.trim();
@@ -95,14 +102,16 @@ export function ChatPage() {
     setConnections({ [provider]: 'CONNECTING' });
     try {
       await getApi().loginProvider(provider);
-      const [connections, agents] = await Promise.all([getApi().getConnections(), getApi().getAgents()]);
-      setConnections(connections);
+      const [nextConnections, agents] = await Promise.all([getApi().getConnections(), getApi().getAgents()]);
+      setConnections(nextConnections);
       setAgents(agents);
+      if (nextConnections[provider] === 'READY' || nextConnections[provider] === 'ERR' || nextConnections[provider] === 'OFF') {
+        setLoggingProvider(null);
+      }
     } catch (error) {
+      setLoggingProvider(null);
       frontendDiagnostics.capture(error, 'chat', 'Failed to open provider login');
       addMessage({ id: `login_error_${Date.now()}`, role: 'system', content: 'The login window could not be opened.', timestamp: Date.now() });
-    } finally {
-      setLoggingProvider(null);
     }
   };
 
