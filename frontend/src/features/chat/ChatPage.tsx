@@ -132,7 +132,7 @@ export function ChatPage() {
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files) return;
-    const newAttachments = Array.from(files).slice(0, 3).map((file) => ({
+    const newAttachments = Array.from(files).slice(0, 5).map((file) => ({
       id: `att_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
       file,
       previewUrl: file.type.startsWith('image/') ? URL.createObjectURL(file) : undefined,
