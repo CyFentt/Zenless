@@ -295,6 +295,8 @@ class ToolchainManager:
     def _extract_atomic(self, archive: Path, target: Path, kind: str, flatten: bool) -> None:
         target.parent.mkdir(parents=True, exist_ok=True)
         temporary = Path(tempfile.mkdtemp(prefix=f"{target.name}.", dir=target.parent))
+        staged = target.with_name(target.name + ".new")
+        backup = target.with_name(target.name + ".old")
         try:
             if kind == "zip":
                 with zipfile.ZipFile(archive) as bundle:
@@ -308,8 +310,6 @@ class ToolchainManager:
             children = list(temporary.iterdir())
             if flatten and len(children) == 1 and children[0].is_dir():
                 source = children[0]
-            staged = target.with_name(target.name + ".new")
-            backup = target.with_name(target.name + ".old")
             if staged.exists():
                 shutil.rmtree(staged, ignore_errors=True)
             if backup.exists():
@@ -330,6 +330,8 @@ class ToolchainManager:
                     shutil.rmtree(backup, ignore_errors=True)
         finally:
             shutil.rmtree(temporary, ignore_errors=True)
+            if staged.exists():
+                shutil.rmtree(staged, ignore_errors=True)
 
     @staticmethod
     def _safe_zip(bundle: zipfile.ZipFile, target: Path) -> None:
