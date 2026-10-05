@@ -12,7 +12,6 @@ import type {
   ContextItem,
   Diagnostic,
   EffortLevel,
-  ChatMode,
   Job,
   ModelInfo,
   ProviderDescriptor,
@@ -118,8 +117,6 @@ interface AppState {
   setLoginState: (provider: ProviderId, state: string) => void;
   effort: EffortLevel;
   setEffort: (e: EffortLevel) => void;
-  chatMode: ChatMode;
-  setChatMode: (m: ChatMode) => void;
   tools: ToolDescriptor[];
   setTools: (t: ToolDescriptor[]) => void;
   storage: StorageInfo | null;
@@ -269,8 +266,6 @@ export const useStore = create<AppState>((set) => ({
   setLoginState: (provider, state) => set((s) => ({ loginStates: { ...s.loginStates, [provider]: state } })),
   effort: 'AUTO',
   setEffort: (effort) => set({ effort }),
-  chatMode: 'PROJECT',
-  setChatMode: (chatMode) => set({ chatMode }),
   tools: [],
   setTools: (tools) => set({ tools }),
   storage: null,
