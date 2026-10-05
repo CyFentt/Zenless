@@ -137,7 +137,8 @@ class ZenlessOrchestrator:
         attachment_paths: tuple[Path, ...] = (),
         studio_id: str = "",
         parent_task_id: str = "",
-        prepare_callback: Callable[[str], None] | None = None,
+        prepare_callback: Callable[[str, int], None] | None = None,
+        ready_callback: Callable[[str, int], None] | None = None,
     ) -> str:
         objective = prompt.strip()
         if not objective:
@@ -196,14 +197,16 @@ class ZenlessOrchestrator:
                         item["role"] or "assistant",
                         item["content"],
                     )
-                self.store.append_message(task_id, "User", "user", objective)
+                initial_message_id = self.store.append_message(task_id, "User", "user", objective)
                 if prepare_callback is not None:
-                    prepare_callback(task_id)
+                    prepare_callback(task_id, initial_message_id)
                 self._tasks[task_id] = thread
                 self._cancel[task_id] = cancel_event
                 self._pause[task_id] = pause_event
                 self.current_task_id = task_id
                 self._emit(task_id, Stage.NEW, "Request received and queued.")
+                if ready_callback is not None:
+                    ready_callback(task_id, initial_message_id)
                 thread.start()
             except Exception:
                 self._tasks.pop(task_id, None)
