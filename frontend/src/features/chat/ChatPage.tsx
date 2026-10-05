@@ -39,6 +39,7 @@ export function ChatPage() {
     return { ...previous, ...changed };
   });
   const [attachments, setAttachments] = useState<{ id: string; file: File; previewUrl?: string }[]>([]);
+  const attachmentsRef = useRef(attachments);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
@@ -55,6 +56,16 @@ export function ChatPage() {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [messages, streamingContent]);
+
+  useEffect(() => {
+    attachmentsRef.current = attachments;
+  }, [attachments]);
+
+  useEffect(() => () => {
+    attachmentsRef.current.forEach((attachment) => {
+      if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+    });
+  }, []);
 
   useEffect(() => {
     if (!loggingProvider) return;
