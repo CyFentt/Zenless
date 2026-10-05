@@ -66,24 +66,42 @@ Section "Rubra"
   Delete "$INSTDIR\.rubra-write-check"
 
   ; Application code and bundled Python are immutable release payloads.
-  ; Replace them completely only when updating a recognized Rubra install.
-  ; User data, downloaded tools, models and caches elsewhere under runtime are
-  ; intentionally kept. Rubra.exe remains alive while the Python desktop
-  ; process is running, so checking it first prevents partial open-app updates.
-  StrCmp $0 "Rubra" update_cleanup install_payload
-  update_cleanup:
+  ; On update, move the current immutable payload aside first. This preserves
+  ; the last working build until the replacement has been extracted completely.
+  ; User data, downloaded tools, models and caches elsewhere under runtime stay
+  ; in place. A running Rubra process keeps these paths busy, causing Rename to
+  ; fail before any destructive update is performed.
+  StrCmp $0 "Rubra" update_backup install_payload
+
+  update_backup:
+  Delete "$INSTDIR\Rubra.exe.__rubra_old"
+  RMDir /r "$INSTDIR\app.__rubra_old"
+  RMDir /r "$INSTDIR\runtime\python.__rubra_old"
+
   ClearErrors
-  Delete "$INSTDIR\Rubra.exe"
+  Rename "$INSTDIR\Rubra.exe" "$INSTDIR\Rubra.exe.__rubra_old"
   IfErrors close_required
-  RMDir /r "$INSTDIR\app"
-  RMDir /r "$INSTDIR\runtime\python"
-  IfErrors close_required
+
+  ClearErrors
+  Rename "$INSTDIR\app" "$INSTDIR\app.__rubra_old"
+  IfErrors rollback_launcher
+
+  ClearErrors
+  Rename "$INSTDIR\runtime\python" "$INSTDIR\runtime\python.__rubra_old"
+  IfErrors rollback_app
 
   install_payload:
   SetOutPath "$INSTDIR"
   ClearErrors
   File /r "${PACKAGE}/*"
   IfErrors install_failed
+
+  ; The replacement payload is complete. Old immutable files are no longer
+  ; required and can be removed without touching mutable runtime/data folders.
+  Delete "$INSTDIR\Rubra.exe.__rubra_old"
+  RMDir /r "$INSTDIR\app.__rubra_old"
+  RMDir /r "$INSTDIR\runtime\python.__rubra_old"
+
   WriteUninstaller "$INSTDIR\Uninstall.exe"
   WriteINIStr "$INSTDIR\rubra-install.ini" "Application" "Product" "Rubra"
   WriteRegStr HKCU "Software\Rubra" "InstallDir" "$INSTDIR"
@@ -97,12 +115,34 @@ Section "Rubra"
   CreateShortcut "$SMPROGRAMS\Rubra\Rubra.lnk" "$INSTDIR\Rubra.exe" "" "$INSTDIR\Rubra.exe"
   CreateShortcut "$DESKTOP\Rubra.lnk" "$INSTDIR\Rubra.exe" "" "$INSTDIR\Rubra.exe"
   Goto done
+
+  rollback_app:
+  Rename "$INSTDIR\app.__rubra_old" "$INSTDIR\app"
+  Goto rollback_launcher
+
+  rollback_launcher:
+  Rename "$INSTDIR\Rubra.exe.__rubra_old" "$INSTDIR\Rubra.exe"
+  Goto close_required
+
+  install_failed:
+  ; Remove any partially extracted immutable payload and restore the previous
+  ; working version. Mutable runtime tools and user data are never removed here.
+  Delete "$INSTDIR\Rubra.exe"
+  RMDir /r "$INSTDIR\app"
+  RMDir /r "$INSTDIR\runtime\python"
+  IfFileExists "$INSTDIR\Rubra.exe.__rubra_old" 0 +2
+    Rename "$INSTDIR\Rubra.exe.__rubra_old" "$INSTDIR\Rubra.exe"
+  IfFileExists "$INSTDIR\app.__rubra_old\*" 0 +2
+    Rename "$INSTDIR\app.__rubra_old" "$INSTDIR\app"
+  IfFileExists "$INSTDIR\runtime\python.__rubra_old\*" 0 +2
+    Rename "$INSTDIR\runtime\python.__rubra_old" "$INSTDIR\runtime\python"
+  MessageBox MB_OK|MB_ICONSTOP "Rubra could not install the replacement payload. The previous application files were restored."
+  Abort
+
   close_required:
   MessageBox MB_OK|MB_ICONSTOP "Rubra is still using application files. Quit Rubra from the notification area, then run the installer again."
   Abort
-  install_failed:
-  MessageBox MB_OK|MB_ICONSTOP "Rubra could not update all application files. Close Rubra completely and run the installer again."
-  Abort
+
   unwritable:
   MessageBox MB_OK|MB_ICONSTOP "Rubra cannot write to this folder. Choose a folder that your Windows account can access."
   Abort
