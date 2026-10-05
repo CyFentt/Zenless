@@ -37,19 +37,57 @@ def authentication_script(provider: str, inputs: tuple[str, ...], origin_url: st
     }})()"""
 
 
+
 def model_options_script(model: str = "") -> str:
     return f"""(() => {{
       const wanted = {json.dumps(model)}.trim().toLowerCase();
-      const visible = node => {{ const b = node.getBoundingClientRect(); return b.width > 0 && b.height > 0 && getComputedStyle(node).visibility !== 'hidden'; }};
-      const modelLabel = value => /^(?:gpt[- ]|o[1-9](?:[- ]|$)|chatgpt|deepseek|gemini|qwen|hunyuan|hunyuan3d)/i.test(value);
-      const candidates = [...document.querySelectorAll('[data-model], [role="option"], [role="menuitem"], button')].filter(node => {{
-        const text = (node.innerText || node.textContent || '').trim();
-        return visible(node) && (node.hasAttribute('data-model') || modelLabel(text)) && text.length <= 120;
+      const visible = node => {{
+        if (!node) return false;
+        const style = getComputedStyle(node), box = node.getBoundingClientRect();
+        return style.visibility !== 'hidden' && style.display !== 'none' && box.width > 0 && box.height > 0;
+      }};
+      const textOf = node => (node?.innerText || node?.textContent || '').trim();
+      const modelLabel = value => /(?:^|\\b)(?:gpt[- ]?|o[1-9](?:[- ]|\\b)|chatgpt|deepseek|gemini|qwen|hunyuan|hunyuan3d)/i.test(value);
+      const optionNodes = () => [...document.querySelectorAll('[data-model], [role="option"], [role="menuitem"], [role="menuitemradio"]')].filter(node => {{
+        const text = textOf(node);
+        return visible(node) && text.length <= 160 && (node.hasAttribute('data-model') || modelLabel(text));
       }});
+      const buttonOptions = () => [...document.querySelectorAll('button')].filter(node => {{
+        const text = textOf(node);
+        const testid = (node.getAttribute('data-testid') || '').toLowerCase();
+        return visible(node) && text.length <= 160 && modelLabel(text) && /model|switch|picker|selector|option/.test(testid);
+      }});
+      const candidates = () => [...optionNodes(), ...buttonOptions()];
+      const exact = node => {{
+        const id = (node.getAttribute('data-model') || '').trim().toLowerCase();
+        const text = textOf(node).toLowerCase();
+        return id === wanted || text === wanted;
+      }};
       if (wanted) {{
-        const found = candidates.find(node => (node.getAttribute('data-model') || '').toLowerCase() === wanted || (node.innerText || node.textContent || '').trim().toLowerCase() === wanted);
-        if (!found) return {{ok: false}};
-        found.click(); return {{ok: true, selected: (found.innerText || found.textContent || '').trim()}};
+        const found = candidates().find(exact);
+        if (found) {{
+          found.click();
+          return {{ok: true, selected: textOf(found) || found.getAttribute('data-model') || {json.dumps(model)}}};
+        }}
+      }} else {{
+        const values = [...new Set(candidates().map(node => (node.getAttribute('data-model') || textOf(node)).trim()).filter(Boolean))];
+        if (values.length > 1 || values.some(value => modelLabel(value))) return values.slice(0, 30);
       }}
-      return [...new Set(candidates.map(node => (node.getAttribute('data-model') || node.innerText || node.textContent || '').trim()).filter(Boolean))].slice(0,30);
+
+      const triggers = [...document.querySelectorAll('button, [role="button"], [role="combobox"]')].filter(node => {{
+        if (!visible(node) || node.matches('[role="option"], [role="menuitem"], [role="menuitemradio"]')) return false;
+        const text = textOf(node);
+        const meta = [
+          node.getAttribute('aria-label') || '',
+          node.getAttribute('data-testid') || '',
+          node.getAttribute('title') || '',
+          node.getAttribute('id') || '',
+        ].join(' ').toLowerCase();
+        return /model|modelo|模型|switcher|selector|picker/.test(meta) || (text.length <= 80 && modelLabel(text));
+      }});
+      if (triggers.length) {{
+        triggers[0].click();
+        return wanted ? {{ok: false, opened: true}} : [];
+      }}
+      return wanted ? {{ok: false, opened: false}} : [];
     }})()"""
