@@ -275,6 +275,15 @@ def test_studio_monitor_defers_inventory_retry_while_work_is_active():
     core.refresh_studio.assert_not_called()
 
 
+def test_studio_refresh_preserves_reference_flags_only_for_same_game():
+    root = Path(__file__).resolve().parents[1]
+    source = (root / 'zenless' / 'core.py').read_text(encoding='utf-8')
+    assert 'same_target = target.studio_id == self._studio_target_id' in source
+    assert 'retained_references = {' in source
+    assert 'if not same_target:' in source
+    assert 'node.update(state)' in source
+
+
 def test_manual_test_plan_never_waits_for_an_ai_account(tmp_path):
     store = SQLiteStore(tmp_path / 'state.db')
     store.create_task('manual', 'Play Test', TaskOptions())
