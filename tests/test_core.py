@@ -154,6 +154,26 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(parent["stage"], Stage.BLOCKED.value)
             self.assertIn("child", parent["error"])
 
+    def test_recovered_checkpoint_can_be_cancelled_without_live_worker(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            core = object.__new__(ZenlessCore)
+            core.store = SQLiteStore(Path(folder) / "state.db")
+            core.store.create_task("recovered", "Recover", TaskOptions())
+            core.store.update_task("recovered", stage=Stage.PLANNING, status="running")
+            core.store.recover_interrupted_tasks()
+            core.qa = Mock()
+            core.qa.stop.return_value = False
+            core.orchestrator = Mock()
+            core.orchestrator.cancel.return_value = False
+
+            self.assertTrue(core.cancel_job("recovered"))
+
+            task = core.store.load_task("recovered")
+            self.assertEqual(task["stage"], Stage.BLOCKED.value)
+            self.assertEqual(task["status"], "blocked")
+            self.assertIn("cancelled", task["error"].casefold())
+
+
     def test_provider_preflight_returns_structured_login_requirement(self) -> None:
         core = object.__new__(ZenlessCore)
         core.bridge = _ProviderBridge(set())
