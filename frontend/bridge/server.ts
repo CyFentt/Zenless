@@ -5,7 +5,7 @@ import { createMockAdapter } from './mockAdapter.ts';
 
 const HOST = process.env.ZENLESS_HOST || '127.0.0.1';
 const PORT = Number(process.env.ZENLESS_PORT || 8787);
-const SESSION_TOKEN = process.env.ZENLESS_TOKEN || randomBytes(32).toString('hex');
+const SESSION_TOKEN = process.env.RUBRA_TOKEN || process.env.ZENLESS_TOKEN || randomBytes(32).toString('hex');
 const DEV_ORIGINS = [`http://${HOST}:${PORT}`, 'http://127.0.0.1:5173', 'http://localhost:5173'];
 const ALLOWED_ORIGINS = new Set(
   (process.env.ZENLESS_ALLOWED_ORIGINS || DEV_ORIGINS.join(','))
@@ -51,7 +51,7 @@ async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> 
 }
 
 function authorized(req: IncomingMessage): boolean {
-  return req.headers['x-zenless-token'] === SESSION_TOKEN;
+  return req.headers['x-rubra-token'] === SESSION_TOKEN || req.headers['x-zenless-token'] === SESSION_TOKEN;
 }
 
 type RouteHandler = (req: IncomingMessage, res: ServerResponse, params: string[]) => void | Promise<void>;
@@ -150,7 +150,7 @@ const server = createServer(async (req, res) => {
     res.writeHead(204, {
       ...corsHeaders(req),
       'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type, X-Zenless-Token, X-Request-Id',
+      'Access-Control-Allow-Headers': 'Content-Type, X-Rubra-Token, X-Zenless-Token, X-Request-Id',
     });
     return res.end();
   }
@@ -159,7 +159,7 @@ const server = createServer(async (req, res) => {
   if (req.method === 'GET' && url.pathname === '/api/session') {
     return sendJson(req, res, 200, { token: SESSION_TOKEN }, requestId);
   }
-  if (!authorized(req)) return sendJson(req, res, 401, { code: 'UNAUTHORIZED', message: 'Invalid Zenless session token' }, requestId);
+  if (!authorized(req)) return sendJson(req, res, 401, { code: 'UNAUTHORIZED', message: 'Invalid Rubra session token' }, requestId);
 
   for (const route of routes) {
     if (route.method !== req.method) continue;
@@ -198,6 +198,6 @@ server.on('upgrade', (req, socket, head) => {
 });
 
 server.listen(PORT, HOST, () => {
-  console.log(`Zenless development Bridge: http://${HOST}:${PORT}`);
+  console.log(`Rubra development Bridge: http://${HOST}:${PORT}`);
   console.log(`Allowed origins: ${[...ALLOWED_ORIGINS].join(', ')}`);
 });
