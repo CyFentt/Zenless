@@ -540,30 +540,70 @@ class ZenlessCore:
         proposal = task.get("proposal") or {}
         files: list[dict[str, Any]] = []
         for index, raw in enumerate(proposal.get("actions") or []):
-            if not isinstance(raw, dict) or is_read_only(str(raw.get("tool", ""))):
+            if not isinstance(raw, dict):
+                continue
+            tool = str(raw.get("tool", ""))
+            if is_read_only(tool):
                 continue
             raw_arguments = raw.get("arguments")
             arguments: dict[str, Any] = raw_arguments if isinstance(raw_arguments, dict) else {}
-            name = str(arguments.get("file_path") or arguments.get("target_file") or raw.get("tool") or "change")
-            content = json.dumps(arguments, ensure_ascii=False, indent=2)
-            diff = [
-                {"type": "hunk", "content": f"@@ Studio {raw.get('tool', '')} @@"},
-                *(
-                    {"type": "added", "content": line, "newLine": line_no}
-                    for line_no, line in enumerate(content.splitlines(), 1)
-                ),
-            ]
+            name = str(
+                arguments.get("file_path")
+                or arguments.get("target_file")
+                or arguments.get("path")
+                or tool
+                or "change"
+            )
+            diff: list[dict[str, Any]] = []
+            additions = 0
+            deletions = 0
+
+            if tool == "multi_edit" and isinstance(arguments.get("edits"), list):
+                for edit_index, edit in enumerate(arguments["edits"], start=1):
+                    if not isinstance(edit, dict):
+                        continue
+                    old = str(edit.get("old_string") or "")
+                    new = str(edit.get("new_string") or "")
+                    diff.append({"type": "hunk", "content": f"@@ replacement {edit_index} @@"})
+                    old_lines = old.splitlines()
+                    new_lines = new.splitlines()
+                    diff.extend({"type": "removed", "content": line} for line in old_lines)
+                    diff.extend({"type": "added", "content": line} for line in new_lines)
+                    deletions += len(old_lines)
+                    additions += len(new_lines)
+            elif tool == "execute_luau" and isinstance(arguments.get("code"), str):
+                code_lines = str(arguments["code"]).splitlines()
+                diff = [
+                    {"type": "hunk", "content": "@@ bounded Studio scene change @@"},
+                    *({"type": "added", "content": line} for line in code_lines),
+                ]
+                additions = len(code_lines)
+            else:
+                public_arguments = {
+                    key: value for key, value in arguments.items() if not str(key).startswith("_zenless_")
+                }
+                content = json.dumps(public_arguments, ensure_ascii=False, indent=2)
+                diff = [
+                    {"type": "hunk", "content": f"@@ Studio {tool} @@"},
+                    *(
+                        {"type": "added", "content": line}
+                        for line in content.splitlines()
+                    ),
+                ]
+                additions = len(content.splitlines())
+
             files.append(
                 {
                     "id": f"change-{job_id[:10]}-{index}",
                     "name": name,
                     "status": "M",
-                    "additions": len(content.splitlines()),
-                    "deletions": 0,
+                    "additions": additions,
+                    "deletions": deletions,
                     "diff": diff,
                 }
             )
         return files
+
 
     def review(self, job_id: str) -> dict[str, Any]:
         task = self._require_task(job_id)
@@ -593,11 +633,16 @@ class ZenlessCore:
             raise CoreError("NO_CHANGE_GATE", "No change is waiting for a decision.", status=409)
         return True
 
-    def edit_changes(self, job_id: str, _file_id: str, content: str) -> bool:
-        if not content.strip():
-            raise CoreError("EMPTY_EDIT", "The edit note is empty.")
-        if not self.orchestrator.approve_active(job_id, ("changes:", "repair:"), "edit", content):
-            raise CoreError("NO_CHANGE_GATE", "No change is waiting for an edit.", status=409)
+    def edit_changes(self, job_id: str, file_id: str, content: str) -> bool:
+        note = content.strip()
+        if not note:
+            raise CoreError("EMPTY_EDIT", "The revision request is empty.")
+        target = next((item for item in self.changes(job_id) if item["id"] == file_id), None)
+        if target is None:
+            raise CoreError("CHANGE_NOT_FOUND", "The selected proposed change no longer exists.", status=404)
+        feedback = f"Requested changes for {target['name']}:\n{note}"
+        if not self.orchestrator.approve_active(job_id, ("changes:", "repair:"), "edit", feedback):
+            raise CoreError("NO_CHANGE_GATE", "No change is waiting for a revision request.", status=409)
         return True
 
     def visual(self, job_id: str) -> dict[str, Any]:
