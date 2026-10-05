@@ -158,7 +158,6 @@ export interface ChatMessage {
   jobId?: string;
   attachments?: ChatAttachment[];
   action?: ChatAction;
-  artifact?: ChatArtifact;
   activity?: ChatActivity;
   error?: ChatError;
 }
@@ -179,34 +178,6 @@ export interface TestCapture {
   width: number;
   height: number;
   timestamp: number;
-}
-
-export type ChatArtifactType = "IMAGE" | "MODEL_3D" | "FILE" | "DIFF" | "REPORT";
-export type ChatArtifactState = "GENERATING" | "READY" | "APPROVED" | "REJECTED" | "FAILED";
-
-export interface ChatArtifact {
-  id: string;
-  jobId?: string;
-  messageId?: string;
-  type: ChatArtifactType;
-  name: string;
-  mime?: string;
-  size?: number;
-  state: ChatArtifactState;
-  previewUrl?: string;
-  contentUrl?: string;
-  modelUrl?: string;
-  metadata?: {
-    version?: number;
-    views?: string[];
-    risk?: string;
-    reviewer?: string;
-    decision?: string;
-    fileCount?: number;
-    [key: string]: unknown;
-  };
-  actions?: string[];
-  createdAt: number;
 }
 
 export type ChatActivityStatus = "QUEUED" | "RUNNING" | "DONE" | "WARNING" | "FAILED";
@@ -483,32 +454,6 @@ export interface BootStep {
   state: BootState;
 }
 
-export type ReadinessStepState =
-  | "CHECKING"
-  | "READY"
-  | "LOGIN_REQUIRED"
-  | "NOT_FOUND"
-  | "SETUP_REQUIRED"
-  | "SELECT_REQUIRED"
-  | "ERROR"
-  | "OPTIONAL";
-
-export interface ReadinessStep {
-  id: string;
-  label: string;
-  providerId?: ProviderId;
-  required: boolean;
-  state: ReadinessStepState;
-  detail?: string;
-}
-
-export type ReadinessState = "CHECKING" | "READY" | "ACTION_REQUIRED" | "DEGRADED";
-
-export interface ReadinessStateInfo {
-  state: ReadinessState;
-  steps: ReadinessStep[];
-}
-
 export interface ProviderCapabilities {
   reasoning?: { supported: boolean; levels?: string[] };
   search?: { supported: boolean };
@@ -572,8 +517,6 @@ export interface ZenlessEventMap {
   CHAT_STREAM_FINISHED: { messageId: string };
   CHAT_MESSAGE: { message: ChatMessage };
   CHAT_ACTIVITY: { activity: ChatActivity };
-  CHAT_ARTIFACT: { artifact: ChatArtifact };
-  READINESS_CHANGED: { readiness: ReadinessStateInfo };
   CONTEXT_UPDATED: { items: ContextItem[] };
   CHANGES_UPDATED: { files: ChangedFile[] };
   REVIEW_READY: { review: Review };
