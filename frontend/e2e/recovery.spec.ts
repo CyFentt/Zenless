@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
 
-const authScripts = JSON.parse(execFileSync('.venv/bin/python', ['-c', 'import json; from zenless.provider_auth import authentication_script; from zenless.managed_browser import PROVIDERS; print(json.dumps({k:authentication_script(k,s.inputs) for k,s in PROVIDERS.items()}))'], { cwd: '..', encoding: 'utf8' }));
+const authScripts = JSON.parse(execFileSync(process.env.RUBRA_TEST_PYTHON || '.venv/bin/python', ['-c', 'import json; from zenless.provider_auth import authentication_script; from zenless.managed_browser import PROVIDERS; print(json.dumps({k:authentication_script(k,s.inputs) for k,s in PROVIDERS.items()}))'], { cwd: '..', encoding: 'utf8' }));
 
 test('options align and inherit saved approval settings', async ({ page }) => {
   await page.setViewportSize({ width: 1000, height: 650 });
@@ -42,7 +42,7 @@ test('account detection works with hidden composer and display contents', async 
 });
 
 test('embedded sender waits for a reactive send button', async ({ page }) => {
-  const scripts = JSON.parse(execFileSync('.venv/bin/python', ['-c', 'import json; from zenless.webview_host import WebViewHost; from zenless.managed_browser import PROVIDERS; s=PROVIDERS["chatgpt"]; print(json.dumps([WebViewHost._send_script(s,"test prompt"),WebViewHost._submit_script(s)]))'], { cwd: '..', encoding: 'utf8' }));
+  const scripts = JSON.parse(execFileSync(process.env.RUBRA_TEST_PYTHON || '.venv/bin/python', ['-c', 'import json; from zenless.webview_host import WebViewHost; from zenless.managed_browser import PROVIDERS; s=PROVIDERS["chatgpt"]; print(json.dumps([WebViewHost._send_script(s,"test prompt"),WebViewHost._submit_script(s)]))'], { cwd: '..', encoding: 'utf8' }));
   await page.goto('/');
   await page.setContent('<textarea id="prompt-textarea"></textarea><button data-testid="send-button" disabled>Send</button><output>0</output><script>document.querySelector("textarea").oninput=()=>setTimeout(()=>document.querySelector("button").disabled=false,150);document.querySelector("button").onclick=()=>document.querySelector("output").textContent="1";</script>');
   expect(await page.evaluate(scripts[0])).toMatchObject({ ok: true });
