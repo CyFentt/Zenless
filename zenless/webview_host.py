@@ -14,7 +14,7 @@ from typing import Any, BinaryIO, cast
 
 from .managed_browser import PROVIDERS, ProviderSpec
 from .native_host import read_native_message, write_native_message
-from .provider_auth import authentication_script, model_options_script
+from .provider_auth import authentication_script, model_options_script, open_model_menu_script
 from .windows_tray import set_app_identity
 
 
@@ -360,14 +360,25 @@ class WebViewHost:
 
     @staticmethod
     def _select_model(window: Any, model: str) -> dict[str, Any]:
+        if not model.strip():
+            raise RuntimeError("Model option is empty.")
         result = window.evaluate_js(model_options_script(model))
         if not isinstance(result, dict) or not result.get("ok"):
-            raise RuntimeError(f"Model option not found: {model}. Open the provider's model menu and refresh Models.")
+            opened = bool(window.evaluate_js(open_model_menu_script()))
+            if opened:
+                time.sleep(0.35)
+                result = window.evaluate_js(model_options_script(model))
+        if not isinstance(result, dict) or not result.get("ok"):
+            raise RuntimeError(f"Model option not found: {model}. Refresh Models after the provider finishes loading.")
         return {"status": "ok", "selected": str(result.get("selected") or model), "transport": "webview2"}
 
     @staticmethod
     def _discover_models(window: Any) -> dict[str, Any]:
         result = window.evaluate_js(model_options_script())
+        if not isinstance(result, list) or len(result) <= 1:
+            if bool(window.evaluate_js(open_model_menu_script())):
+                time.sleep(0.35)
+                result = window.evaluate_js(model_options_script())
         return {"status": "ok", "models": result if isinstance(result, list) else [], "transport": "webview2"}
 
     @staticmethod
