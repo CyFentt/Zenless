@@ -105,7 +105,13 @@ def build(cache: Path, makensis: str, allow_dirty: bool) -> None:
     )
     wheels = cache / "wheels"
     wheels.mkdir(exist_ok=True)
-    missing = [item for item in manifest["wheels"] if not (wheels / item["filename"]).is_file()]
+    missing = []
+    for item in manifest["wheels"]:
+        cached = wheels / item["filename"]
+        if cached.is_file() and sha256(cached) != item["sha256"]:
+            cached.unlink()
+        if not cached.is_file():
+            missing.append(item)
     if missing:
         lock = cache / "requirements-windows.lock"
         lock.write_text("\n".join(f"{item['name']}=={item['version']} --hash=sha256:{item['sha256']}" for item in missing))
@@ -132,6 +138,10 @@ def build(cache: Path, makensis: str, allow_dirty: bool) -> None:
         if len(built) != 1:
             raise ValueError(f"Expected one source wheel: {item['name']}")
         receipt = install_wheel(built[0], python_root / "Lib" / "site-packages")
+        if str(receipt["name"]).casefold().replace("_", "-") != str(item["name"]).casefold().replace("_", "-"):
+            raise ValueError(f"Built source wheel name mismatch: {receipt['name']} != {item['name']}")
+        if str(receipt["version"]) != str(item["version"]):
+            raise ValueError(f"Built source wheel version mismatch: {receipt['version']} != {item['version']}")
         receipt["source_sha256"] = item["sha256"]
         receipts.append(receipt)
     app = package / "app"
