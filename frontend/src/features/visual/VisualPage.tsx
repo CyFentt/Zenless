@@ -63,15 +63,21 @@ function ViewsTab() {
 
   useEffect(() => {
     if (!currentJobId) return;
+    let active = true;
+    const jobId = currentJobId;
     getApi()
-      .getVisual(currentJobId)
+      .getVisual(jobId)
       .then((data) => {
+        if (!active || useStore.getState().currentJobId !== jobId) return;
         setViews(data.views);
         setConcept(data.concept.version, data.concept.status, data.concept.prompt);
       })
-      .catch((error) =>
-        frontendDiagnostics.capture(error, "visual", "Failed to load visual state"),
-      );
+      .catch((error) => {
+        if (active && useStore.getState().currentJobId === jobId) {
+          frontendDiagnostics.capture(error, "visual", "Failed to load visual state");
+        }
+      });
+    return () => { active = false; };
   }, [currentJobId, setViews, setConcept]);
 
   const handleRegen = async () => {
@@ -269,10 +275,19 @@ function ModelViewerTab() {
 
   useEffect(() => {
     if (!currentJobId) return;
+    let active = true;
+    const jobId = currentJobId;
     getApi()
-      .getModel(currentJobId)
-      .then(setModelInfo)
-      .catch((error) => frontendDiagnostics.capture(error, "visual", "Failed to load 3D model"));
+      .getModel(jobId)
+      .then((model) => {
+        if (active && useStore.getState().currentJobId === jobId) setModelInfo(model);
+      })
+      .catch((error) => {
+        if (active && useStore.getState().currentJobId === jobId) {
+          frontendDiagnostics.capture(error, "visual", "Failed to load 3D model");
+        }
+      });
+    return () => { active = false; };
   }, [currentJobId, setModelInfo]);
 
   const runModelAction = async (action: (jobId: string) => Promise<unknown>, message: string) => {
