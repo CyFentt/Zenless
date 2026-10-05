@@ -6,7 +6,6 @@ import type {
   BootStep,
   ChangedFile,
   ChatActivity,
-  ChatArtifact,
   ChatMessage,
   ConnectionInfo,
   ContextItem,
@@ -16,7 +15,6 @@ import type {
   ModelInfo,
   ProviderDescriptor,
   ProviderId,
-  ReadinessStateInfo,
   Settings,
   StudioNode,
   StudioState,
@@ -74,11 +72,8 @@ interface AppState {
   setCurrentJobId: (id: string | null) => void;
   messages: ChatMessage[];
   activities: ChatActivity[];
-  artifacts: ChatArtifact[];
   addActivity: (a: ChatActivity) => void;
   updateActivity: (id: string, patch: Partial<ChatActivity>) => void;
-  addArtifact: (a: ChatArtifact) => void;
-  updateArtifact: (id: string, patch: Partial<ChatArtifact>) => void;
   streamingMessageId: string | null;
   streamingContent: string;
   contextItems: ContextItem[];
@@ -111,8 +106,6 @@ interface AppState {
   setLogFilter: (f: string) => void;
   settings: Settings | null;
   diagnostics: Diagnostic[];
-  readiness: ReadinessStateInfo | null;
-  setReadiness: (r: ReadinessStateInfo) => void;
   effort: EffortLevel;
   setEffort: (e: EffortLevel) => void;
   tools: ToolDescriptor[];
@@ -198,7 +191,6 @@ export const useStore = create<AppState>((set) => ({
 
   messages: [],
   activities: [],
-  artifacts: [],
   addActivity: (a) => set((state) => ({
     activities: state.activities.some((x) => x.id === a.id)
       ? state.activities.map((x) => (x.id === a.id ? { ...x, ...a } : x))
@@ -206,14 +198,6 @@ export const useStore = create<AppState>((set) => ({
   })),
   updateActivity: (id, patch) => set((state) => ({
     activities: state.activities.map((a) => (a.id === id ? { ...a, ...patch } : a)),
-  })),
-  addArtifact: (a) => set((state) => ({
-    artifacts: state.artifacts.some((x) => x.id === a.id)
-      ? state.artifacts.map((x) => (x.id === a.id ? { ...x, ...a } : x))
-      : [...state.artifacts, a],
-  })),
-  updateArtifact: (id, patch) => set((state) => ({
-    artifacts: state.artifacts.map((a) => (a.id === id ? { ...a, ...patch } : a)),
   })),
 
   streamingMessageId: null,
@@ -258,8 +242,6 @@ export const useStore = create<AppState>((set) => ({
 
   diagnostics: [],
 
-  readiness: null,
-  setReadiness: (readiness) => set({ readiness }),
   effort: 'AUTO',
   setEffort: (effort) => set({ effort }),
   tools: [],
