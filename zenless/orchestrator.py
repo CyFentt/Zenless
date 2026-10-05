@@ -137,6 +137,7 @@ class ZenlessOrchestrator:
         attachment_paths: tuple[Path, ...] = (),
         studio_id: str = "",
         parent_task_id: str = "",
+        prepare_callback: Callable[[str], None] | None = None,
     ) -> str:
         objective = prompt.strip()
         if not objective:
@@ -150,6 +151,7 @@ class ZenlessOrchestrator:
             name=f"Rubra-Task-{task_id[:8]}",
             daemon=True,
         )
+        persisted = False
         with self._state_lock:
             if self._tasks:
                 raise OrchestratorError(
@@ -169,6 +171,7 @@ class ZenlessOrchestrator:
                             }
                         )
                 self.store.create_task(task_id, objective, options)
+                persisted = True
                 updates: dict[str, Any] = {}
                 if studio_id:
                     updates["studio_id"] = studio_id
@@ -193,17 +196,26 @@ class ZenlessOrchestrator:
                         item["role"] or "assistant",
                         item["content"],
                     )
+                self.store.append_message(task_id, "User", "user", objective)
+                if prepare_callback is not None:
+                    prepare_callback(task_id)
                 self._tasks[task_id] = thread
                 self._cancel[task_id] = cancel_event
                 self._pause[task_id] = pause_event
                 self.current_task_id = task_id
-                self.store.append_message(task_id, "User", "user", objective)
                 self._emit(task_id, Stage.NEW, "Request received and queued.")
                 thread.start()
             except Exception:
                 self._tasks.pop(task_id, None)
                 self._cancel.pop(task_id, None)
                 self._pause.pop(task_id, None)
+                if self.current_task_id == task_id:
+                    self.current_task_id = ""
+                if persisted:
+                    try:
+                        self.store.delete_task(task_id)
+                    except Exception:
+                        pass
                 raise
         return task_id
 
