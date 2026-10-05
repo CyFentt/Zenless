@@ -240,6 +240,7 @@ def build(cache: Path, makensis: str, allow_dirty: bool) -> None:
     receipt = {
         "product": "Rubra", "version": version, "source_commit": revision, "source_dirty": bool(status),
         "target": "windows-x64", "python": manifest["python"], "dependencies": receipts,
+        "source_build_tools": manifest["build_tools"],
         "windows_execution_verified": False,
     }
     (package / "release.json").write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
