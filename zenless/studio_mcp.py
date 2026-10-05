@@ -151,10 +151,6 @@ def find_studio_mcp(explicit_path: str = "") -> Path:
         raise MCPError("The LOCALAPPDATA environment variable is unavailable.")
 
     roblox_root = Path(local_app_data) / "Roblox"
-    launcher = roblox_root / "mcp.bat"
-    if launcher.is_file():
-        return launcher
-
     versions = roblox_root / "Versions"
     paired: list[Path] = []
     fallback: list[Path] = []
@@ -164,9 +160,13 @@ def find_studio_mcp(explicit_path: str = "") -> Path:
         if (version_dir / "RobloxStudioBeta.exe").is_file() or (version_dir / "RobloxStudio.exe").is_file():
             paired.append(candidate)
     candidates = paired or fallback
-    if not candidates:
-        raise MCPError("Studio MCP was not found. Update Studio and enable Assistant > MCP Servers.")
-    return max(candidates, key=lambda path: path.stat().st_mtime)
+    if candidates:
+        return max(candidates, key=lambda path: path.stat().st_mtime)
+
+    launcher = roblox_root / "mcp.bat"
+    if launcher.is_file():
+        return launcher
+    raise MCPError("Studio MCP was not found. Update Studio and enable Assistant > MCP Servers.")
 
 
 class StudioMCPClient:
@@ -246,10 +246,23 @@ class StudioMCPClient:
                     timeout=self.startup_timeout,
                 )
                 self.notify("notifications/initialized", {})
-                self.refresh_tools()
+                self._wait_for_tools()
             except Exception:
                 self.close()
                 raise
+
+    def _wait_for_tools(self) -> list[MCPTool]:
+        deadline = time.monotonic() + self.startup_timeout
+        while True:
+            try:
+                return self.refresh_tools()
+            except MCPError as exc:
+                if "did not advertise any tools" not in str(exc):
+                    raise
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise
+                time.sleep(min(0.25, remaining))
 
     def refresh_tools(self) -> list[MCPTool]:
         discovered: dict[str, MCPTool] = {}
