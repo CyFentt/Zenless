@@ -259,6 +259,15 @@ def test_generated_concept_assets_use_frontend_view_contract():
     assert '"conceptVersion": version' in source
 
 
+def test_build_workspace_exposes_real_task_lifecycle_controls():
+    root = Path(__file__).resolve().parents[1]
+    source = (root / 'frontend' / 'src' / 'features' / 'build' / 'BuildPage.tsx').read_text(encoding='utf-8')
+    assert 'getApi().pauseJob(job.id)' in source
+    assert 'getApi().resumeJob(job.id)' in source
+    assert 'getApi().cancelJob(job.id)' in source
+    assert 'setCurrentJobId(resumed.id)' in source
+
+
 def test_manual_play_button_always_uses_standalone_studio_test():
     root = Path(__file__).resolve().parents[1]
     for relative in (
