@@ -266,6 +266,18 @@ function LinksTab({ connections }: { connections: ConnectionInfo }) {
   const [loggingIn, setLoggingIn] = useState(false);
   const setConnections = useStore((s) => s.setConnections);
   const setAgents = useStore((s) => s.setAgents);
+
+  useEffect(() => {
+    if (!loginModal) return;
+    const state = connections[loginModal];
+    if (state === 'READY') {
+      setLoggingIn(false);
+      setLoginModal(null);
+    } else if (state === 'ERR' || state === 'OFF') {
+      setLoggingIn(false);
+    }
+  }, [connections, loginModal]);
+
   const labels: { key: keyof ConnectionInfo; name: string; provider?: ProviderId }[] = [
     { key: 'bridge', name: 'Bridge' },
     { key: 'browser', name: 'Browser' },
@@ -278,17 +290,23 @@ function LinksTab({ connections }: { connections: ConnectionInfo }) {
 
   const handleLogin = async () => {
     if (!loginModal || loggingIn) return;
+    const provider = loginModal;
     setLoggingIn(true);
+    setConnections({ [provider]: 'CONNECTING' });
     try {
-      await getApi().loginProvider(loginModal);
+      await getApi().loginProvider(provider);
       const [nextConnections, nextAgents] = await Promise.all([getApi().getConnections(), getApi().getAgents()]);
       setConnections(nextConnections);
       setAgents(nextAgents);
-      setLoginModal(null);
+      if (nextConnections[provider] === 'READY') {
+        setLoggingIn(false);
+        setLoginModal(null);
+      } else if (nextConnections[provider] === 'ERR' || nextConnections[provider] === 'OFF') {
+        setLoggingIn(false);
+      }
     } catch (error) {
-      frontendDiagnostics.capture(error, 'settings', `Failed to open ${loginModal} login`);
-    } finally {
       setLoggingIn(false);
+      frontendDiagnostics.capture(error, 'settings', `Failed to open ${provider} login`);
     }
   };
 
@@ -326,10 +344,10 @@ function LinksTab({ connections }: { connections: ConnectionInfo }) {
           );
         })}
       </Section>
-      <Modal open={!!loginModal} onClose={() => setLoginModal(null)} title="LOGIN REQUIRED" width="w-80">
+      <Modal open={!!loginModal} onClose={() => { setLoginModal(null); setLoggingIn(false); }} title="LOGIN REQUIRED" width="w-80">
         <div className="space-y-4">
           <p className="text-xs text-ink-100 uppercase tracking-wider">{labels.find((label) => label.key === loginModal)?.name}</p>
-          <button disabled={loggingIn} onClick={() => void handleLogin()} className="w-full h-8 text-xs uppercase tracking-wider text-ink-0 bg-ink-700 border border-ink-500 hover:bg-ink-600 transition-colors disabled:opacity-50">{loggingIn ? 'OPENING' : 'LOGIN'}</button>
+          <button disabled={loggingIn} onClick={() => void handleLogin()} className="w-full h-8 text-xs uppercase tracking-wider text-ink-0 bg-ink-700 border border-ink-500 hover:bg-ink-600 transition-colors disabled:opacity-50">{loggingIn ? (loginModal && connections[loginModal] === 'LOGIN' ? 'WAITING FOR LOGIN' : 'OPENING') : 'LOGIN'}</button>
         </div>
       </Modal>
     </div>
