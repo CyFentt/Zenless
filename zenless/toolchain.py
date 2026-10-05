@@ -309,12 +309,25 @@ class ToolchainManager:
             if flatten and len(children) == 1 and children[0].is_dir():
                 source = children[0]
             staged = target.with_name(target.name + ".new")
+            backup = target.with_name(target.name + ".old")
             if staged.exists():
                 shutil.rmtree(staged, ignore_errors=True)
+            if backup.exists():
+                shutil.rmtree(backup, ignore_errors=True)
             shutil.copytree(source, staged)
+            moved_existing = False
             if target.exists():
-                shutil.rmtree(target, ignore_errors=True)
-            os.replace(staged, target)
+                os.replace(target, backup)
+                moved_existing = True
+            try:
+                os.replace(staged, target)
+            except Exception:
+                if moved_existing and backup.exists() and not target.exists():
+                    os.replace(backup, target)
+                raise
+            else:
+                if backup.exists():
+                    shutil.rmtree(backup, ignore_errors=True)
         finally:
             shutil.rmtree(temporary, ignore_errors=True)
 
@@ -325,6 +338,9 @@ class ToolchainManager:
             destination = (target / info.filename).resolve()
             if destination != root and root not in destination.parents:
                 raise ToolchainError("Archive path traversal blocked")
+            unix_mode = (info.external_attr >> 16) & 0xF000
+            if unix_mode == 0xA000:
+                raise ToolchainError("Archive symbolic links are not allowed")
         bundle.extractall(target)
 
     @staticmethod
@@ -335,8 +351,10 @@ class ToolchainManager:
             destination = (target / member.name).resolve()
             if destination != root and root not in destination.parents:
                 raise ToolchainError("Archive path traversal blocked")
+            if member.issym() or member.islnk() or member.isdev():
+                raise ToolchainError("Archive links and device entries are not allowed")
             members.append(member)
-        bundle.extractall(target, members=members)
+        bundle.extractall(target, members=members, filter="data")
 
     def _artifact_ready(self, item: dict[str, Any], target: Path) -> bool:
         item_id = str(item.get("id") or "")
