@@ -20,7 +20,7 @@ from zenless.studio_mcp import (
 
 
 class StudioMCPDiscoveryTests(unittest.TestCase):
-    def test_windows_launcher_is_preferred_over_direct_version_binary(self) -> None:
+    def test_current_paired_binary_is_preferred_over_stale_launcher(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             roblox = root / "Roblox"
@@ -29,21 +29,31 @@ class StudioMCPDiscoveryTests(unittest.TestCase):
             launcher.write_text("@echo off\n", encoding="utf-8")
             version = roblox / "Versions" / "version-current"
             version.mkdir(parents=True)
-            (version / "StudioMCP.exe").write_bytes(b"MZ")
-            (version / "RobloxStudioBeta.exe").write_bytes(b"MZ")
-            with patch.dict(os.environ, {"LOCALAPPDATA": str(root)}, clear=False):
-                self.assertEqual(find_studio_mcp(), launcher.resolve())
-
-    def test_direct_binary_remains_a_fallback_when_launcher_is_missing(self) -> None:
-        with tempfile.TemporaryDirectory() as folder:
-            root = Path(folder)
-            version = root / "Roblox" / "Versions" / "version-current"
-            version.mkdir(parents=True)
             binary = version / "StudioMCP.exe"
             binary.write_bytes(b"MZ")
             (version / "RobloxStudioBeta.exe").write_bytes(b"MZ")
             with patch.dict(os.environ, {"LOCALAPPDATA": str(root)}, clear=False):
                 self.assertEqual(find_studio_mcp(), binary.resolve())
+
+    def test_launcher_is_only_used_when_no_versioned_binary_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            launcher = root / "Roblox" / "mcp.bat"
+            launcher.parent.mkdir(parents=True)
+            launcher.write_text("@echo off\n", encoding="utf-8")
+            with patch.dict(os.environ, {"LOCALAPPDATA": str(root)}, clear=False):
+                self.assertEqual(find_studio_mcp(), launcher.resolve())
+
+    def test_startup_retries_an_initial_empty_tool_catalog(self) -> None:
+        client = StudioMCPClient(Path("unused.exe"), startup_timeout=5)
+        tool = MCPTool("list_roblox_studios", "", {"type": "object"})
+        client.refresh_tools = Mock(side_effect=[
+            MCPError("Rubra started but did not advertise any tools."),
+            [tool],
+        ])
+        with patch("zenless.studio_mcp.time.sleep"):
+            self.assertEqual(client._wait_for_tools(), [tool])
+        self.assertEqual(client.refresh_tools.call_count, 2)
 
 
 class StudioMCPConcurrencyTests(unittest.TestCase):
