@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 from zenless.local_ai import LocalAIService
 from zenless.project_index import ProjectIndexService
-from zenless.static_quality import StaticQualityRunner
+from zenless.static_quality import StaticCheck, StaticQualityRunner
 from zenless.tool_registry import ToolRegistry
 from zenless.toolchain import ToolchainError, ToolchainManager
 
@@ -131,6 +131,53 @@ class RubraRuntimeTests(unittest.TestCase):
         self.assertTrue(process.terminated)
         self.assertEqual(result.status, "FAILED")
         self.assertIn("Cancelled", result.output)
+
+    def test_static_quality_timeout_kills_process(self) -> None:
+        class Process:
+            returncode = -9
+
+            def __init__(self) -> None:
+                self.killed = False
+
+            def communicate(self, timeout: float | None = None):
+                return "timed out", None
+
+            def terminate(self) -> None:
+                raise AssertionError("timeout must kill the process directly")
+
+            def kill(self) -> None:
+                self.killed = True
+
+        process = Process()
+        with (
+            patch("zenless.static_quality.subprocess.Popen", return_value=process),
+            patch("zenless.static_quality.time.monotonic", side_effect=[0.0, 11.0]),
+        ):
+            result = StaticQualityRunner._run_command("StyLua", ["stylua"], Path("."), 10)
+        self.assertTrue(process.killed)
+        self.assertEqual(result.status, "FAILED")
+        self.assertIn("Timed out", result.output)
+
+    def test_static_quality_pipeline_stops_after_cancelled_check(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / "game.lua").write_text("return 1", encoding="utf-8")
+            runner = StaticQualityRunner(root)
+            cancel = threading.Event()
+
+            def cancel_check(*_args, **_kwargs):
+                cancel.set()
+                return StaticCheck("StyLua", "FAILED", "Cancelled.")
+
+            with (
+                patch.object(runner, "_tool", return_value=Path("tool.exe")),
+                patch.object(runner, "_run_command", side_effect=cancel_check) as execute,
+            ):
+                checks = runner.run(root, cancel_event=cancel)
+
+            self.assertEqual(execute.call_count, 1)
+            self.assertEqual(len(checks), 1)
+            self.assertIn("Cancelled", checks[0].output)
 
     def test_project_metadata_is_scoped_to_known_nonsecret_manifests(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
