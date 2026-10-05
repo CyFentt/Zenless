@@ -460,6 +460,7 @@ def test_portable_source_wheels_use_pinned_offline_build_tools():
     assert '"--no-index"' in source
     assert 'source-build-env' in source
     assert 'build_python' in source
+    assert '"source_build_tools": manifest["build_tools"]' in source
 
     workflow = (root / ".github" / "workflows" / "rubra-ci.yml").read_text(encoding="utf-8")
     assert workflow.count('python-version: "3.14.7"') == 2
