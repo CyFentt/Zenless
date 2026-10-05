@@ -162,13 +162,13 @@ function GeneralTab({ settings, onChange }: { settings: Settings | null; onChang
           <span className="text-2xs font-mono text-ink-200">{settings.bridgePort || 'EPHEMERAL'}</span>
         </Row>
       </Section>
-      <Section title="MODE">
-        <Row label="Mock Mode" hint="Use mock data instead of real bridge">
-          <span className={`text-2xs uppercase tracking-wider ${isMockMode() ? 'text-zen-okBright' : 'text-ink-400'}`}>
-            {isMockMode() ? 'ON' : 'OFF'}
-          </span>
-        </Row>
-      </Section>
+      {isMockMode() && (
+        <Section title="DEVELOPMENT">
+          <Row label="Mock Mode" hint="Development-only mock data is active">
+            <span className="text-2xs uppercase tracking-wider text-zen-okBright">ON</span>
+          </Row>
+        </Section>
+      )}
     </div>
   );
 }
