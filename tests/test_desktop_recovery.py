@@ -15,7 +15,7 @@ from zenless.core import CoreError, ZenlessCore, _UnavailableStudio
 from zenless.event_bus import EventBus
 from zenless.local_ai import LocalAIError, LocalAIService
 from zenless.managed_browser import PROVIDERS
-from zenless.models import Stage
+from zenless.models import Stage, TaskOptions
 from zenless.store import SQLiteStore
 from zenless.studio_mcp import MCPBusyError, MCPToolResult, StudioTarget
 from zenless.web_bridge import LocalWebBridge
@@ -86,7 +86,7 @@ def test_invalid_tree_keeps_connection_and_play_available_but_reports_inventory_
 
 
 def test_context_refresh_rebuilds_live_studio_items_and_preserves_locked_state(core):
-    core.store.create_task("context-job", "Inspect context", __import__("zenless.models", fromlist=["TaskOptions"]).TaskOptions())
+    core.store.create_task("context-job", "Inspect context", TaskOptions())
     core.store.replace_context_items(
         "context-job",
         [{
