@@ -119,6 +119,7 @@ class ZenlessCore:
         self._startup_thread: threading.Thread | None = None
         self._provider_threads: dict[str, threading.Thread] = {}
         self._provider_lock = threading.Lock()
+        self._settings_lock = threading.RLock()
         self._studio_lock = threading.RLock()
         self._studio_refresh_lock = threading.Lock()
         self._studio_thread: threading.Thread | None = None
@@ -257,9 +258,10 @@ class ZenlessCore:
             self.diagnostics.close()
 
     def set_runtime_port(self, port: int) -> None:
-        settings = self.settings()
-        settings["bridgePort"] = int(port)
-        self.store.set_setting("ui.settings", settings)
+        with self._settings_lock:
+            settings = self.settings()
+            settings["bridgePort"] = int(port)
+            self.store.set_setting("ui.settings", settings)
 
     def bootstrap(self) -> dict[str, Any]:
         with self._boot_lock:
@@ -1000,13 +1002,14 @@ class ZenlessCore:
         }
 
     def settings(self) -> dict[str, Any]:
-        stored = self.store.get_setting("ui.settings", {})
-        result = json.loads(json.dumps(self.DEFAULT_SETTINGS))
-        if isinstance(stored, dict):
-            result.update({key: value for key, value in stored.items() if key in result and key != "models"})
-            if isinstance(stored.get("models"), dict):
-                result["models"] = self._merge_models(result["models"], stored["models"])
-        return result
+        with self._settings_lock:
+            stored = self.store.get_setting("ui.settings", {})
+            result = json.loads(json.dumps(self.DEFAULT_SETTINGS))
+            if isinstance(stored, dict):
+                result.update({key: value for key, value in stored.items() if key in result and key != "models"})
+                if isinstance(stored.get("models"), dict):
+                    result["models"] = self._merge_models(result["models"], stored["models"])
+            return result
 
     def local_ai_state(self) -> dict[str, Any]:
         return {
@@ -1056,35 +1059,37 @@ class ZenlessCore:
                 self._report("tools", "prepare", exc, "Retry preparation in Settings > Models.")
 
     def update_settings(self, patch: dict[str, Any]) -> dict[str, Any]:
-        current = self.settings()
-        if "autoApprove" in patch:
-            current["autoApprove"] = bool(patch["autoApprove"])
-            current["approvalMode"] = "FULL_AUTO" if current["autoApprove"] else "ASK"
-        if "approvalMode" in patch:
-            approval_mode = str(patch["approvalMode"] or "ASK").strip().upper().replace("-", "_").replace(" ", "_")
-            if approval_mode not in {"ASK", "SAFE_AUTO", "FULL_AUTO"}:
-                raise CoreError("INVALID_APPROVAL_MODE", "Approval mode must be ASK, SAFE_AUTO, or FULL_AUTO.")
-            current["approvalMode"] = approval_mode
-            current["autoApprove"] = approval_mode == "FULL_AUTO"
-        if "maxRevisions" in patch:
-            current["maxRevisions"] = max(1, min(64, int(patch["maxRevisions"])))
-        if "projectRoot" in patch:
-            project_root = str(patch["projectRoot"] or "").strip()
-            try:
-                current["projectRoot"] = self.project_index.configure(project_root)
-            except ProjectIndexError as exc:
-                raise CoreError("INVALID_PROJECT_ROOT", str(exc), status=400) from exc
-        if "semanticIndex" in patch:
-            current["semanticIndex"] = bool(patch["semanticIndex"])
-        if "localAI" in patch:
-            current["localAI"] = bool(patch["localAI"])
-            if not current["localAI"]:
-                self.local_ai.close()
-        if "models" in patch and isinstance(patch["models"], dict):
-            current["models"] = self._merge_models(current["models"], patch["models"])
-        self.store.set_setting("ui.settings", current)
-        self.events.publish("SETTINGS_CHANGED", {"settings": current})
-        return current
+        with self._settings_lock:
+            current = self.settings()
+            if "autoApprove" in patch:
+                current["autoApprove"] = bool(patch["autoApprove"])
+                current["approvalMode"] = "FULL_AUTO" if current["autoApprove"] else "ASK"
+            if "approvalMode" in patch:
+                approval_mode = str(patch["approvalMode"] or "ASK").strip().upper().replace("-", "_").replace(" ", "_")
+                if approval_mode not in {"ASK", "SAFE_AUTO", "FULL_AUTO"}:
+                    raise CoreError("INVALID_APPROVAL_MODE", "Approval mode must be ASK, SAFE_AUTO, or FULL_AUTO.")
+                current["approvalMode"] = approval_mode
+                current["autoApprove"] = approval_mode == "FULL_AUTO"
+            if "maxRevisions" in patch:
+                current["maxRevisions"] = max(1, min(64, int(patch["maxRevisions"])))
+            if "projectRoot" in patch:
+                project_root = str(patch["projectRoot"] or "").strip()
+                try:
+                    current["projectRoot"] = self.project_index.configure(project_root)
+                except ProjectIndexError as exc:
+                    raise CoreError("INVALID_PROJECT_ROOT", str(exc), status=400) from exc
+            if "semanticIndex" in patch:
+                current["semanticIndex"] = bool(patch["semanticIndex"])
+            if "localAI" in patch:
+                current["localAI"] = bool(patch["localAI"])
+                if not current["localAI"]:
+                    self.local_ai.close()
+            if "models" in patch and isinstance(patch["models"], dict):
+                current["models"] = self._merge_models(current["models"], patch["models"])
+            self.store.set_setting("ui.settings", current)
+            self.events.publish("SETTINGS_CHANGED", {"settings": current})
+            return current
+    
 
     def model_catalog(self, *, refresh: bool = False) -> dict[str, Any]:
         if not refresh and self._model_cache and time.monotonic() - self._model_cache[0] < 60:
@@ -1167,21 +1172,23 @@ class ZenlessCore:
                     status=409,
                     details={"provider": provider, "model": model, "selected": selected},
                 )
-        current = self.settings()
-        if provider == "hunyuan":
-            current["models"][provider]["version"] = model
-        else:
-            current["models"][provider]["model"] = model
-        self.store.set_setting("ui.settings", current)
-        self._model_cache = None
-        self.events.publish("SETTINGS_CHANGED", {"settings": current})
+        with self._settings_lock:
+            current = self.settings()
+            if provider == "hunyuan":
+                current["models"][provider]["version"] = model
+            else:
+                current["models"][provider]["model"] = model
+            self.store.set_setting("ui.settings", current)
+            self._model_cache = None
+            self.events.publish("SETTINGS_CHANGED", {"settings": current})
         return True
 
     def set_smart_routing(self, enabled: bool) -> bool:
-        current = self.settings()
-        current["models"]["smartRouting"] = bool(enabled)
-        self.store.set_setting("ui.settings", current)
-        self.events.publish("SETTINGS_CHANGED", {"settings": current})
+        with self._settings_lock:
+            current = self.settings()
+            current["models"]["smartRouting"] = bool(enabled)
+            self.store.set_setting("ui.settings", current)
+            self.events.publish("SETTINGS_CHANGED", {"settings": current})
         return True
 
     def _effective_project_root(self) -> str:
