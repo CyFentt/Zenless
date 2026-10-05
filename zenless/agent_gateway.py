@@ -436,11 +436,26 @@ class AgentGateway:
         timeout: float,
     ) -> str:
         deadline = time.monotonic() + max(0.0, timeout)
-        for route in ("webview2", "playwright"):
-            remaining = max(0.0, deadline - time.monotonic())
-            if not self._route_ready(route, provider, remaining):
+        routes = ("webview2", "playwright")
+        for route in routes:
+            if not self._route_ready(route, provider, 0.0):
                 continue
-            capabilities = self._route_capabilities(route, provider, task_id=task_id, timeout=max(0.1, remaining))
+            capabilities = self._route_capabilities(route, provider, task_id=task_id, timeout=max(0.1, timeout))
+            if bool(capabilities.get(capability)):
+                return route
+        for index, route in enumerate(routes):
+            remaining = max(0.0, deadline - time.monotonic())
+            if remaining <= 0:
+                break
+            share = remaining / (len(routes) - index)
+            if not self._route_ready(route, provider, share):
+                continue
+            capabilities = self._route_capabilities(
+                route,
+                provider,
+                task_id=task_id,
+                timeout=max(0.1, max(0.0, deadline - time.monotonic())),
+            )
             if bool(capabilities.get(capability)):
                 return route
         raise BridgeError(
