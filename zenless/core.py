@@ -250,8 +250,14 @@ class ZenlessCore:
         self.local_ai.close()
         with self._provider_lock:
             threads = tuple(self._provider_threads.values())
-        for thread in threads:
-            if thread is not threading.current_thread():
+        background = (
+            self._startup_thread,
+            self._tools_thread,
+            self._studio_thread,
+            *threads,
+        )
+        for thread in background:
+            if thread is not None and thread is not threading.current_thread():
                 thread.join(timeout=1.0)
         self.store.maintenance()
         self._diagnostic_unsubscribe()
@@ -1335,6 +1341,8 @@ class ZenlessCore:
         except Exception as exc:
             self._set_boot("STATE", "OFF")
             self._report("state", "recovery", exc, "Inspect the local SQLite state before running another mutation.")
+        if self._closing.is_set():
+            return
         try:
             self.bridge.start()
             self._set_connection("browser", "READY")
@@ -1348,13 +1356,19 @@ class ZenlessCore:
                 exc,
                 "The embedded browser remains available; the managed browser will be prepared during login if needed.",
             )
+        if self._closing.is_set():
+            return
         self._set_boot("UI", "READY")
         self.events.publish("BOOT_COMPLETE", {})
-        if os.environ.get("RUBRA_PREPARE_TOOLS") == "1":
+        if os.environ.get("RUBRA_PREPARE_TOOLS") == "1" and not self._closing.is_set():
             self.prepare_tools()
+        if self._closing.is_set():
+            return
         self._studio_thread = threading.Thread(target=self._monitor_studio, name="Rubra-Studio-Monitor", daemon=True)
         self._studio_thread.start()
         self._refresh_provider_states()
+        if self._closing.is_set():
+            return
         threading.Thread(target=self._restore_provider_sessions, name="Rubra-Session-Restore", daemon=True).start()
         index_thread = threading.Thread(target=self._index_project_background, name="Rubra-Project-Index", daemon=True)
         index_thread.start()
