@@ -196,6 +196,11 @@ class SQLiteStore:
                 ),
             )
 
+    def delete_task(self, task_id: str) -> bool:
+        with closing(self._connect()) as connection:
+            cursor = connection.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+            return cursor.rowcount == 1
+
     def update_task(self, task_id: str, **changes: Any) -> None:
         unknown = set(changes) - self._TASK_COLUMNS
         if unknown:
