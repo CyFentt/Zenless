@@ -186,6 +186,16 @@ def test_manual_play_button_always_uses_standalone_studio_test():
         assert 'startTest(currentJobId)' not in source
 
 
+def test_stop_test_falls_back_to_orchestrator_cancel():
+    core = ZenlessCore.__new__(ZenlessCore)
+    core.qa = Mock()
+    core.qa.stop.return_value = False
+    core.orchestrator = Mock()
+    core.orchestrator.cancel.return_value = True
+    assert core.stop_test('job')
+    core.orchestrator.cancel.assert_called_once_with('job')
+
+
 def test_studio_monitor_defers_inventory_retry_while_work_is_active():
     core = ZenlessCore.__new__(ZenlessCore)
     core._closing = Mock()
