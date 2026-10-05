@@ -85,14 +85,27 @@ export function handleEvent(event: ZenlessEvent) {
             v.name === event.data.view ? { ...v, state: event.data.state } : v,
           ),
         );
+      } else {
+        const current = useStore.getState();
+        current.setConcept(
+          event.data.version ?? current.conceptVersion,
+          event.data.state,
+          event.data.prompt ?? current.conceptPrompt,
+        );
       }
       break;
     case 'VISUAL_READY':
-      store.setViews(
-        useStore.getState().views.map((v) =>
-          v.name === event.data.view ? { ...v, state: 'READY', imageUrl: event.data.imageUrl } : v,
-        ),
-      );
+      {
+        const current = useStore.getState().views;
+        const exists = current.some((v) => v.name === event.data.view);
+        store.setViews(
+          exists
+            ? current.map((v) =>
+                v.name === event.data.view ? { ...v, state: 'READY', imageUrl: event.data.imageUrl } : v,
+              )
+            : [...current, { name: event.data.view, state: 'READY', imageUrl: event.data.imageUrl }],
+        );
+      }
       break;
     case 'VISUAL_APPROVED':
       store.setViews(
