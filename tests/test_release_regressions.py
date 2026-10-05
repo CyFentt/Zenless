@@ -420,11 +420,15 @@ def test_model_discovery_does_not_treat_menu_buttons_as_options():
     assert 'open_model_menu_script' in source
 
 
-def test_uninstaller_removes_user_state_and_release_files():
+def test_uninstaller_checks_open_app_before_removing_user_state():
     root = Path(__file__).resolve().parents[1]
     source = (root / "packaging" / "setup.nsi").read_text(encoding="utf-8")
     uninstall = source[source.index('Section "Uninstall"'):]
-    assert 'RMDir /r "$INSTDIR\\data"' in uninstall
+    launcher_check = uninstall.index('Delete "$INSTDIR\\Rubra.exe"')
+    close_guard = uninstall.index('IfErrors uninstall_close_required')
+    data_cleanup = uninstall.index('RMDir /r "$INSTDIR\\data"')
+    assert launcher_check < close_guard < data_cleanup
+    assert 'uninstall_close_required:' in uninstall
     assert 'Delete "$INSTDIR\\Rubra.exe.__rubra_old"' in uninstall
     assert 'RMDir /r "$INSTDIR\\app.__rubra_old"' in uninstall
     for name in ("NOTICE.md", "README.md", "RUBRA.md", "NSIS-LICENSE.txt"):
