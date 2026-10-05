@@ -66,12 +66,12 @@ Section "Rubra"
   Delete "$INSTDIR\.rubra-write-check"
 
   ; Application code and bundled Python are immutable release payloads.
-  ; Replace them completely on update so removed/renamed files from an older
-  ; release cannot survive and shadow the new code. User data, downloaded
-  ; tools, models and caches elsewhere under runtime are intentionally kept.
-  ; Rubra.exe remains alive while the Python desktop process is running.
-  ; Probe/remove it first so an open installation aborts before any immutable
-  ; payload is deleted.
+  ; Replace them completely only when updating a recognized Rubra install.
+  ; User data, downloaded tools, models and caches elsewhere under runtime are
+  ; intentionally kept. Rubra.exe remains alive while the Python desktop
+  ; process is running, so checking it first prevents partial open-app updates.
+  StrCmp $0 "Rubra" update_cleanup install_payload
+  update_cleanup:
   ClearErrors
   Delete "$INSTDIR\Rubra.exe"
   IfErrors close_required
@@ -79,6 +79,7 @@ Section "Rubra"
   RMDir /r "$INSTDIR\runtime\python"
   IfErrors close_required
 
+  install_payload:
   SetOutPath "$INSTDIR"
   ClearErrors
   File /r "${PACKAGE}/*"
