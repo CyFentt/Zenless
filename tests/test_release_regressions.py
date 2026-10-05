@@ -408,6 +408,17 @@ def test_webview2_shutdown_kills_helper_that_ignores_terminate(tmp_path):
     assert controller._process is None
 
 
+def test_webview2_wait_for_provider_uses_monotonic_deadline(tmp_path):
+    controller = WebView2BrowserController(data_root=tmp_path)
+    process = Mock()
+    process.poll.return_value = None
+    controller._process = process
+    with patch.object(controller, "_request", return_value={"ready": True}) as request:
+        assert controller.wait_for_provider("chatgpt", timeout=1)
+    assert request.call_args.args[:2] == ("health", "chatgpt")
+    assert 0 < request.call_args.kwargs["timeout"] <= 1
+
+
 def test_webview2_request_failure_clears_working_state(tmp_path):
     controller = WebView2BrowserController(data_root=tmp_path)
     process = Mock()
