@@ -9,6 +9,7 @@ from typing import Any
 from unittest.mock import patch
 
 from zenless.event_bus import EventBus
+from zenless.models import TaskOptions
 from zenless.qa_breaker import (
     MULTIPLAYER_HARNESS_PROTOCOL,
     PROFILES,
@@ -244,6 +245,37 @@ class QACapabilityTests(unittest.TestCase):
         self.assertIn("ExecuteMultiplayerTestAsync(8", execute["code"])
         self.assertIn("expectedPlayers = 8", execute["code"])
         self.assertEqual(studio.calls[-1][0:2], ("start_stop_play", {"is_start": False}))
+
+    def test_qa_smart_routing_off_skips_local_scout_and_requires_web_text_provider(self) -> None:
+        class RoutingBridge(_OfflineBridge):
+            def __init__(self) -> None:
+                self.web_checks: list[str] = []
+
+            def wait_for_web_provider(self, provider: str, timeout: float = 0.0) -> bool:
+                self.web_checks.append(provider)
+                return provider == "chatgpt"
+
+            def send_prompt(self, provider: str, prompt: str, *, task_id: str, timeout: float = 360.0) -> str:
+                self.assert_provider = provider
+                return '{"scenarios":["web-only scenario"]}'
+
+        bridge = RoutingBridge()
+        self.store.create_task("routing-off", "test routing", TaskOptions(smart_routing=False))
+        local_calls: list[str] = []
+        qa = QABreaker(
+            store=self.store,
+            studio=_CapabilityStudio(),
+            bridge=bridge,
+            events=EventBus(),
+            play_test_seconds=1,
+            local_ai_callback=lambda prompt: local_calls.append(prompt) or '{"scenarios":["local"]}',
+        )
+
+        scenarios = qa._ai_scenarios("routing-off", "feature", [], [])
+
+        self.assertEqual(local_calls, [])
+        self.assertEqual(scenarios, ["web-only scenario"])
+        self.assertIn("chatgpt", bridge.web_checks)
 
     def test_validated_calls_reject_invalid_studio_id_before_dispatch(self) -> None:
         studio = _CapabilityStudio()
