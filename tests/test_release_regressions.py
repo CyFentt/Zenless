@@ -263,6 +263,12 @@ def test_webview2_request_failure_clears_working_state(tmp_path):
     assert "selector changed" in state["detail"]
 
 
+def test_compacted_messages_do_not_expose_legacy_branding():
+    compacted = SQLiteStore._compact_message('x' * (SQLiteStore.MAX_MESSAGE_CHARS + 1000))
+    assert '[RUBRA COMPACTED ' in compacted
+    assert 'ZENLESS COMPACTED' not in compacted
+
+
 def test_user_facing_diagnostic_log_uses_rubra_branding():
     root = Path(__file__).resolve().parents[1]
     source = (root / 'zenless' / 'diagnostics.py').read_text(encoding='utf-8')
