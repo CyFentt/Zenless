@@ -471,10 +471,15 @@ class ZenlessCore:
         if options.research_mode == "on":
             required.append("gemini")
         for provider in required:
-            if self.connections()[provider] == "READY":
+            web_only = not options.smart_routing and provider in {"chatgpt", "deepseek"}
+            if not web_only and self.connections()[provider] == "READY":
                 continue
             try:
-                ready = self.bridge.wait_for_provider(provider, timeout=0.5)
+                if web_only:
+                    wait_for_web = getattr(self.bridge, "wait_for_web_provider", None)
+                    ready = bool(wait_for_web(provider, 0.5)) if callable(wait_for_web) else False
+                else:
+                    ready = self.bridge.wait_for_provider(provider, timeout=0.5)
             except BridgeError as exc:
                 self._set_connection(provider, "ERR")
                 raise CoreError(
