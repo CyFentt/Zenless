@@ -577,7 +577,7 @@ export interface ZenlessEventMap {
   CONTEXT_UPDATED: { items: ContextItem[] };
   CHANGES_UPDATED: { files: ChangedFile[] };
   REVIEW_READY: { review: Review };
-  VISUAL_GENERATION_CHANGED: { view?: ViewName; state: ViewState };
+  VISUAL_GENERATION_CHANGED: { view?: ViewName; state: ViewState; version?: number; prompt?: string };
   VISUAL_READY: { view: ViewName; imageUrl: string };
   VISUAL_APPROVED: { view?: ViewName };
   MODEL_GENERATION_CHANGED: { target: "geometry" | "texture"; state: ModelGenState };
