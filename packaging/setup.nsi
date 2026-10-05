@@ -69,10 +69,14 @@ Section "Rubra"
   ; Replace them completely on update so removed/renamed files from an older
   ; release cannot survive and shadow the new code. User data, downloaded
   ; tools, models and caches elsewhere under runtime are intentionally kept.
+  ; Rubra.exe remains alive while the Python desktop process is running.
+  ; Probe/remove it first so an open installation aborts before any immutable
+  ; payload is deleted.
   ClearErrors
+  Delete "$INSTDIR\Rubra.exe"
+  IfErrors close_required
   RMDir /r "$INSTDIR\app"
   RMDir /r "$INSTDIR\runtime\python"
-  Delete "$INSTDIR\Rubra.exe"
   IfErrors close_required
 
   SetOutPath "$INSTDIR"
@@ -111,10 +115,15 @@ Section "Uninstall"
   RMDir "$SMPROGRAMS\Rubra"
   RMDir /r "$INSTDIR\app"
   RMDir /r "$INSTDIR\runtime"
+  RMDir /r "$INSTDIR\data"
   Delete "$INSTDIR\Rubra.exe"
   Delete "$INSTDIR\Uninstall.exe"
   Delete "$INSTDIR\rubra-install.ini"
   Delete "$INSTDIR\LICENSE"
+  Delete "$INSTDIR\NOTICE.md"
+  Delete "$INSTDIR\README.md"
+  Delete "$INSTDIR\RUBRA.md"
+  Delete "$INSTDIR\NSIS-LICENSE.txt"
   Delete "$INSTDIR\START_HERE.txt"
   Delete "$INSTDIR\RELEASE_NOTES.md"
   Delete "$INSTDIR\release.json"
