@@ -101,6 +101,27 @@ def test_tool_setup_continues_after_failed_critical_and_prioritizes_sources(tmp_
     assert failed['status'] == 'FAILED'
 
 
+def test_legacy_unverifiable_model_fields_are_not_restored():
+    current = {
+        'chatgpt': {'model': 'auto'},
+        'deepseek': {'model': 'auto'},
+        'gemini': {'model': 'auto'},
+        'hunyuan': {'version': 'auto'},
+        'smartRouting': True,
+    }
+    merged = ZenlessCore._merge_models(
+        current,
+        {
+            'chatgpt': {'model': 'chosen', 'reasoning': False},
+            'hunyuan': {'version': 'new', 'quality': 'high'},
+        },
+    )
+    assert merged['chatgpt'] == {'model': 'chosen'}
+    assert merged['hunyuan'] == {'version': 'new'}
+    assert 'reasoning' not in merged['chatgpt']
+    assert 'quality' not in merged['hunyuan']
+
+
 def test_set_model_requires_exact_provider_confirmation_and_invalidates_cache():
     core = ZenlessCore.__new__(ZenlessCore)
     core.bridge = Mock()
@@ -110,10 +131,10 @@ def test_set_model_requires_exact_provider_confirmation_and_invalidates_cache():
     core._model_cache = (1.0, {'stale': True})
     settings = {
         'models': {
-            'chatgpt': {'model': 'auto', 'reasoning': True},
-            'deepseek': {'model': 'auto', 'reasoning': True},
-            'gemini': {'model': 'auto', 'reasoning': True},
-            'hunyuan': {'version': 'auto', 'quality': 'standard'},
+            'chatgpt': {'model': 'auto'},
+            'deepseek': {'model': 'auto'},
+            'gemini': {'model': 'auto'},
+            'hunyuan': {'version': 'auto'},
             'smartRouting': True,
         }
     }
