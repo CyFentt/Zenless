@@ -63,12 +63,6 @@ export function handleEvent(event: ZenlessEvent) {
     case 'CHAT_ACTIVITY':
       store.addActivity(event.data.activity);
       break;
-    case 'CHAT_ARTIFACT':
-      store.addArtifact(event.data.artifact);
-      break;
-    case 'READINESS_CHANGED':
-      store.setReadiness(event.data.readiness);
-      break;
     case 'CONTEXT_UPDATED':
       store.setContextItems(event.data.items);
       break;
