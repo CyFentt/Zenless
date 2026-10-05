@@ -404,7 +404,25 @@ class ZenlessCore:
     def cancel_job(self, job_id: str) -> bool:
         stopped = self.qa.stop(job_id)
         cancelled = self.orchestrator.cancel(job_id)
-        return stopped or cancelled
+        if stopped or cancelled:
+            return True
+        task = self._require_task(job_id)
+        recovery_error = str(task.get("error") or "")
+        if str(task.get("stage")) == Stage.PAUSED.value and (
+            recovery_error.startswith("RECOVERED_CHECKPOINT:")
+            or "Checkpoint recovered after an unexpected shutdown" in recovery_error
+            or "Checkpoint recuperado" in recovery_error
+        ):
+            self.store.update_task(
+                job_id,
+                stage=Stage.BLOCKED,
+                status="blocked",
+                error="Recovered checkpoint cancelled by the user.",
+                final_text="Recovered task cancelled.",
+            )
+            self.store.append_message(job_id, "Recovery", "system", "Recovered task cancelled by the user.")
+            return True
+        return False
 
     def send_chat(
         self,
