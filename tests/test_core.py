@@ -176,6 +176,33 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(raised.exception.details, {"provider": "chatgpt"})
         self.assertEqual(core.connections()["chatgpt"], "LOGIN")
 
+    def test_preflight_smart_routing_off_requires_web_even_if_local_is_ready(self) -> None:
+        core = object.__new__(ZenlessCore)
+        bridge = Mock()
+        bridge.wait_for_provider.return_value = True
+        bridge.wait_for_web_provider.return_value = False
+        core.bridge = bridge
+        core.events = EventBus()
+        core._connections_lock = threading.RLock()
+        core._connections = {
+            "bridge": "READY",
+            "browser": "READY",
+            "chatgpt": "READY",
+            "deepseek": "OFF",
+            "gemini": "OFF",
+            "hunyuan": "OFF",
+            "studio": "OFF",
+        }
+
+        with self.assertRaises(CoreError) as raised:
+            core._preflight_providers(
+                TaskOptions(create_3d_asset=False, independent_review=False, smart_routing=False)
+            )
+
+        self.assertEqual(raised.exception.code, "PROVIDER_LOGIN_REQUIRED")
+        bridge.wait_for_web_provider.assert_called_once_with("chatgpt", 0.5)
+        bridge.wait_for_provider.assert_not_called()
+
     def test_blocked_pipeline_event_publishes_persisted_chat_error(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             core = object.__new__(ZenlessCore)
