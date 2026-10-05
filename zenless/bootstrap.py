@@ -259,7 +259,7 @@ class NativeSplash:
 
         self._wndproc = wndproc
         instance = kernel32.GetModuleHandleW(None)
-        class_name = f"ZenlessSplash{id(self):x}"
+        class_name = f"RubraSplash{id(self):x}"
         arrow_cursor = ctypes.cast(ctypes.c_void_p(32512), wintypes.LPCWSTR)
         window_class = WNDCLASSW(
             0,
