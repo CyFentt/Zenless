@@ -126,6 +126,61 @@ def build(cache: Path, makensis: str, allow_dirty: bool) -> None:
         if sha256(archive) != item["sha256"]:
             raise ValueError(f"SHA-256 mismatch: {archive.name}")
         receipts.append(install_wheel(archive, python_root / "Lib" / "site-packages"))
+
+    build_tools = cache / "build-tools"
+    build_tools.mkdir(exist_ok=True)
+    missing_build_tools = []
+    for item in manifest["build_tools"]:
+        cached = build_tools / item["filename"]
+        if cached.is_file() and sha256(cached) != item["sha256"]:
+            cached.unlink()
+        if not cached.is_file():
+            missing_build_tools.append(item)
+    if missing_build_tools:
+        build_lock = cache / "requirements-build-tools.lock"
+        build_lock.write_text(
+            "\n".join(
+                f"{item['name']}=={item['version']} --hash=sha256:{item['sha256']}"
+                for item in missing_build_tools
+            ),
+            encoding="utf-8",
+        )
+        run([
+            sys.executable,
+            "-m",
+            "pip",
+            "download",
+            "--no-deps",
+            "--require-hashes",
+            "--only-binary=:all:",
+            "--dest",
+            str(build_tools),
+            "-r",
+            str(build_lock),
+        ])
+    for item in manifest["build_tools"]:
+        archive = build_tools / item["filename"]
+        if not archive.is_file() or sha256(archive) != item["sha256"]:
+            raise ValueError(f"SHA-256 mismatch: {archive.name}")
+
+    build_env = cache / "source-build-env"
+    if build_env.exists():
+        shutil.rmtree(build_env)
+    run([sys.executable, "-m", "venv", str(build_env)])
+    build_python = build_env / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    build_requirements = [f"{item['name']}=={item['version']}" for item in manifest["build_tools"]]
+    run([
+        str(build_python),
+        "-m",
+        "pip",
+        "install",
+        "--no-index",
+        "--no-deps",
+        "--find-links",
+        str(build_tools),
+        *build_requirements,
+    ])
+
     for item in manifest["source_wheels"]:
         archive = cache / item["filename"]
         download(item["url"], archive, item["sha256"])
@@ -133,7 +188,19 @@ def build(cache: Path, makensis: str, allow_dirty: bool) -> None:
         if output.exists():
             shutil.rmtree(output)
         output.mkdir(parents=True)
-        run([sys.executable, "-m", "pip", "wheel", "--no-deps", "--wheel-dir", str(output), str(archive)])
+        run([
+            str(build_python),
+            "-m",
+            "pip",
+            "wheel",
+            "--no-deps",
+            "--no-build-isolation",
+            "--no-index",
+            "--no-cache-dir",
+            "--wheel-dir",
+            str(output),
+            str(archive),
+        ])
         built = list(output.glob("*.whl"))
         if len(built) != 1:
             raise ValueError(f"Expected one source wheel: {item['name']}")
