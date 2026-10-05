@@ -10,6 +10,8 @@
 - Make Smart Routing consistently control local text fallback, including QA scenario generation, while visual QA requires an authenticated web image-capable provider.
 - Make continuous verification obey Fix Attempts, cancel npm and static-quality child processes on Stop/Quit, force-kill an unresponsive WebView2 helper, and prevent open-app partial uninstalls.
 - Harden portable packaging with rollback-safe updates, verified wheel-cache recovery, archive link rejection and reversible tool-directory swaps.
+- Prepare chat jobs, persisted messages and attachment assets before worker execution; roll back failed pre-start jobs and keep identical assets isolated per job.
+- Build source-only Python dependencies with SHA-256-pinned offline pip/setuptools tooling, pin the CI Python patch release and record source-build provenance in the portable receipt.
 
 Baseline validation before the final hardening pass covered 190 Python tests, 72 frontend unit tests and 21 Chromium UI tests, plus Python/TypeScript checks and lint. The final hardening pass added regression coverage for safe chat continuation, standalone Play, provider routing/model confirmation, installer rollback, approval races, security headers, stale UI snapshots, legacy-code repair and settings consistency. The current GitHub Actions runner is failing before a runner is allocated, so no workflow steps execute for the current HEAD; those baseline counts must not be treated as a clean run of this exact revision.
 
