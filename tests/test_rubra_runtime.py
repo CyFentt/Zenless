@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import subprocess
+import threading
 import tempfile
 import unittest
 from pathlib import Path
@@ -93,6 +94,42 @@ class RubraRuntimeTests(unittest.TestCase):
             ):
                 manager._ensure_npm_packages([])
             self.assertTrue(process.terminated)
+
+    def test_static_quality_process_is_terminated_on_cancel(self) -> None:
+        class Process:
+            returncode = -15
+
+            def __init__(self, cancel: threading.Event) -> None:
+                self.cancel = cancel
+                self.calls = 0
+                self.terminated = False
+
+            def communicate(self, timeout: float | None = None):
+                self.calls += 1
+                if self.calls == 1:
+                    self.cancel.set()
+                    raise subprocess.TimeoutExpired("stylua", timeout or 0)
+                return "cancelled", None
+
+            def terminate(self) -> None:
+                self.terminated = True
+
+            def kill(self) -> None:
+                self.returncode = -9
+
+        cancel = threading.Event()
+        process = Process(cancel)
+        with patch("zenless.static_quality.subprocess.Popen", return_value=process):
+            result = StaticQualityRunner._run_command(
+                "StyLua check",
+                ["stylua.exe", "--check", "."],
+                Path("."),
+                60,
+                cancel,
+            )
+        self.assertTrue(process.terminated)
+        self.assertEqual(result.status, "FAILED")
+        self.assertIn("Cancelled", result.output)
 
     def test_project_metadata_is_scoped_to_known_nonsecret_manifests(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
