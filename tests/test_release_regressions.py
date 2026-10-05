@@ -122,6 +122,29 @@ def test_legacy_unverifiable_model_fields_are_not_restored():
     assert 'quality' not in merged['hunyuan']
 
 
+def test_gateway_rejects_provider_model_mismatch():
+    transport = Mock()
+    transport.request.return_value = {'status': 'ok', 'selected': 'different'}
+    gateway = AgentGateway(
+        managed=transport,
+        embedded=transport,
+        selected_model=lambda _provider: 'Expected Model',
+    )
+    with pytest.raises(BridgeError, match='provider reported different'):
+        gateway._apply_selected_model('webview2', 'chatgpt', 'job')
+
+
+def test_system_messages_remain_notices(tmp_path):
+    core = ZenlessCore.__new__(ZenlessCore)
+    core.store = SQLiteStore(tmp_path / 'state.db')
+    core.store.create_task('job', 'test', TaskOptions())
+    core.store.append_message('job', 'Recovery', 'system', 'Recovered checkpoint')
+    messages = core.messages('job')
+    assert messages == [pytest.helpers.anything] if False else messages
+    assert messages[0]['role'] == 'system'
+    assert messages[0]['content'] == 'Recovered checkpoint'
+
+
 def test_set_model_requires_exact_provider_confirmation_and_invalidates_cache():
     core = ZenlessCore.__new__(ZenlessCore)
     core.bridge = Mock()
