@@ -49,7 +49,7 @@ def model_options_script(model: str = "") -> str:
       const textValue = node => (node.innerText || node.textContent || '').trim();
       const catalogValue = node => dataValue(node) || textValue(node);
       const modelLabel = value => /^(?:gpt[- ]|o[1-9](?:[- ]|$)|chatgpt|deepseek|gemini|qwen|hunyuan|hunyuan3d)/i.test(value);
-      const options = [...document.querySelectorAll('[data-model], [role="option"], [role="menuitem"]')].filter(node => {{
+      const options = [...document.querySelectorAll('[data-model]:not(button), [role="option"], [role="menuitem"]')].filter(node => {{
         const data = dataValue(node), text = textValue(node);
         return visible(node) && (data || modelLabel(text)) && Math.max(data.length, text.length) <= 120;
       }});
