@@ -195,7 +195,7 @@ def test_manual_test_skips_ai_review_and_visual_review(tmp_path):
 
 def test_standard_code_task_does_not_require_visual_review(tmp_path):
     store = SQLiteStore(tmp_path / 'state.db')
-    store.create_task('code', 'Refactor server datastore retry logic', TaskOptions())
+    store.create_task('code', 'Build server datastore retry logic', TaskOptions())
     store.create_task('visual', 'Fix HUD menu clipping and camera layout', TaskOptions())
     qa = QABreaker(store=store, studio=Mock(), bridge=Mock(), events=EventBus())
     assert not qa._needs_visual_review('code', PROFILES['STANDARD'])
