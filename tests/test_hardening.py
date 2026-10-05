@@ -195,6 +195,19 @@ class HardeningTests(unittest.TestCase):
         self.assertTrue(gateway.wait_for_provider("chatgpt", 0))
         self.assertEqual(gateway._routes["chatgpt"], "local")
 
+    def test_local_gateway_status_reports_ready_local_transport(self) -> None:
+        gateway = AgentGateway(
+            managed=FakeManaged(set()),
+            embedded=FakeEmbedded(set()),
+            local_available=lambda: True,
+            local_complete=lambda prompt: prompt,
+            selected_model=lambda _provider: "auto",
+        )
+        self.assertTrue(gateway.wait_for_provider("chatgpt", 0))
+        status = gateway.provider_status()["chatgpt"]
+        self.assertEqual(status["state"], "Ready")
+        self.assertEqual(status["transport"], "local")
+
     def test_gateway_does_not_require_extension_by_default(self) -> None:
         gateway = AgentGateway(
             managed=FakeManaged(set()),
