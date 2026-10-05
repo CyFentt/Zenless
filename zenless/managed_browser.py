@@ -196,7 +196,7 @@ class ManagedBrowserController:
         self._ready.clear()
         self._stop.clear()
         self._start_error = None
-        self._thread = threading.Thread(target=self._run, name="Zenless-ManagedBrowser", daemon=True)
+        self._thread = threading.Thread(target=self._run, name="Rubra-ManagedBrowser", daemon=True)
         self._thread.start()
         if not self._ready.wait(timeout):
             raise BridgeError("Managed browser controller did not start in time.")
