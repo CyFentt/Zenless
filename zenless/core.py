@@ -829,7 +829,16 @@ class ZenlessCore:
                 studios, preferred_id=self._studio_target_id, active_title=active_studio_title()
             )
             with self._studio_lock:
-                if target.studio_id != self._studio_target_id:
+                same_target = target.studio_id == self._studio_target_id
+                retained_references = {
+                    node_id: {
+                        "locked": bool(node.get("locked")),
+                        "usedAsContext": bool(node.get("usedAsContext")),
+                    }
+                    for node_id, node in self._studio_nodes.items()
+                    if same_target and (node.get("locked") or node.get("usedAsContext"))
+                }
+                if not same_target:
                     self._studio_tree, self._studio_nodes = [], {}
                     self._studio_inventory = {"complete": False, "total": 0, "source": ""}
                     self._studio_tree_error = ""
@@ -840,6 +849,10 @@ class ZenlessCore:
             try:
                 snapshot = read_tree(self.studio, target.studio_id)
                 tree, nodes = self._parse_studio_tree(snapshot.instances)
+                for node_id, state in retained_references.items():
+                    node = nodes.get(node_id)
+                    if node is not None:
+                        node.update(state)
                 with self._studio_lock:
                     self._studio_tree, self._studio_nodes = tree, nodes
                     self._studio_inventory = {
