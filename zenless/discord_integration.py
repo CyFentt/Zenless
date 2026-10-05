@@ -33,7 +33,7 @@ class DiscordIntegration:
 
     def status(self) -> DiscordStatus:
         if not self.enabled:
-            return DiscordStatus(False, "Not Configured", "Optional; Zenless works normally without Discord.")
+            return DiscordStatus(False, "Not Configured", "Optional; Rubra works normally without Discord.")
         return DiscordStatus(True, "Ready", "Webhook notifications enabled.")
 
     def notify_async(self, title: str, message: str) -> bool:
@@ -42,7 +42,7 @@ class DiscordIntegration:
         worker = threading.Thread(
             target=self._send,
             args=(title[:120], message[:1600]),
-            name="Zenless-DiscordWebhook",
+            name="Rubra-DiscordWebhook",
             daemon=True,
         )
         worker.start()
