@@ -548,7 +548,7 @@ export interface ToolDescriptor {
   id: string;
   name: string;
   description?: string;
-  status: "INSTALLED" | "NOT_INSTALLED" | "OPTIONAL";
+  status: "INSTALLED" | "NOT_INSTALLED" | "OPTIONAL" | "FAILED";
   category: "BUILT_IN" | "MCP" | "EXTERNAL";
   downloadSize?: string;
   installedSize?: string;
