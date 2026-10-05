@@ -536,14 +536,23 @@ class ManagedBrowserController:
     def _select_model(self, command: _Command) -> dict[str, Any]:
         page = self._ensure_page(command.provider)
         model = str(command.payload.get("model") or "").strip()
-        result = page.evaluate(model_options_script(model))
-        if not model or not isinstance(result, dict) or not result.get("ok"):
-            raise BridgeError(f"Model option not found: {model}. Open the provider's model menu and refresh Models.")
-        return {"status": "ok", "selected": str(result.get("selected") or model), "transport": "playwright"}
+        if not model:
+            raise BridgeError("Model selection requires a model name.")
+        for _ in range(8):
+            result = page.evaluate(model_options_script(model))
+            if isinstance(result, dict) and result.get("ok"):
+                return {"status": "ok", "selected": str(result.get("selected") or model), "transport": "playwright"}
+            page.wait_for_timeout(300)
+        raise BridgeError(f"Model option not found: {model}. Refresh Models after the provider finishes loading.")
 
     def _discover_models(self, command: _Command) -> dict[str, Any]:
-        values = self._ensure_page(command.provider).evaluate(model_options_script())
-        return {"status": "ok", "models": values if isinstance(values, list) else [], "transport": "playwright"}
+        page = self._ensure_page(command.provider)
+        for _ in range(6):
+            values = page.evaluate(model_options_script())
+            if isinstance(values, list) and values:
+                return {"status": "ok", "models": values, "transport": "playwright"}
+            page.wait_for_timeout(300)
+        return {"status": "ok", "models": [], "transport": "playwright"}
 
     def _cancel_generation(self, command: _Command) -> dict[str, Any]:
         page = self._ensure_page(command.provider)
