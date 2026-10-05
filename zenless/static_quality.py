@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import os
 import subprocess
+import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -18,7 +20,13 @@ class StaticQualityRunner:
         self.portable_root = portable_root.resolve()
         self.runtime_root = self.portable_root / "runtime"
 
-    def run(self, project_root: Path, *, timeout: float = 180.0) -> list[StaticCheck]:
+    def run(
+        self,
+        project_root: Path,
+        *,
+        timeout: float = 180.0,
+        cancel_event: threading.Event | None = None,
+    ) -> list[StaticCheck]:
         project = project_root.resolve()
         files = self._luau_files(project)
         if not files:
@@ -26,14 +34,14 @@ class StaticQualityRunner:
         checks: list[StaticCheck] = []
         stylua = self._tool("stylua", "stylua.exe")
         if stylua is not None:
-            checks.append(self._run_command("StyLua check", [str(stylua), "--check", str(project)], project, timeout))
+            checks.append(self._run_command("StyLua check", [str(stylua), "--check", str(project)], project, timeout, cancel_event))
         else:
             checks.append(StaticCheck("StyLua check", "SKIPPED", "StyLua is not installed."))
 
         selene = self._tool("selene", "selene.exe")
         has_selene_config = any((project / name).is_file() for name in ("selene.toml", "selene.yml", "selene.yaml"))
         if selene is not None and has_selene_config:
-            checks.append(self._run_command("Selene lint", [str(selene), str(project)], project, timeout))
+            checks.append(self._run_command("Selene lint", [str(selene), str(project)], project, timeout, cancel_event))
         elif selene is None:
             checks.append(StaticCheck("Selene lint", "SKIPPED", "Selene is not installed."))
         else:
@@ -50,6 +58,7 @@ class StaticQualityRunner:
                 [str(rojo), "build", str(project_file), "--output", str(target)],
                 project,
                 timeout,
+                cancel_event,
             )
             checks.append(check)
             target.unlink(missing_ok=True)
@@ -65,7 +74,7 @@ class StaticQualityRunner:
             if (project / "sourcemap.json").is_file():
                 command.extend(["--sourcemap", str(project / "sourcemap.json")])
             command.append(str(project))
-            result = self._run_command("Luau LSP analyze", command, project, timeout)
+            result = self._run_command("Luau LSP analyze", command, project, timeout, cancel_event)
             if result.status == "FAILED":
                 result = StaticCheck(result.name, "WARNING", result.output)
             checks.append(result)
@@ -83,6 +92,7 @@ class StaticQualityRunner:
                     [str(lune), "run", str(test_runner)],
                     project,
                     max(timeout, 300.0),
+                    cancel_event,
                 )
             )
         elif lune is None:
@@ -113,9 +123,15 @@ class StaticQualityRunner:
         return result
 
     @staticmethod
-    def _run_command(name: str, command: list[str], cwd: Path, timeout: float) -> StaticCheck:
+    def _run_command(
+        name: str,
+        command: list[str],
+        cwd: Path,
+        timeout: float,
+        cancel_event: threading.Event | None = None,
+    ) -> StaticCheck:
         try:
-            completed = subprocess.run(
+            process = subprocess.Popen(
                 command,
                 cwd=str(cwd),
                 stdin=subprocess.DEVNULL,
@@ -124,16 +140,32 @@ class StaticQualityRunner:
                 text=True,
                 encoding="utf-8",
                 errors="replace",
-                timeout=max(10.0, min(600.0, timeout)),
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-                check=False,
             )
-        except subprocess.TimeoutExpired as exc:
-            stdout = exc.stdout.decode("utf-8", errors="replace") if isinstance(exc.stdout, bytes) else exc.stdout or ""
-            stderr = exc.stderr.decode("utf-8", errors="replace") if isinstance(exc.stderr, bytes) else exc.stderr or ""
-            output = (stdout + "\n" + stderr)[-12000:]
-            return StaticCheck(name, "FAILED", "Timed out.\n" + output)
         except OSError as exc:
             return StaticCheck(name, "FAILED", str(exc))
-        output = completed.stdout[-12000:].strip()
-        return StaticCheck(name, "PASSED" if completed.returncode == 0 else "FAILED", output or f"Exit code {completed.returncode}")
+
+        deadline = time.monotonic() + max(10.0, min(600.0, timeout))
+        output = ""
+        while True:
+            if cancel_event is not None and cancel_event.is_set():
+                process.terminate()
+                try:
+                    output, _ = process.communicate(timeout=3)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    output, _ = process.communicate(timeout=2)
+                return StaticCheck(name, "FAILED", "Cancelled.\n" + output[-12000:])
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                process.kill()
+                output, _ = process.communicate(timeout=2)
+                return StaticCheck(name, "FAILED", "Timed out.\n" + output[-12000:])
+            try:
+                output, _ = process.communicate(timeout=min(0.25, remaining))
+                break
+            except subprocess.TimeoutExpired:
+                continue
+
+        output = output[-12000:].strip()
+        return StaticCheck(name, "PASSED" if process.returncode == 0 else "FAILED", output or f"Exit code {process.returncode}")
