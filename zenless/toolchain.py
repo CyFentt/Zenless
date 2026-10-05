@@ -8,6 +8,7 @@ import subprocess
 import tarfile
 import tempfile
 import threading
+import time
 import urllib.parse
 import urllib.request
 import zipfile
@@ -233,7 +234,7 @@ class ToolchainManager:
                 continue
             marker.parent.mkdir(parents=True, exist_ok=True)
             try:
-                completed = subprocess.run(
+                process = subprocess.Popen(
                     [str(node), str(npm), "install", "--prefix", str(prefix), "--no-audit", "--no-fund", "--save-exact", package],
                     env=self.environment(),
                     stdin=subprocess.DEVNULL,
@@ -242,17 +243,36 @@ class ToolchainManager:
                     text=True,
                     encoding="utf-8",
                     errors="replace",
-                    timeout=900,
                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-                    check=False,
                 )
-            except (OSError, subprocess.TimeoutExpired) as exc:
+                deadline = time.monotonic() + 900.0
+                output = ""
+                while True:
+                    if self.cancel_event.is_set():
+                        process.terminate()
+                        try:
+                            output, _ = process.communicate(timeout=3)
+                        except subprocess.TimeoutExpired:
+                            process.kill()
+                            output, _ = process.communicate(timeout=2)
+                        raise ToolchainError("Tool preparation cancelled.")
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        process.kill()
+                        output, _ = process.communicate(timeout=2)
+                        raise ToolchainError(f"npm install timed out for {package}.")
+                    try:
+                        output, _ = process.communicate(timeout=min(0.25, remaining))
+                        break
+                    except subprocess.TimeoutExpired:
+                        continue
+            except (OSError, ToolchainError) as exc:
                 results.append(InstallResult(item_id, "failed", str(exc)))
-                if item.get("critical"):
+                if item.get("critical") or self.cancel_event.is_set():
                     raise ToolchainError(f"npm install failed for {package}: {exc}") from exc
                 continue
-            if completed.returncode != 0:
-                results.append(InstallResult(item_id, "failed", completed.stdout[-3000:]))
+            if process.returncode != 0:
+                results.append(InstallResult(item_id, "failed", output[-3000:]))
                 if item.get("critical"):
                     raise ToolchainError(f"npm install failed for {package}")
                 continue
