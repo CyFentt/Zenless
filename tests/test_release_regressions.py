@@ -389,6 +389,24 @@ def test_managed_request_failure_clears_working_state(tmp_path):
     assert controller.provider_status()["chatgpt"]["state"] == "Error"
 
 
+def test_webview2_shutdown_kills_helper_that_ignores_terminate(tmp_path):
+    controller = WebView2BrowserController(data_root=tmp_path)
+    process = Mock()
+    process.poll.return_value = None
+    process.stdin = None
+    process.wait.side_effect = [
+        subprocess.TimeoutExpired("webview2", 1),
+        subprocess.TimeoutExpired("webview2", 5),
+        0,
+    ]
+    controller._process = process
+    with patch.object(controller, "_request", side_effect=BridgeError("shutdown unavailable")):
+        controller.stop(timeout=1)
+    process.terminate.assert_called_once()
+    process.kill.assert_called_once()
+    assert controller._process is None
+
+
 def test_webview2_request_failure_clears_working_state(tmp_path):
     controller = WebView2BrowserController(data_root=tmp_path)
     process = Mock()
