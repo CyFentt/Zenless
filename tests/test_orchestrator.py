@@ -288,7 +288,7 @@ class OrchestratorTests(unittest.TestCase):
             orchestrator, store = self.make_system(folder, FakeBridge({}), FakeStudio())
             prepared: list[str] = []
 
-            def fail_prepare(task_id: str) -> None:
+            def fail_prepare(task_id: str, _message_id: int) -> None:
                 prepared.append(task_id)
                 raise RuntimeError("asset registration failed")
 
@@ -301,6 +301,24 @@ class OrchestratorTests(unittest.TestCase):
             self.assertNotIn(prepared[0], orchestrator._tasks)
             self.assertNotIn(prepared[0], orchestrator._cancel)
             self.assertNotIn(prepared[0], orchestrator._pause)
+
+    def test_submit_rolls_back_persisted_task_when_ready_snapshot_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            orchestrator, store = self.make_system(folder, FakeBridge({}), FakeStudio())
+            prepared: list[str] = []
+
+            def fail_ready(task_id: str, message_id: int) -> None:
+                self.assertGreater(message_id, 0)
+                prepared.append(task_id)
+                raise RuntimeError("snapshot failed")
+
+            with self.assertRaisesRegex(RuntimeError, "snapshot failed"):
+                orchestrator.submit("Prepare snapshot", TaskOptions(), ready_callback=fail_ready)
+
+            self.assertEqual(len(prepared), 1)
+            self.assertIsNone(store.load_task(prepared[0]))
+            self.assertEqual(orchestrator.current_task_id, "")
+            self.assertNotIn(prepared[0], orchestrator._tasks)
 
     def make_system(
         self,
