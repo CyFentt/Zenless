@@ -115,8 +115,17 @@ def classify_action(action: ProposalAction, available_tools: set[str]) -> Policy
             return PolicyDecision(False, "blocked", ("Scene execution cannot contain an unbounded loop",))
 
     risk = "high" if action.tool == "execute_luau" else "medium"
+    destructive_payload = serialized
+    if action.tool == "execute_luau":
+        destructive_payload = str(action.arguments.get("code") or "")
+    elif action.tool == "multi_edit":
+        edits = action.arguments.get("edits")
+        if isinstance(edits, list):
+            destructive_payload = "\n".join(
+                str(edit.get("new_string") or "") for edit in edits if isinstance(edit, dict)
+            )
     for pattern in DESTRUCTIVE_PATTERNS:
-        if re.search(pattern, serialized, flags=re.IGNORECASE):
+        if re.search(pattern, destructive_payload, flags=re.IGNORECASE):
             risk = "critical"
             reasons.append(f"Destructive pattern detected: {pattern}")
 
