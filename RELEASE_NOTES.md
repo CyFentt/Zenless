@@ -8,7 +8,7 @@
 - Allow local inference cancellation and recover corrupted source-export metadata safely.
 - Scope Chat, Build, Visual, 3D and QA realtime events to their owning job so history/test views cannot be contaminated by stale background events.
 - Make Smart Routing consistently control local text fallback, including QA scenario generation, while visual QA requires an authenticated web image-capable provider.
-- Make continuous verification obey Fix Attempts, make tool provisioning cancel npm child processes on Quit, force-kill an unresponsive WebView2 helper, and prevent open-app partial uninstalls.
+- Make continuous verification obey Fix Attempts, cancel npm and static-quality child processes on Stop/Quit, force-kill an unresponsive WebView2 helper, and prevent open-app partial uninstalls.
 - Harden portable packaging with rollback-safe updates, verified wheel-cache recovery, archive link rejection and reversible tool-directory swaps.
 
 Baseline validation before the final hardening pass covered 190 Python tests, 72 frontend unit tests and 21 Chromium UI tests, plus Python/TypeScript checks and lint. The final hardening pass added regression coverage for safe chat continuation, standalone Play, provider routing/model confirmation, installer rollback, approval races, security headers, stale UI snapshots, legacy-code repair and settings consistency. The current GitHub Actions runner is failing before a runner is allocated, so no workflow steps execute for the current HEAD; those baseline counts must not be treated as a clean run of this exact revision.
