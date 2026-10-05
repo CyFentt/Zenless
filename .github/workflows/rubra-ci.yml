@@ -25,9 +25,11 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout
+        id: checkout
         uses: actions/checkout@v4
 
       - name: Python
+        id: python
         uses: actions/setup-python@v5
         with:
           python-version: "3.14"
@@ -37,6 +39,7 @@ jobs:
             requirements-dev.txt
 
       - name: Node
+        id: node
         uses: actions/setup-node@v4
         with:
           node-version: "24"
@@ -44,7 +47,31 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
 
       - name: Python dependencies
-        run: python -m pip install --upgrade pip && python -m pip install -r requirements-dev.txt
+        id: python-deps
+        shell: bash
+        run: |
+          mkdir -p .ci-bootstrap
+          set +e
+          python -m pip install --upgrade pip > .ci-bootstrap/python-deps.txt 2>&1
+          pip_status=$?
+          if [ "$pip_status" -eq 0 ]; then
+            python -m pip install -r requirements-dev.txt >> .ci-bootstrap/python-deps.txt 2>&1
+            pip_status=$?
+          fi
+          printf "\ncheckout=%s python=%s node=%s dependencies=%s\n" \
+            "${{ steps.checkout.outcome }}" "${{ steps.python.outcome }}" "${{ steps.node.outcome }}" "$pip_status" \
+            >> .ci-bootstrap/python-deps.txt
+          cat .ci-bootstrap/python-deps.txt
+          exit "$pip_status"
+
+      - name: Upload bootstrap diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Rubra-CI-Bootstrap
+          path: .ci-bootstrap/python-deps.txt
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Changed-file diagnostics
         shell: bash
