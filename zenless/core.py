@@ -1186,7 +1186,6 @@ class ZenlessCore:
                 self._model_cache = None
                 self.events.publish("SETTINGS_CHANGED", {"settings": current})
             return True
-    
 
     def set_smart_routing(self, enabled: bool) -> bool:
         with self._settings_lock:
