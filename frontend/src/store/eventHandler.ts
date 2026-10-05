@@ -97,9 +97,13 @@ export function handleEvent(event: ZenlessEvent) {
     case 'VISUAL_APPROVED':
       store.setViews(
         useStore.getState().views.map((v) =>
-          v.name === event.data.view ? { ...v, state: 'APPROVED' } : v,
+          !event.data.view || v.name === event.data.view ? { ...v, state: 'APPROVED' } : v,
         ),
       );
+      if (!event.data.view) {
+        const current = useStore.getState();
+        current.setConcept(current.conceptVersion, 'APPROVED', current.conceptPrompt);
+      }
       break;
     case 'MODEL_GENERATION_CHANGED':
       {
