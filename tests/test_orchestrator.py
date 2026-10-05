@@ -323,6 +323,35 @@ class OrchestratorTests(unittest.TestCase):
             time.sleep(0.02)
         self.fail("Orchestrator did not finish within the timeout")
 
+    def test_followup_job_seeds_bounded_parent_conversation_before_worker_start(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            orchestrator, store = self.make_system(folder, FakeBridge({}), FakeStudio())
+            store.create_task("parent", "Initial request", TaskOptions())
+            store.update_task("parent", stage=Stage.COMPLETE, status="complete")
+            store.append_message("parent", "User", "user", "Initial request")
+            store.append_message("parent", "Rubra", "assistant", "Initial result")
+
+            with patch.object(orchestrator, "_run_guarded", return_value=None):
+                child = orchestrator.submit(
+                    "Follow-up request",
+                    TaskOptions(),
+                    parent_task_id="parent",
+                )
+
+            task = store.load_task(child)
+            self.assertIsNotNone(task)
+            context = task["context"]
+            self.assertEqual(context["parent_task_id"], "parent")
+            self.assertEqual(
+                [item["content"] for item in context["conversation_history"]],
+                ["Initial request", "Initial result"],
+            )
+            messages = store.task_messages(child)
+            self.assertEqual(
+                [row["content"] for row in messages],
+                ["Initial request", "Initial result", "Follow-up request"],
+            )
+
     def test_safe_auto_requires_low_review_and_action_risk(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             orchestrator, _ = self.make_system(folder, FakeBridge({}), FakeStudio())
