@@ -352,6 +352,10 @@ class ZenlessCore:
         attachments: tuple[Path, ...] = (),
         parent_job_id: str = "",
     ) -> dict[str, Any]:
+        def prepare(task_id: str) -> None:
+            for path in attachments:
+                self._register_file_asset(path, job_id=task_id, kind="IMG" if self._is_image(path) else "RBX")
+
         try:
             task_id = self.orchestrator.submit(
                 title,
@@ -359,11 +363,10 @@ class ZenlessCore:
                 attachment_paths=attachments,
                 studio_id=self._studio_target_id if self.connections()["studio"] == "READY" else "",
                 parent_task_id=parent_job_id,
+                prepare_callback=prepare if attachments else None,
             )
         except OrchestratorError as exc:
             raise CoreError("JOB_BUSY", str(exc), status=409) from exc
-        for path in attachments:
-            self._register_file_asset(path, job_id=task_id, kind="IMG" if self._is_image(path) else "RBX")
         return self.job(task_id)
 
     def pause_job(self, job_id: str) -> dict[str, Any]:
@@ -1883,9 +1886,9 @@ class ZenlessCore:
             while chunk := stream.read(1024 * 1024):
                 hasher.update(chunk)
         digest = hasher.hexdigest()
-        asset_id = digest[:32]
-        mime = mimetypes.guess_type(resolved.name)[0] or "application/octet-stream"
         normalized_kind = kind if kind in {"IMG", "VIEW", "GLB", "GLTF", "TEX", "RBX"} else "RBX"
+        asset_id = hashlib.sha256(f"{job_id}:{normalized_kind}:{digest}".encode("utf-8")).hexdigest()[:32]
+        mime = mimetypes.guess_type(resolved.name)[0] or "application/octet-stream"
         self.store.register_asset(
             asset_id,
             job_id=job_id,
