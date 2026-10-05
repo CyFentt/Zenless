@@ -20,92 +20,82 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  diagnose:
+  probe-python-deps:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
     steps:
-      - name: Initialize report
-        run: |
-          mkdir -p .ci-report
-          printf "runner_python=" > .ci-report/report.txt
-          python --version >> .ci-report/report.txt 2>&1 || true
-          printf "runner_node=" >> .ci-report/report.txt
-          node --version >> .ci-report/report.txt 2>&1 || true
-
-      - name: Checkout
-        id: diag-checkout
-        continue-on-error: true
-        uses: actions/checkout@v4
-
-      - name: Python
-        id: diag-python
-        continue-on-error: true
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.14"
+      - run: python -m pip install --upgrade pip && python -m pip install -r requirements-dev.txt
 
-      - name: Node
-        id: diag-node
-        continue-on-error: true
-        uses: actions/setup-node@v4
+  probe-python:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        check: [compile, ruff, pyright, pytest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
-          node-version: "24"
-
-      - name: Run diagnostic validation
-        continue-on-error: true
+          python-version: "3.14"
+      - run: python -m pip install --upgrade pip && python -m pip install -r requirements-dev.txt
+      - name: Run ${{ matrix.check }}
         shell: bash
         run: |
-          set +e
-          {
-            echo "checkout=${{ steps.diag-checkout.outcome }}"
-            echo "python_setup=${{ steps.diag-python.outcome }}"
-            echo "node_setup=${{ steps.diag-node.outcome }}"
-            python --version
-            node --version
-            python -m pip install --upgrade pip
-            echo "pip_upgrade=$?"
-            python -m pip install -r requirements-dev.txt
-            echo "python_deps=$?"
-            python -m compileall -q main.py zenless
-            echo "compile=$?"
-            python -m ruff check .
-            echo "ruff=$?"
-            python -m pyright
-            echo "pyright=$?"
-            python -m pytest -o addopts= -q
-            echo "pytest=$?"
-            npm --prefix frontend ci
-            echo "npm_ci=$?"
-            npm --prefix frontend run lint
-            echo "eslint=$?"
-            npm --prefix frontend run typecheck
-            echo "typescript=$?"
-            npm --prefix frontend run test
-            echo "vitest=$?"
-            npm --prefix frontend run build
-            echo "frontend_build=$?"
-          } >> .ci-report/report.txt 2>&1
-          tail -n 400 .ci-report/report.txt
+          case "${{ matrix.check }}" in
+            compile) python -m compileall -q main.py zenless ;;
+            ruff) python -m ruff check . ;;
+            pyright) python -m pyright ;;
+            pytest) python -m pytest -o addopts= -q ;;
+          esac
 
-      - name: Upload diagnostic report
-        if: always()
-        uses: actions/upload-artifact@v4
+  probe-node-deps:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
-          name: Rubra-Full-CI-Diagnostics
-          path: .ci-report/report.txt
-          if-no-files-found: error
-          retention-days: 7
+          node-version: "24"
+      - working-directory: frontend
+        run: npm ci
 
+  probe-frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        check: [lint, typecheck, test, build]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - working-directory: frontend
+        run: npm ci
+      - name: Run ${{ matrix.check }}
+        working-directory: frontend
+        shell: bash
+        run: |
+          case "${{ matrix.check }}" in
+            lint) npm run lint ;;
+            typecheck) npm run typecheck ;;
+            test) npm run test ;;
+            build) VITE_RUBRA_MOCK=false npm run build ;;
+          esac
   validate:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - name: Checkout
-        id: checkout
         uses: actions/checkout@v4
 
       - name: Python
-        id: python
         uses: actions/setup-python@v5
         with:
           python-version: "3.14"
@@ -115,7 +105,6 @@ jobs:
             requirements-dev.txt
 
       - name: Node
-        id: node
         uses: actions/setup-node@v4
         with:
           node-version: "24"
@@ -123,55 +112,7 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
 
       - name: Python dependencies
-        id: python-deps
-        shell: bash
-        run: |
-          mkdir -p .ci-bootstrap
-          set +e
-          python -m pip install --upgrade pip > .ci-bootstrap/python-deps.txt 2>&1
-          pip_status=$?
-          if [ "$pip_status" -eq 0 ]; then
-            python -m pip install -r requirements-dev.txt >> .ci-bootstrap/python-deps.txt 2>&1
-            pip_status=$?
-          fi
-          printf "\ncheckout=%s python=%s node=%s dependencies=%s\n" \
-            "${{ steps.checkout.outcome }}" "${{ steps.python.outcome }}" "${{ steps.node.outcome }}" "$pip_status" \
-            >> .ci-bootstrap/python-deps.txt
-          cat .ci-bootstrap/python-deps.txt
-          exit "$pip_status"
-
-      - name: Upload bootstrap diagnostics
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: Rubra-CI-Bootstrap
-          path: .ci-bootstrap/python-deps.txt
-          if-no-files-found: warn
-          retention-days: 7
-
-      - name: Changed-file diagnostics
-        shell: bash
-        run: |
-          mkdir -p .ci-logs
-          set +e
-          python -m compileall -q zenless/provider_auth.py zenless/studio_mcp.py zenless/managed_browser.py zenless/webview_host.py > .ci-logs/changed.txt 2>&1
-          compile_status=$?
-          python -m ruff check zenless/provider_auth.py zenless/studio_mcp.py zenless/managed_browser.py zenless/webview_host.py tests/test_studio_mcp.py tests/test_managed_browser.py >> .ci-logs/changed.txt 2>&1
-          ruff_status=$?
-          python -m pytest -o addopts= -q tests/test_studio_mcp.py tests/test_managed_browser.py >> .ci-logs/changed.txt 2>&1
-          test_status=$?
-          printf "\ncompile=%s ruff=%s tests=%s\n" "$compile_status" "$ruff_status" "$test_status" >> .ci-logs/changed.txt
-          test "$compile_status" -eq 0 -a "$ruff_status" -eq 0 -a "$test_status" -eq 0
-
-      - name: Upload changed-file diagnostics
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: Rubra-CI-Diagnostics
-          path: .ci-logs/changed.txt
-          if-no-files-found: error
-          retention-days: 7
-
+        run: python -m pip install --upgrade pip && python -m pip install -r requirements-dev.txt
       - name: Python compile
         run: python -m compileall -q main.py zenless
 
