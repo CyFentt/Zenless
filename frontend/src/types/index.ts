@@ -538,7 +538,6 @@ export interface ProviderDescriptor {
   models?: ProviderModel[];
   capabilities?: ProviderCapabilities;
   verified?: "VERIFIED" | "BETA" | "EXPERIMENTAL" | "UNVERIFIED";
-  loginState?: "IDLE" | "OPENING" | "WAITING" | "VERIFYING" | "READY";
 }
 
 export interface ToolDescriptor {
@@ -574,7 +573,6 @@ export interface ZenlessEventMap {
   CHAT_MESSAGE: { message: ChatMessage };
   CHAT_ACTIVITY: { activity: ChatActivity };
   CHAT_ARTIFACT: { artifact: ChatArtifact };
-  PROVIDER_LOGIN_STATE: { provider: ProviderId; state: "IDLE" | "OPENING" | "WAITING" | "VERIFYING" | "READY" };
   READINESS_CHANGED: { readiness: ReadinessStateInfo };
   CONTEXT_UPDATED: { items: ContextItem[] };
   CHANGES_UPDATED: { files: ChangedFile[] };
