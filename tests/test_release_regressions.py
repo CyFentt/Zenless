@@ -242,6 +242,13 @@ def test_webview2_request_failure_clears_working_state(tmp_path):
     assert "selector changed" in state["detail"]
 
 
+def test_user_facing_diagnostic_log_uses_rubra_branding():
+    root = Path(__file__).resolve().parents[1]
+    source = (root / 'zenless' / 'diagnostics.py').read_text(encoding='utf-8')
+    assert 'rubra.log' in source
+    assert 'zenless.log' not in source
+
+
 def test_frontend_lockfile_keeps_resolved_package_versions_consistent():
     root = Path(__file__).resolve().parents[1]
     lock = json.loads((root / "frontend" / "package-lock.json").read_text(encoding="utf-8"))
