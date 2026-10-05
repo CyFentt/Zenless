@@ -1141,13 +1141,24 @@ class ZenlessCore:
                     status=409,
                     details={"provider": provider},
                 )
-            self.bridge.request(provider, "select_model", {"model": model}, task_id="settings", timeout=15)
+            response = self.bridge.request(
+                provider, "select_model", {"model": model}, task_id="settings", timeout=15
+            )
+            selected = str(response.get("selected") or "").strip()
+            if response.get("status") != "ok" or selected.casefold() != model.casefold():
+                raise CoreError(
+                    "MODEL_SELECTION_FAILED",
+                    f"{PROVIDER_LABELS[provider]} did not confirm the selected model: {model}",
+                    status=409,
+                    details={"provider": provider, "model": model, "selected": selected},
+                )
         current = self.settings()
         if provider == "hunyuan":
             current["models"][provider]["version"] = model
         else:
             current["models"][provider]["model"] = model
         self.store.set_setting("ui.settings", current)
+        self._model_cache = None
         self.events.publish("SETTINGS_CHANGED", {"settings": current})
         return True
 
