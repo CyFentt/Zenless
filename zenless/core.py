@@ -529,17 +529,36 @@ class ZenlessCore:
         return None
 
     def context(self, job_id: str, *, refresh: bool = False) -> list[dict[str, Any]]:
-        if refresh:
-            self.refresh_studio()
-        stored = self.store.context_items(job_id)
-        if stored:
-            return [self._public_context(item) for item in stored]
         task = self.store.load_task(job_id)
         if task is None:
             raise CoreError("JOB_NOT_FOUND", "Job not found.", status=404)
-        items = self._derive_context_items(job_id, task.get("context") or {})
-        if items:
-            self.store.replace_context_items(job_id, items)
+        stored = self.store.context_items(job_id)
+        if stored and not refresh:
+            return [self._public_context(item) for item in stored]
+
+        context = dict(task.get("context") or {}) if isinstance(task.get("context"), dict) else {}
+        if refresh:
+            self.refresh_studio()
+            with self._studio_lock:
+                live_nodes = [
+                    {
+                        "name": str(node.get("name") or ""),
+                        "path": str(node.get("path") or ""),
+                        "className": str(node.get("className") or "Instance"),
+                    }
+                    for node in self._studio_nodes.values()
+                    if str(node.get("path") or "")
+                ][:500]
+            context["live_studio_nodes"] = live_nodes
+
+        items = self._derive_context_items(job_id, context)
+        if stored:
+            state_by_path = {str(item.get("path") or ""): str(item.get("state") or "included") for item in stored}
+            for item in items:
+                prior = state_by_path.get(str(item.get("path") or ""))
+                if prior in {"included", "excluded", "locked"}:
+                    item["state"] = prior
+        self.store.replace_context_items(job_id, items)
         return [self._public_context(item) for item in items]
 
     def context_item(self, item_id: str) -> dict[str, Any]:
@@ -1678,24 +1697,78 @@ class ZenlessCore:
 
     @staticmethod
     def _derive_context_items(job_id: str, context: dict[str, Any]) -> list[dict[str, Any]]:
-        raw_reads = context.get("reads")
-        reads: dict[str, Any] = raw_reads if isinstance(raw_reads, dict) else {}
         items: list[dict[str, Any]] = []
-        for index, (name, content) in enumerate(reads.items()):
-            path = str(name).split(":", 1)[0]
-            item_id = hashlib.sha256(f"{job_id}:{path}:{index}".encode()).hexdigest()[:24]
+        seen: set[str] = set()
+
+        def add(path: str, name: str, kind: str, relevance: float, raw: dict[str, Any] | None = None) -> None:
+            normalized_path = path.strip()
+            if not normalized_path or normalized_path in seen or len(items) >= 240:
+                return
+            seen.add(normalized_path)
+            item_id = hashlib.sha256(f"{job_id}:{normalized_path}".encode("utf-8", "replace")).hexdigest()[:24]
             items.append(
                 {
                     "id": item_id,
                     "job_id": job_id,
-                    "name": path,
-                    "type": "Service",
-                    "path": path,
-                    "relevance": max(0.1, 1.0 - index * 0.08),
+                    "name": name.strip() or normalized_path.rsplit(".", 1)[-1],
+                    "type": kind,
+                    "path": normalized_path,
+                    "relevance": max(0.0, min(1.0, relevance)),
                     "state": "included",
-                    "raw": {"summary": str(content)[:4000]},
+                    "raw": raw or {},
                 }
             )
+
+        raw_sources = context.get("script_sources")
+        if isinstance(raw_sources, dict):
+            for index, (path, source) in enumerate(raw_sources.items()):
+                add(
+                    str(path),
+                    str(path).rsplit(".", 1)[-1],
+                    "Script",
+                    max(0.72, 1.0 - index * 0.012),
+                    {"sourceExcerpt": str(source)[:4000]},
+                )
+
+        inventory = context.get("inventory")
+        scripts = inventory.get("scripts") if isinstance(inventory, dict) else None
+        if isinstance(scripts, list):
+            for index, raw in enumerate(scripts):
+                if not isinstance(raw, dict):
+                    continue
+                path = str(raw.get("path") or "")
+                class_name = str(raw.get("className") or "Script")
+                kind = "Module" if class_name == "ModuleScript" else ("Local" if class_name == "LocalScript" else "Script")
+                add(path, str(raw.get("name") or path.rsplit(".", 1)[-1]), kind, max(0.55, 0.82 - index * 0.006), raw)
+
+        live_nodes = context.get("live_studio_nodes")
+        if isinstance(live_nodes, list):
+            for index, raw in enumerate(live_nodes):
+                if not isinstance(raw, dict):
+                    continue
+                class_name = str(raw.get("className") or "Instance")
+                if class_name not in {
+                    "Script", "LocalScript", "ModuleScript", "RemoteEvent", "RemoteFunction",
+                    "Folder", "Workspace", "ReplicatedStorage", "ServerScriptService", "StarterPlayer",
+                    "StarterGui",
+                }:
+                    continue
+                kind = (
+                    "Module" if class_name == "ModuleScript"
+                    else "Local" if class_name == "LocalScript"
+                    else "Script" if class_name == "Script"
+                    else "Remote" if class_name in {"RemoteEvent", "RemoteFunction"}
+                    else "Service"
+                )
+                path = str(raw.get("path") or "")
+                add(path, str(raw.get("name") or path.rsplit(".", 1)[-1]), kind, max(0.35, 0.68 - index * 0.002), raw)
+
+        raw_reads = context.get("reads")
+        reads: dict[str, Any] = raw_reads if isinstance(raw_reads, dict) else {}
+        for index, (name, content) in enumerate(reads.items()):
+            path = str(name).split(":", 1)[0]
+            add(path, path, "Service", max(0.1, 0.45 - index * 0.03), {"summary": str(content)[:4000]})
+
         return items
 
     @staticmethod
