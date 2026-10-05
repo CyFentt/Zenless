@@ -431,7 +431,9 @@ class LocalWebBridge:
 
     async def _reindex_project(self, request: web.Request) -> web.Response:
         body = await self._optional_json_body(request)
-        return self._json(self.core.reindex_project(incremental=bool(body.get("incremental", True))))
+        raw = body.get("incremental", True)
+        incremental = raw if isinstance(raw, bool) else str(raw).strip().casefold() not in {"0", "false", "off", "no"}
+        return self._json(self.core.reindex_project(incremental=incremental))
 
     async def _search_project(self, request: web.Request) -> web.Response:
         query = str(request.query.get("q") or "").strip()
