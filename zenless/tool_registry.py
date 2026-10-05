@@ -84,7 +84,10 @@ class ToolRegistry:
         for descriptor in result:
             outcome = outcomes.get(descriptor["id"].removeprefix("source:"), {})
             if isinstance(outcome, dict) and descriptor["status"] != "INSTALLED":
-                if outcome.get("state") in {"optional", "skipped"}:
+                state = str(outcome.get("state") or "").casefold()
+                if state == "failed":
+                    descriptor["status"] = "FAILED"
+                elif state in {"optional", "skipped"}:
                     descriptor["status"] = "OPTIONAL"
                 if outcome.get("detail"):
                     descriptor["reason"] = str(outcome["detail"])
