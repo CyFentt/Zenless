@@ -479,7 +479,8 @@ class ZenlessCore:
     def messages(self, job_id: str) -> list[dict[str, Any]]:
         result = []
         for row in self.store.task_messages(job_id):
-            role = "user" if row["role"] == "user" else ("system" if row["role"] == "error" else "zenless")
+            stored_role = str(row["role"]).casefold()
+            role = "user" if stored_role == "user" else ("system" if stored_role in {"error", "system"} else "zenless")
             message = {
                 "id": f"msg-{row['id']}",
                 "role": role,
