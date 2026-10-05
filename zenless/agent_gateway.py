@@ -124,6 +124,12 @@ class AgentGateway:
             }
 
     def wait_for_provider(self, provider: str, timeout: float = 5.0) -> bool:
+        return self._wait_for_provider(provider, timeout, allow_local=True)
+
+    def wait_for_web_provider(self, provider: str, timeout: float = 5.0) -> bool:
+        return self._wait_for_provider(provider, timeout, allow_local=False)
+
+    def _wait_for_provider(self, provider: str, timeout: float, *, allow_local: bool) -> bool:
         if self._stopping.is_set():
             return False
 
@@ -144,10 +150,11 @@ class AgentGateway:
                     self._routes[provider] = "extension"
                 return True
 
-        with self._route_lock:
-            existing_route = self._routes.get(provider)
-        if existing_route == "local" and self._can_use_local(provider):
-            return True
+        if allow_local:
+            with self._route_lock:
+                existing_route = self._routes.get(provider)
+            if existing_route == "local" and self._can_use_local(provider):
+                return True
 
         budget = max(0.0, float(timeout))
         deadline = time.monotonic() + budget
@@ -175,7 +182,7 @@ class AgentGateway:
                     self.status_callback(provider, "Connected", "Extension fallback selected")
                 return True
 
-        if self._can_use_local(provider):
+        if allow_local and self._can_use_local(provider):
             with self._route_lock:
                 self._routes[provider] = "local"
             if self.status_callback is not None:
