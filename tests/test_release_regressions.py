@@ -140,7 +140,7 @@ def test_system_messages_remain_notices(tmp_path):
     core.store.create_task('job', 'test', TaskOptions())
     core.store.append_message('job', 'Recovery', 'system', 'Recovered checkpoint')
     messages = core.messages('job')
-    assert messages == [pytest.helpers.anything] if False else messages
+    assert len(messages) == 1
     assert messages[0]['role'] == 'system'
     assert messages[0]['content'] == 'Recovered checkpoint'
 
