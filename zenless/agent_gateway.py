@@ -144,6 +144,11 @@ class AgentGateway:
                     self._routes[provider] = "extension"
                 return True
 
+        with self._route_lock:
+            existing_route = self._routes.get(provider)
+        if existing_route == "local" and self._can_use_local(provider):
+            return True
+
         budget = max(0.0, float(timeout))
         deadline = time.monotonic() + budget
         if budget > 0:
@@ -279,15 +284,24 @@ class AgentGateway:
                 parts = []
                 for filename in payload.get("files", []):
                     path = Path(str(filename))
-                    if (
-                        path.suffix.casefold()
-                        not in {".lua", ".luau", ".json", ".md", ".txt", ".toml", ".yaml", ".yml"}
-                        or path.stat().st_size > 40000
-                    ):
-                        raise BridgeError(
-                            "Local AI accepts small text/code attachments. Images and large files require a web provider."
+                    try:
+                        valid = (
+                            path.is_file()
+                            and path.suffix.casefold()
+                            in {".lua", ".luau", ".json", ".md", ".txt", ".toml", ".yaml", ".yml"}
+                            and path.stat().st_size <= 40000
                         )
-                    parts.append(f"File: {path.name}\n{path.read_text(encoding='utf-8')}")
+                    except OSError as exc:
+                        raise BridgeError(f"Local attachment is unavailable: {path.name}") from exc
+                    if not valid:
+                        raise BridgeError(
+                            "Local AI accepts existing small text/code attachments. Images and large files require a web provider."
+                        )
+                    try:
+                        content = path.read_text(encoding="utf-8", errors="replace")
+                    except OSError as exc:
+                        raise BridgeError(f"Local attachment could not be read: {path.name}") from exc
+                    parts.append(f"File: {path.name}\n{content}")
                 combined = "\n".join(parts)
                 if len(combined) > 40000:
                     raise BridgeError("Local attachments exceed the context budget.")
