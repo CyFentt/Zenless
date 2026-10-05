@@ -109,6 +109,31 @@ describe('ApplicationRuntime', () => {
     expect(socket.disconnects).toBe(1);
   });
 
+  it('hydrates the newly selected history job instead of keeping the previous snapshot', async () => {
+    const api = new MockZenlessAPI();
+    const socket = new RuntimeSocket();
+    const first = { id: 'job-a', title: 'First', status: 'RUNNING', stage: 'BUILDING', createdAt: 1, updatedAt: 2 } as const;
+    const second = { id: 'job-b', title: 'Second', status: 'COMPLETE', stage: 'COMPLETE', createdAt: 3, updatedAt: 4 } as const;
+    vi.spyOn(api, 'getJobs').mockResolvedValue([first, second] as never);
+    vi.spyOn(api, 'getJob').mockImplementation(async (id) => (id === second.id ? second : first) as never);
+    vi.spyOn(api, 'getMessages').mockImplementation(async (id) => [{
+      id: `msg-${id}`,
+      role: 'user',
+      content: `messages-${id}`,
+      timestamp: 10,
+      jobId: id,
+    }]);
+    const runtime = new ApplicationRuntime(api, socket);
+    await runtime.start();
+    expect(useStore.getState().currentJobId).toBe(first.id);
+    expect(useStore.getState().messages[0]?.content).toBe('messages-job-a');
+
+    useStore.getState().setCurrentJobId(second.id);
+    await waitFor(() => expect(useStore.getState().messages[0]?.content).toBe('messages-job-b'));
+    expect(useStore.getState().currentJobId).toBe(second.id);
+    runtime.stop();
+  });
+
   it('rehydrates the authoritative snapshot after reconnect', async () => {
     const api = new MockZenlessAPI();
     const socket = new RuntimeSocket();
