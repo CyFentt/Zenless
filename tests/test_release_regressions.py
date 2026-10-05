@@ -346,6 +346,8 @@ def test_installer_updates_keep_a_rollback_copy_until_extraction_succeeds():
     assert 'Rename "$INSTDIR\\Rubra.exe.__rubra_old" "$INSTDIR\\Rubra.exe"' in source[rollback:]
     assert 'Rename "$INSTDIR\\app.__rubra_old" "$INSTDIR\\app"' in source[rollback:]
     assert 'Rename "$INSTDIR\\runtime\\python.__rubra_old" "$INSTDIR\\runtime\\python"' in source[rollback:]
+    assert 'fresh_install_failed:' in source[rollback:]
+    assert 'recovery_failed:' in source[rollback:]
     assert 'RMDir /r "$INSTDIR\\runtime"' not in source[:extraction]
 
 
@@ -360,6 +362,7 @@ def test_model_discovery_does_not_treat_menu_buttons_as_options():
     root = Path(__file__).resolve().parents[1]
     source = (root / 'zenless' / 'provider_auth.py').read_text(encoding='utf-8')
     assert "[data-model]:not(button)" in source
+    assert "querySelectorAll('button[data-model]')" not in source
     assert 'open_model_menu_script' in source
 
 
@@ -368,6 +371,8 @@ def test_uninstaller_removes_user_state_and_release_files():
     source = (root / "packaging" / "setup.nsi").read_text(encoding="utf-8")
     uninstall = source[source.index('Section "Uninstall"'):]
     assert 'RMDir /r "$INSTDIR\\data"' in uninstall
+    assert 'Delete "$INSTDIR\\Rubra.exe.__rubra_old"' in uninstall
+    assert 'RMDir /r "$INSTDIR\\app.__rubra_old"' in uninstall
     for name in ("NOTICE.md", "README.md", "RUBRA.md", "NSIS-LICENSE.txt"):
         assert f'Delete "$INSTDIR\\{name}"' in uninstall
 
