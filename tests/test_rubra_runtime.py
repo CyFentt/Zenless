@@ -11,6 +11,7 @@ from unittest.mock import patch
 
 from zenless.local_ai import LocalAIService
 from zenless.project_index import ProjectIndexService
+from zenless.static_quality import StaticQualityRunner
 from zenless.tool_registry import ToolRegistry
 from zenless.toolchain import ToolchainError, ToolchainManager
 
@@ -146,6 +147,37 @@ class RubraRuntimeTests(unittest.TestCase):
             self.assertIn("pesde.toml", metadata)
             self.assertNotIn(".env", metadata)
             self.assertNotIn("SECRET", json.dumps(metadata))
+
+    def test_static_quality_subprocess_is_terminated_on_cancel(self) -> None:
+        class Process:
+            returncode = -15
+
+            def __init__(self) -> None:
+                self.calls = 0
+                self.terminated = False
+
+            def communicate(self, timeout: float | None = None):
+                self.calls += 1
+                if self.calls == 1:
+                    raise subprocess.TimeoutExpired("stylua", timeout or 0)
+                return "cancelled", None
+
+            def terminate(self) -> None:
+                self.terminated = True
+
+            def kill(self) -> None:
+                self.returncode = -9
+
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            process = Process()
+            cancel = __import__("threading").Event()
+            cancel.set()
+            with patch("zenless.static_quality.subprocess.Popen", return_value=process):
+                check = StaticQualityRunner._run_command("StyLua", ["stylua"], root, 30, cancel)
+            self.assertTrue(process.terminated)
+            self.assertEqual(check.status, "FAILED")
+            self.assertIn("Cancelled", check.output)
 
     def test_local_ai_prefers_vulkan_then_cpu(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
