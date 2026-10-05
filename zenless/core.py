@@ -1141,13 +1141,22 @@ class ZenlessCore:
                     status=409,
                     details={"provider": provider},
                 )
-            self.bridge.request(provider, "select_model", {"model": model}, task_id="settings", timeout=15)
+            try:
+                self.bridge.request(provider, "select_model", {"model": model}, task_id="settings", timeout=15)
+            except BridgeError as exc:
+                raise CoreError(
+                    "MODEL_SELECTION_FAILED",
+                    f"{PROVIDER_LABELS[provider]} could not select {model}: {exc}",
+                    status=409,
+                    details={"provider": provider, "model": model},
+                ) from exc
         current = self.settings()
         if provider == "hunyuan":
             current["models"][provider]["version"] = model
         else:
             current["models"][provider]["model"] = model
         self.store.set_setting("ui.settings", current)
+        self._model_cache = None
         self.events.publish("SETTINGS_CHANGED", {"settings": current})
         return True
 
@@ -1304,6 +1313,7 @@ class ZenlessCore:
                 else:
                     raise BridgeError("Login was not confirmed. Reopen the provider window and try again.")
             self._set_connection(provider, "READY")
+            self._model_cache = None
             self.events.publish("AGENT_STATUS_CHANGED", {"agent": provider, "status": "READY"})
             self._set_boot("AI", "READY")
         except Exception as exc:
@@ -1326,6 +1336,7 @@ class ZenlessCore:
     def _on_provider_status(self, provider: str, state: str, _detail: str) -> None:
         if provider in {"chatgpt", "deepseek", "gemini", "hunyuan"}:
             normalized = self._normalize_connection(state)
+            self._model_cache = None
             self._set_connection(provider, normalized)
             self.events.publish("AGENT_STATUS_CHANGED", {"agent": provider, "status": normalized})
         elif provider == "browser":
