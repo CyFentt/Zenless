@@ -173,6 +173,7 @@ export function handleEvent(event: ZenlessEvent) {
     case 'TEST_FINISHED':
       if (useStore.getState().activeTestJobId && useStore.getState().activeTestJobId !== event.data.jobId) break;
       store.setTestState({ ...useStore.getState().testState, status: event.data.passed || event.data.cancelled ? 'STOPPED' : 'FAILED' });
+      useStore.setState({ activeTestJobId: null });
       break;
     case 'SETTINGS_CHANGED':
       if (useStore.getState().settings) {

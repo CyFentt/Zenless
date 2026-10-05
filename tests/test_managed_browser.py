@@ -22,11 +22,18 @@ class ProviderHandler(BaseHTTPRequestHandler):
   <button data-testid="accounts-profile-button">Account</button>
   <textarea id="prompt-textarea"></textarea>
   <input id="upload" type="file" accept="image/png,image/jpeg" multiple>
-  <button data-model="sol">GPT Sol</button>
+  <button id="model-trigger" aria-label="Model selector">Model</button>
+  <div id="model-menu" hidden>
+    <button role="option" data-model="sol">GPT Sol</button>
+    <button role="option" data-model="fast">GPT Fast</button>
+  </div>
   <button id="send">Send</button>
   <main id="messages"></main>
   <script>
     document.cookie = 'zenless_mock_session=ready; SameSite=Lax';
+    document.querySelector('#model-trigger').addEventListener('click', () => {
+      document.querySelector('#model-menu').hidden = false;
+    });
     document.querySelector('#send').addEventListener('click', () => {
       const stop = document.createElement('button');
       stop.id = 'stop';

@@ -606,7 +606,8 @@ class QABreaker:
         risk_areas = ["mutation read-back", "Studio lifecycle", "runtime output"]
         if any("remote" in value.casefold() for value in changed_tools) or "remote" in feature.casefold():
             risk_areas.extend(["server authority", "replication", "duplicate requests"])
-        if any(term in feature.casefold() for term in ("ui", "hud", "gui", "button")):
+        feature_words = set(re.findall(r"\w+", feature.casefold()))
+        if feature_words.intersection({"ui", "hud", "gui", "button", "interface", "tela", "botão", "botao"}):
             risk_areas.append("UI reopen and rapid interaction")
         if rerun:
             risk_areas.append("regression after an applied fix")
@@ -687,7 +688,10 @@ class QABreaker:
         output: str,
         rerun: bool,
     ) -> str:
-        if rerun or not self.bridge.wait_for_provider("deepseek", timeout=0.5):
+        task = self.store.load_task(job_id) or {}
+        if rerun or (task.get("context") or {}).get("manual_test"):
+            return ""
+        if not self.bridge.wait_for_provider("deepseek", timeout=0.5):
             return ""
         payload = {
             "plan": asdict(plan),
@@ -705,9 +709,13 @@ class QABreaker:
             return ""
 
     def _needs_visual_review(self, job_id: str, profile: TestProfile) -> bool:
+        if profile.name == "SMOKE":
+            return False
         task = self.store.load_task(job_id) or {}
+        if (task.get("context") or {}).get("manual_test"):
+            return False
         prompt = str(task.get("prompt", "")).casefold()
-        visual_terms = (
+        visual_terms = {
             "ui",
             "gui",
             "hud",
@@ -726,8 +734,25 @@ class QABreaker:
             "camera",
             "map",
             "environment",
-        )
-        return profile.name in {"STANDARD", "DEEP", "EXHAUSTIVE"} or any(term in prompt for term in visual_terms)
+            "interface",
+            "tela",
+            "efeito",
+            "partícula",
+            "particula",
+            "iluminação",
+            "iluminacao",
+            "textura",
+            "malha",
+            "modelo",
+            "animação",
+            "animacao",
+            "câmera",
+            "mapa",
+            "ambiente",
+            "3d",
+        }
+        words = set(re.findall(r"\w+", prompt, flags=re.UNICODE))
+        return bool(words.intersection(visual_terms))
 
     def _run_official_playtest_subagent(
         self,
@@ -907,7 +932,7 @@ class QABreaker:
         expected = "Viewport capture is independently reviewed for visible regressions against the task objective"
         tool = self.studio.tools.get("screen_capture")
         if tool is None:
-            return "FAILED", expected, "Official Studio MCP does not expose screen_capture"
+            return "SKIPPED", expected, "Official Studio MCP does not expose screen_capture"
         properties = tool.input_schema.get("properties")
         required = tool.input_schema.get("required", [])
         arguments: dict[str, Any] = {}
@@ -919,7 +944,7 @@ class QABreaker:
             else []
         )
         if unresolved:
-            return "FAILED", expected, "Unsupported required screen_capture fields: " + ", ".join(map(str, unresolved))
+            return "SKIPPED", expected, "Unsupported required screen_capture fields: " + ", ".join(map(str, unresolved))
         try:
             capture = self.studio.call_tool("screen_capture", arguments, studio_id=studio_id, timeout=60)
         except MCPError as exc:

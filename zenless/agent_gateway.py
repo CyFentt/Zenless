@@ -115,37 +115,60 @@ class AgentGateway:
     def wait_for_provider(self, provider: str, timeout: float = 5.0) -> bool:
         if self._stopping.is_set():
             return False
-        if self._can_use_local(provider) and self._routes.get(provider) not in {"webview2", "playwright", "extension"}:
+        budget = max(0.0, float(timeout))
+        deadline = time.monotonic() + budget
+        with self._route_lock:
+            selected = self._routes.get(provider)
+        if selected == "local" and self._can_use_local(provider):
+            return True
+        if selected in {"webview2", "playwright"}:
+            if self._route_ready(selected, provider, budget):
+                return True
+            with self._route_lock:
+                if self._routes.get(provider) == selected:
+                    self._routes.pop(provider, None)
+        elif selected == "extension" and self.allow_extension_fallback and self.extension is not None:
+            if self.extension.wait_for_provider(provider, budget):
+                return True
+            with self._route_lock:
+                if self._routes.get(provider) == selected:
+                    self._routes.pop(provider, None)
+
+        def remaining() -> float:
+            return max(0.0, deadline - time.monotonic())
+
+        # Existing authenticated web sessions win over the local fallback.
+        for route in ("webview2", "playwright"):
+            if self._route_ready(route, provider, 0.0):
+                with self._route_lock:
+                    self._routes[provider] = route
+                return True
+
+        for index, route in enumerate(("webview2", "playwright")):
+            left = remaining()
+            if left <= 0:
+                break
+            share = left / (2 - index)
+            if self._route_ready(route, provider, share):
+                with self._route_lock:
+                    self._routes[provider] = route
+                return True
+
+        if self.allow_extension_fallback and self.extension is not None:
+            if self.extension.wait_for_provider(provider, remaining()):
+                with self._route_lock:
+                    self._routes[provider] = "extension"
+                if self.status_callback is not None:
+                    self.status_callback(provider, "Connected", "Extension fallback selected")
+                return True
+
+        if self._can_use_local(provider):
             with self._route_lock:
                 self._routes[provider] = "local"
             if self.status_callback is not None:
                 self.status_callback(
-                    provider, "Ready", "Local model; builder and review use separate inference contexts"
+                    provider, "Ready", "Local model fallback; no authenticated web route is available"
                 )
-            return True
-        embedded_timeout = max(1.0, min(timeout, 20.0))
-        if self.embedded.wait_for_provider(provider, embedded_timeout):
-            with self._route_lock:
-                self._routes[provider] = "webview2"
-            return True
-        managed_timeout = max(1.0, min(timeout, 15.0))
-        if self.managed.wait_for_provider(provider, managed_timeout):
-            with self._route_lock:
-                self._routes[provider] = "playwright"
-            return True
-        if (
-            self.allow_extension_fallback
-            and self.extension is not None
-            and self.extension.wait_for_provider(provider, max(0.0, timeout - managed_timeout - embedded_timeout))
-        ):
-            with self._route_lock:
-                self._routes[provider] = "extension"
-            if self.status_callback is not None:
-                self.status_callback(provider, "Connected", "Extension fallback selected")
-            return True
-        if self._can_use_local(provider):
-            with self._route_lock:
-                self._routes[provider] = "local"
             return True
         return False
 
@@ -237,7 +260,23 @@ class AgentGateway:
         timeout: float,
         stream_callback: Callable[[str], None] | None = None,
     ) -> dict[str, Any]:
-        if self._selected_route(provider) == "local":
+        selected_route = self._selected_route(provider)
+        if selected_route == "local" and action == "select_model":
+            route = self._web_route_for_capability(
+                provider, "select_model", task_id=task_id, timeout=timeout
+            )
+            with self._route_lock:
+                self._routes[provider] = route
+            return self._request_via_route(
+                route,
+                provider,
+                action,
+                payload,
+                task_id=task_id,
+                timeout=timeout,
+                stream_callback=stream_callback,
+            )
+        if selected_route == "local":
             if action == "upload_files":
                 parts = []
                 for filename in payload.get("files", []):
@@ -388,6 +427,41 @@ class AgentGateway:
             "geometry, and texture capabilities."
         )
 
+    def _web_route_for_capability(
+        self,
+        provider: str,
+        capability: str,
+        *,
+        task_id: str,
+        timeout: float,
+    ) -> str:
+        deadline = time.monotonic() + max(0.0, timeout)
+        routes = ("webview2", "playwright")
+        for route in routes:
+            if not self._route_ready(route, provider, 0.0):
+                continue
+            capabilities = self._route_capabilities(route, provider, task_id=task_id, timeout=max(0.1, timeout))
+            if bool(capabilities.get(capability)):
+                return route
+        for index, route in enumerate(routes):
+            remaining = max(0.0, deadline - time.monotonic())
+            if remaining <= 0:
+                break
+            share = remaining / (len(routes) - index)
+            if not self._route_ready(route, provider, share):
+                continue
+            capabilities = self._route_capabilities(
+                route,
+                provider,
+                task_id=task_id,
+                timeout=max(0.1, max(0.0, deadline - time.monotonic())),
+            )
+            if bool(capabilities.get(capability)):
+                return route
+        raise BridgeError(
+            f"CAPABILITY_UNAVAILABLE: {provider} requires an authenticated web route for {capability}."
+        )
+
     def _route_for_action(self, provider: str, action: str, *, task_id: str, timeout: float) -> str:
         route = self._selected_route(provider)
         capability = self._ACTION_CAPABILITIES.get(action)
@@ -470,7 +544,7 @@ class AgentGateway:
         return dict(raw) if isinstance(raw, dict) else {}
 
     def _route_ready(self, route: str, provider: str, timeout: float) -> bool:
-        probe_timeout = max(1.0, min(timeout, 20.0))
+        probe_timeout = max(0.0, min(float(timeout), 20.0))
         if route == "playwright":
             return self.managed.wait_for_provider(provider, probe_timeout)
         if route == "webview2":

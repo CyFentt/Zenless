@@ -74,6 +74,82 @@ def test_model_is_reapplied_to_selected_transport_before_each_prompt():
     assert not gateway._can_use_local('chatgpt')
 
 
+
+
+class _RouteTransport:
+    def __init__(self, *, ready: bool, capabilities: dict[str, object] | None = None) -> None:
+        self.ready = ready
+        self.capabilities = capabilities or {}
+        self.calls: list[tuple[str, str]] = []
+        self.running = True
+
+    def wait_for_provider(self, provider: str, timeout: float = 0.0) -> bool:
+        self.calls.append(("wait", provider))
+        return self.ready
+
+    def provider_status(self) -> dict[str, dict[str, str]]:
+        return {}
+
+    def request(self, provider: str, action: str, payload: dict[str, object], *, task_id: str, timeout: float, stream_callback=None):
+        del payload, task_id, timeout, stream_callback
+        self.calls.append((action, provider))
+        if action == "capabilities":
+            return {"status": "ok", "capabilities": dict(self.capabilities)}
+        if action == "select_model":
+            return {"status": "ok", "selected": "GPT Web"}
+        return {"status": "ok"}
+
+    def send_prompt(self, provider: str, prompt: str, *, task_id: str, timeout: float = 360.0, stream_callback=None) -> str:
+        del task_id, timeout
+        self.calls.append(("send_prompt", provider))
+        if stream_callback is not None:
+            stream_callback(prompt)
+        return prompt
+
+    def start(self) -> None:
+        self.running = True
+
+    def stop(self) -> None:
+        self.running = False
+
+
+def test_authenticated_web_route_wins_before_local_fallback():
+    embedded = _RouteTransport(ready=True, capabilities={"send_text": True, "select_model": True})
+    managed = _RouteTransport(ready=False)
+    gateway = AgentGateway(
+        managed=managed,
+        embedded=embedded,
+        local_available=lambda: True,
+        local_complete=lambda prompt: prompt,
+        selected_model=lambda _: "auto",
+    )
+    assert gateway.wait_for_provider("chatgpt", timeout=0.2)
+    assert gateway._routes["chatgpt"] == "webview2"
+
+
+def test_explicit_model_selection_escapes_local_route_to_managed_web():
+    embedded = _RouteTransport(ready=False)
+    managed = _RouteTransport(ready=True, capabilities={"select_model": True})
+    gateway = AgentGateway(
+        managed=managed,
+        embedded=embedded,
+        local_available=lambda: True,
+        local_complete=lambda prompt: prompt,
+        selected_model=lambda _: "auto",
+    )
+    gateway._routes["chatgpt"] = "local"
+    result = gateway.request(
+        "chatgpt",
+        "select_model",
+        {"model": "GPT Web"},
+        task_id="settings",
+        timeout=1,
+    )
+    assert result["selected"] == "GPT Web"
+    assert gateway._routes["chatgpt"] == "playwright"
+    assert ("select_model", "chatgpt") in managed.calls
+
+
 def test_tool_setup_continues_after_failed_critical_and_prioritizes_sources(tmp_path):
     (tmp_path / 'assets').mkdir()
     (tmp_path / 'assets/toolchain.json').write_text(json.dumps({'artifacts': [
@@ -104,6 +180,36 @@ def test_manual_test_plan_never_waits_for_an_ai_account(tmp_path):
     with patch.object(qa, '_ai_scenarios', side_effect=AssertionError('must not call AI')):
         for profile in PROFILES.values():
             assert qa._make_plan('manual', profile, [], 1, False).scenarios
+
+
+def test_manual_test_skips_ai_review_and_visual_review(tmp_path):
+    store = SQLiteStore(tmp_path / 'state.db')
+    store.create_task('manual-review', 'Play Test: My Place', TaskOptions())
+    store.update_task('manual-review', context_json={'manual_test': True})
+    bridge = Mock()
+    qa = QABreaker(store=store, studio=Mock(), bridge=bridge, events=EventBus())
+    assert not qa._needs_visual_review('manual-review', PROFILES['STANDARD'])
+    assert qa._review_results('manual-review', qa._make_plan('manual-review', PROFILES['STANDARD'], [], 1, False), [], '', False) == ''
+    bridge.wait_for_provider.assert_not_called()
+
+
+def test_standard_code_task_does_not_require_visual_review(tmp_path):
+    store = SQLiteStore(tmp_path / 'state.db')
+    store.create_task('code', 'Build server datastore retry logic', TaskOptions())
+    store.create_task('visual', 'Fix HUD menu clipping and camera layout', TaskOptions())
+    qa = QABreaker(store=store, studio=Mock(), bridge=Mock(), events=EventBus())
+    assert not qa._needs_visual_review('code', PROFILES['STANDARD'])
+    assert qa._needs_visual_review('visual', PROFILES['STANDARD'])
+
+
+def test_missing_screen_capture_is_an_optional_visual_skip(tmp_path):
+    store = SQLiteStore(tmp_path / 'state.db')
+    store.create_task('visual-skip', 'Fix HUD layout', TaskOptions())
+    studio = Mock()
+    studio.tools = {}
+    qa = QABreaker(store=store, studio=studio, bridge=Mock(), events=EventBus())
+    status, _, _ = qa._run_visual_review('visual-skip', 'studio', 1)
+    assert status == 'SKIPPED'
 
 
 def test_local_shutdown_can_interrupt_an_active_completion(tmp_path):

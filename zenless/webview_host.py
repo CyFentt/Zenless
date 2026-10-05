@@ -360,15 +360,23 @@ class WebViewHost:
 
     @staticmethod
     def _select_model(window: Any, model: str) -> dict[str, Any]:
-        result = window.evaluate_js(model_options_script(model))
-        if not isinstance(result, dict) or not result.get("ok"):
-            raise RuntimeError(f"Model option not found: {model}. Open the provider's model menu and refresh Models.")
-        return {"status": "ok", "selected": str(result.get("selected") or model), "transport": "webview2"}
+        if not model.strip():
+            raise RuntimeError("Model selection requires a model name.")
+        for _ in range(8):
+            result = window.evaluate_js(model_options_script(model))
+            if isinstance(result, dict) and result.get("ok"):
+                return {"status": "ok", "selected": str(result.get("selected") or model), "transport": "webview2"}
+            time.sleep(0.3)
+        raise RuntimeError(f"Model option not found: {model}. Refresh Models after the provider finishes loading.")
 
     @staticmethod
     def _discover_models(window: Any) -> dict[str, Any]:
-        result = window.evaluate_js(model_options_script())
-        return {"status": "ok", "models": result if isinstance(result, list) else [], "transport": "webview2"}
+        for _ in range(6):
+            result = window.evaluate_js(model_options_script())
+            if isinstance(result, list) and result:
+                return {"status": "ok", "models": result, "transport": "webview2"}
+            time.sleep(0.3)
+        return {"status": "ok", "models": [], "transport": "webview2"}
 
     @staticmethod
     def _cancel(window: Any, spec: ProviderSpec) -> dict[str, Any]:
