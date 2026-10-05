@@ -182,6 +182,36 @@ def test_manual_test_plan_never_waits_for_an_ai_account(tmp_path):
             assert qa._make_plan('manual', profile, [], 1, False).scenarios
 
 
+def test_manual_test_skips_ai_review_and_visual_review(tmp_path):
+    store = SQLiteStore(tmp_path / 'state.db')
+    store.create_task('manual-review', 'Play Test: My Place', TaskOptions())
+    store.update_task('manual-review', context_json={'manual_test': True})
+    bridge = Mock()
+    qa = QABreaker(store=store, studio=Mock(), bridge=bridge, events=EventBus())
+    assert not qa._needs_visual_review('manual-review', PROFILES['STANDARD'])
+    assert qa._review_results('manual-review', qa._make_plan('manual-review', PROFILES['STANDARD'], [], 1, False), [], '', False) == ''
+    bridge.wait_for_provider.assert_not_called()
+
+
+def test_standard_code_task_does_not_require_visual_review(tmp_path):
+    store = SQLiteStore(tmp_path / 'state.db')
+    store.create_task('code', 'Refactor server datastore retry logic', TaskOptions())
+    store.create_task('visual', 'Fix HUD menu clipping and camera layout', TaskOptions())
+    qa = QABreaker(store=store, studio=Mock(), bridge=Mock(), events=EventBus())
+    assert not qa._needs_visual_review('code', PROFILES['STANDARD'])
+    assert qa._needs_visual_review('visual', PROFILES['STANDARD'])
+
+
+def test_missing_screen_capture_is_an_optional_visual_skip(tmp_path):
+    store = SQLiteStore(tmp_path / 'state.db')
+    store.create_task('visual-skip', 'Fix HUD layout', TaskOptions())
+    studio = Mock()
+    studio.tools = {}
+    qa = QABreaker(store=store, studio=studio, bridge=Mock(), events=EventBus())
+    status, _, _ = qa._run_visual_review('visual-skip', 'studio', 1)
+    assert status == 'SKIPPED'
+
+
 def test_local_shutdown_can_interrupt_an_active_completion(tmp_path):
     service = LocalAIService(tmp_path)
     entered, finish = threading.Event(), threading.Event()
