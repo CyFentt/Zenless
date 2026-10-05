@@ -62,6 +62,27 @@ class CoreTests(unittest.TestCase):
         self.assertFalse(legacy.require_approval)
         self.assertEqual(legacy.approval_mode, "full_auto")
 
+    def test_task_options_parse_string_booleans_explicitly(self) -> None:
+        options = TaskOptions.from_api({
+            "visualFirst": "false",
+            "create3D": "0",
+            "review": "false",
+            "autoTest": "off",
+            "autoFix": "no",
+            "continuousVerification": "false",
+            "smartRouting": "false",
+            "approval": "false",
+        })
+        self.assertFalse(options.visual_first)
+        self.assertFalse(options.create_3d_asset)
+        self.assertFalse(options.independent_review)
+        self.assertFalse(options.automatic_play_test)
+        self.assertFalse(options.auto_fix_errors)
+        self.assertFalse(options.continuous_verification)
+        self.assertFalse(options.smart_routing)
+        self.assertEqual(options.approval_mode, "full_auto")
+
+
     def test_3d_option_forces_visual_first_but_non_3d_can_skip_it(self) -> None:
         model = TaskOptions.from_api({"visualFirst": False, "create3D": True})
         plain = TaskOptions.from_api({"visualFirst": False, "create3D": False})
