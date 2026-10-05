@@ -42,7 +42,7 @@ export class ApplicationRuntime {
       await this.rehydrate();
       if (!this.active) return;
       this.unsubscribeJob = useStore.subscribe((state, previous) => {
-        if (!this.active || state.currentJobId === previous.currentJobId) return;
+        if (!this.active || this.hydration || state.currentJobId === previous.currentJobId) return;
         void this.loadSelectedJob(state.currentJobId);
       });
     } catch (error) {
