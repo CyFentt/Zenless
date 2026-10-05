@@ -19,7 +19,6 @@ export function ChatPage() {
   const addMessage = useStore((s) => s.addMessage);
   const setMessages = useStore((s) => s.setMessages);
   const reconcileMessage = useStore((s) => s.reconcileMessage);
-  const upsertJob = useStore((s) => s.upsertJob);
   const currentJobId = useStore((s) => s.currentJobId);
   const setCurrentJobId = useStore((s) => s.setCurrentJobId);
   const connections = useStore((s) => s.connections);
@@ -76,13 +75,15 @@ export function ChatPage() {
     try {
       const result = await getApi().sendMessage(content, currentJobId ?? undefined, files, options);
       reconcileMessage(localId, result.messageId, result.jobId);
-      if (result.jobId) {
-        setCurrentJobId(result.jobId);
-        const [job, snapshot] = await Promise.all([getApi().getJob(result.jobId), getApi().getMessages(result.jobId)]);
-        upsertJob(job);
-        if (useStore.getState().currentJobId === result.jobId) setMessages(snapshot);
-      }
+      if (result.jobId) setCurrentJobId(result.jobId);
     } catch (error) {
+      setMessages(useStore.getState().messages.filter((message) => message.id !== localId));
+      setInput(content);
+      setAttachments(files.map((file, index) => ({
+        id: `retry_${Date.now()}_${index}`,
+        file,
+        previewUrl: file.type.startsWith('image/') ? URL.createObjectURL(file) : undefined,
+      })));
       frontendDiagnostics.capture(error, 'chat', 'Failed to send message', { jobId: currentJobId ?? undefined });
       addMessage({
         id: `error_${crypto.randomUUID?.() ?? Date.now()}`,
