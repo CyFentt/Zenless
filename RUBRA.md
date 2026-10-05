@@ -40,7 +40,7 @@ The local Qwen model is installed automatically only when the machine has at lea
 
 ## Studio authority
 
-Rubra prefers Roblox's current Studio MCP launcher at %LOCALAPPDATA%\\Roblox\\mcp.bat and falls back to versioned StudioMCP.exe discovery. Every Studio operation remains scoped to a concrete studio_id.
+Rubra prefers the newest StudioMCP.exe paired with an installed Roblox Studio version and uses %LOCALAPPDATA%\\Roblox\\mcp.bat only when no versioned StudioMCP binary is available. Every Studio operation remains scoped to a concrete studio_id.
 
 ## Verification policy
 
