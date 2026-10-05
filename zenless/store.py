@@ -601,7 +601,7 @@ class SQLiteStore:
         digest = hashlib.sha256(text.encode("utf-8", "replace")).hexdigest()
         head_size = cls.MAX_MESSAGE_CHARS * 3 // 4
         tail_size = cls.MAX_MESSAGE_CHARS - head_size - 160
-        marker = f"\n\n[ZENLESS COMPACTED original_chars={len(text)} sha256={digest}]\n\n"
+        marker = f"\n\n[RUBRA COMPACTED original_chars={len(text)} sha256={digest}]\n\n"
         return text[:head_size] + marker + text[-max(1000, tail_size) :]
 
     @staticmethod
