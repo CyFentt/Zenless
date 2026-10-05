@@ -11,9 +11,7 @@ export interface AgentInfo {
   name: string;
   status: ConnectionStatus;
   model?: string;
-  reasoning?: boolean;
   version?: string;
-  quality?: string;
 }
 
 export const PROVIDER_NAMES: Record<ProviderId, string> = {
@@ -404,18 +402,18 @@ export interface ModelOption {
 }
 
 export interface ModelSettings {
-  chatgpt: { model: string; reasoning: boolean };
-  deepseek: { model: string; reasoning: boolean };
-  gemini: { model: string; reasoning: boolean };
-  hunyuan: { version: string; quality: string };
+  chatgpt: { model: string };
+  deepseek: { model: string };
+  gemini: { model: string };
+  hunyuan: { version: string };
   smartRouting: boolean;
 }
 
 export interface ModelCatalog {
-  chatgpt: { models: ModelOption[]; reasoningOptions?: ModelOption[] };
-  deepseek: { models: ModelOption[]; reasoningOptions?: ModelOption[] };
-  gemini: { models: ModelOption[]; reasoningOptions?: ModelOption[] };
-  hunyuan: { versions: ModelOption[]; qualities: ModelOption[] };
+  chatgpt: { models: ModelOption[] };
+  deepseek: { models: ModelOption[] };
+  gemini: { models: ModelOption[] };
+  hunyuan: { versions: ModelOption[] };
 }
 
 export interface Settings {
