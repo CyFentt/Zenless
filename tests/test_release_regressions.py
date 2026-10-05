@@ -152,6 +152,7 @@ def test_set_model_requires_exact_provider_confirmation_and_invalidates_cache():
     core.store = Mock()
     core.events = Mock()
     core._settings_lock = threading.RLock()
+    core._model_selection_lock = threading.Lock()
     core._model_cache = (1.0, {'stale': True})
     settings = {
         'models': {
