@@ -40,16 +40,45 @@ def authentication_script(provider: str, inputs: tuple[str, ...], origin_url: st
 def model_options_script(model: str = "") -> str:
     return f"""(() => {{
       const wanted = {json.dumps(model)}.trim().toLowerCase();
-      const visible = node => {{ const b = node.getBoundingClientRect(); return b.width > 0 && b.height > 0 && getComputedStyle(node).visibility !== 'hidden'; }};
+      const visible = node => {{
+        if (!node) return false;
+        const b = node.getBoundingClientRect(), style = getComputedStyle(node);
+        return b.width > 0 && b.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+      }};
+      const textOf = node => (node.getAttribute('data-model') || node.innerText || node.textContent || '').trim();
       const modelLabel = value => /^(?:gpt[- ]|o[1-9](?:[- ]|$)|chatgpt|deepseek|gemini|qwen|hunyuan|hunyuan3d)/i.test(value);
-      const candidates = [...document.querySelectorAll('[data-model], [role="option"], [role="menuitem"], button')].filter(node => {{
-        const text = (node.innerText || node.textContent || '').trim();
+      const options = [...document.querySelectorAll('[data-model], [role="option"], [role="menuitem"]')].filter(node => {{
+        const text = textOf(node);
         return visible(node) && (node.hasAttribute('data-model') || modelLabel(text)) && text.length <= 120;
       }});
       if (wanted) {{
-        const found = candidates.find(node => (node.getAttribute('data-model') || '').toLowerCase() === wanted || (node.innerText || node.textContent || '').trim().toLowerCase() === wanted);
+        const found = options.find(node => textOf(node).toLowerCase() === wanted);
         if (!found) return {{ok: false}};
-        found.click(); return {{ok: true, selected: (found.innerText || found.textContent || '').trim()}};
+        found.click();
+        return {{ok: true, selected: textOf(found)}};
       }}
-      return [...new Set(candidates.map(node => (node.getAttribute('data-model') || node.innerText || node.textContent || '').trim()).filter(Boolean))].slice(0,30);
+      const buttons = [...document.querySelectorAll('button[data-model]')].filter(node => visible(node) && modelLabel(textOf(node)));
+      return [...new Set([...options, ...buttons].map(textOf).filter(Boolean))].slice(0,30);
     }})()"""
+
+
+def open_model_menu_script() -> str:
+    return r"""(() => {
+      const visible = node => {
+        if (!node) return false;
+        const b = node.getBoundingClientRect(), style = getComputedStyle(node);
+        return b.width > 0 && b.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+      };
+      const label = node => [
+        node.innerText || node.textContent || '',
+        node.getAttribute('aria-label') || '',
+        node.getAttribute('title') || '',
+        node.getAttribute('data-testid') || ''
+      ].join(' ').trim();
+      const candidates = [...document.querySelectorAll(
+        'button[aria-haspopup="menu"], button[aria-haspopup="listbox"], button[aria-expanded], button[data-testid*="model" i], button[aria-label*="model" i], button[title*="model" i]'
+      )].filter(node => visible(node) && /model|gpt|deepseek|gemini|qwen|hunyuan/i.test(label(node)));
+      if (!candidates.length) return false;
+      candidates[0].click();
+      return true;
+    })()"""
