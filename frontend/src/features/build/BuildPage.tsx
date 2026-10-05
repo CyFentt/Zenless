@@ -256,7 +256,7 @@ function ChangesTab() {
   const changedFiles = useStore((s) => s.changedFiles);
   const setChangedFiles = useStore((s) => s.setChangedFiles);
   const [reviewState, setReviewState] = useState<{ jobId: string; review: Review } | null>(null);
-  const review = reviewState?.jobId === currentJobId && reviewState.review.ready ? reviewState.review : null;
+  const review = reviewState?.jobId === currentJobId && reviewState.review.ready && currentJob?.stage === 'WAITING_CHANGE_APPROVAL' ? reviewState.review : null;
   const selectedFileId = useStore((s) => s.selectedFileId);
   const setSelectedFileId = useStore((s) => s.setSelectedFileId);
 
@@ -303,11 +303,11 @@ function ChangesTab() {
     }
   };
 
-  const handleSaveContent = async (fileId: string, content: string) => {
+  const handleRequestChanges = async (fileId: string, note: string) => {
     if (!currentJobId) return;
-    await getApi().editChanges(currentJobId, fileId, content);
-    const updated = await getApi().getChanges(currentJobId);
-    setChangedFiles(updated);
+    await getApi().editChanges(currentJobId, fileId, note);
+    setChangedFiles([]);
+    setSelectedFileId(null);
   };
 
   return (
@@ -442,7 +442,7 @@ function ChangesTab() {
 
       <div className="flex-1 p-3 overflow-hidden">
         {selectedFile ? (
-          <DiffViewer file={selectedFile} onSaveContent={handleSaveContent} />
+          <DiffViewer file={selectedFile} onRequestChanges={handleRequestChanges} />
         ) : (
           <div className="flex items-center justify-center h-full text-xs font-mono text-ink-400 uppercase">
             NO FILE SELECTED
