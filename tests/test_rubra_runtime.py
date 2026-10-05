@@ -11,11 +11,19 @@ from unittest.mock import patch
 from zenless.local_ai import LocalAIService
 from zenless.project_index import ProjectIndexService
 from zenless.tool_registry import ToolRegistry
-from zenless.toolchain import ToolchainManager
+from zenless.toolchain import ToolchainError, ToolchainManager
 
 
 class RubraRuntimeTests(unittest.TestCase):
-    def test_optional_npm_timeout_does_not_stop_later_packages(self) -> None:
+    def test_optional_npm_failure_does_not_stop_later_packages(self) -> None:
+        class Process:
+            def __init__(self, returncode: int, output: str) -> None:
+                self.returncode = returncode
+                self.output = output
+
+            def communicate(self, timeout: float | None = None):
+                return self.output, None
+
         with tempfile.TemporaryDirectory(prefix="rubra spaced path ") as folder:
             root = Path(folder)
             (root / "assets").mkdir()
@@ -32,9 +40,9 @@ class RubraRuntimeTests(unittest.TestCase):
             results = []
             with (
                 patch.object(manager, "path", return_value=node),
-                patch("zenless.toolchain.subprocess.run", side_effect=[
-                    subprocess.TimeoutExpired("npm", 900),
-                    subprocess.CompletedProcess([], 0, "installed"),
+                patch("zenless.toolchain.subprocess.Popen", side_effect=[
+                    Process(1, "failed"),
+                    Process(0, "installed"),
                 ]) as execute,
             ):
                 manager._ensure_npm_packages(results)
@@ -42,6 +50,49 @@ class RubraRuntimeTests(unittest.TestCase):
             self.assertEqual(execute.call_args.args[0][:2], [str(node), str(npm)])
             self.assertFalse((root / "runtime/npm/.rubra-packages/optional").exists())
             self.assertTrue((root / "runtime/npm/.rubra-packages/next").exists())
+
+    def test_npm_provisioning_terminates_when_tool_preparation_is_cancelled(self) -> None:
+        class CancellingProcess:
+            returncode = -15
+
+            def __init__(self, manager: ToolchainManager) -> None:
+                self.manager = manager
+                self.calls = 0
+                self.terminated = False
+
+            def communicate(self, timeout: float | None = None):
+                self.calls += 1
+                if self.calls == 1:
+                    self.manager.cancel_event.set()
+                    raise subprocess.TimeoutExpired("npm", timeout or 0)
+                return "cancelled", None
+
+            def terminate(self) -> None:
+                self.terminated = True
+
+            def kill(self) -> None:
+                self.returncode = -9
+
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / "assets").mkdir()
+            (root / "assets/toolchain.json").write_text(json.dumps({"npm": [
+                {"id": "required", "package": "required@1.0.0", "critical": True},
+            ]}))
+            node = root / "runtime/node/node.exe"
+            npm = node.parent / "node_modules/npm/bin/npm-cli.js"
+            npm.parent.mkdir(parents=True)
+            node.write_bytes(b"node")
+            npm.write_text("npm")
+            manager = ToolchainManager(resource_root=root, portable_root=root)
+            process = CancellingProcess(manager)
+            with (
+                patch.object(manager, "path", return_value=node),
+                patch("zenless.toolchain.subprocess.Popen", return_value=process),
+                self.assertRaises(ToolchainError),
+            ):
+                manager._ensure_npm_packages([])
+            self.assertTrue(process.terminated)
 
     def test_project_metadata_is_scoped_to_known_nonsecret_manifests(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
