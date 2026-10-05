@@ -74,6 +74,82 @@ def test_model_is_reapplied_to_selected_transport_before_each_prompt():
     assert not gateway._can_use_local('chatgpt')
 
 
+
+
+class _RouteTransport:
+    def __init__(self, *, ready: bool, capabilities: dict[str, object] | None = None) -> None:
+        self.ready = ready
+        self.capabilities = capabilities or {}
+        self.calls: list[tuple[str, str]] = []
+        self.running = True
+
+    def wait_for_provider(self, provider: str, timeout: float = 0.0) -> bool:
+        self.calls.append(("wait", provider))
+        return self.ready
+
+    def provider_status(self) -> dict[str, dict[str, str]]:
+        return {}
+
+    def request(self, provider: str, action: str, payload: dict[str, object], *, task_id: str, timeout: float, stream_callback=None):
+        del payload, task_id, timeout, stream_callback
+        self.calls.append((action, provider))
+        if action == "capabilities":
+            return {"status": "ok", "capabilities": dict(self.capabilities)}
+        if action == "select_model":
+            return {"status": "ok", "selected": "GPT Web"}
+        return {"status": "ok"}
+
+    def send_prompt(self, provider: str, prompt: str, *, task_id: str, timeout: float = 360.0, stream_callback=None) -> str:
+        del task_id, timeout
+        self.calls.append(("send_prompt", provider))
+        if stream_callback is not None:
+            stream_callback(prompt)
+        return prompt
+
+    def start(self) -> None:
+        self.running = True
+
+    def stop(self) -> None:
+        self.running = False
+
+
+def test_authenticated_web_route_wins_before_local_fallback():
+    embedded = _RouteTransport(ready=True, capabilities={"send_text": True, "select_model": True})
+    managed = _RouteTransport(ready=False)
+    gateway = AgentGateway(
+        managed=managed,
+        embedded=embedded,
+        local_available=lambda: True,
+        local_complete=lambda prompt: prompt,
+        selected_model=lambda _: "auto",
+    )
+    assert gateway.wait_for_provider("chatgpt", timeout=0.2)
+    assert gateway._routes["chatgpt"] == "webview2"
+
+
+def test_explicit_model_selection_escapes_local_route_to_managed_web():
+    embedded = _RouteTransport(ready=False)
+    managed = _RouteTransport(ready=True, capabilities={"select_model": True})
+    gateway = AgentGateway(
+        managed=managed,
+        embedded=embedded,
+        local_available=lambda: True,
+        local_complete=lambda prompt: prompt,
+        selected_model=lambda _: "auto",
+    )
+    gateway._routes["chatgpt"] = "local"
+    result = gateway.request(
+        "chatgpt",
+        "select_model",
+        {"model": "GPT Web"},
+        task_id="settings",
+        timeout=1,
+    )
+    assert result["selected"] == "GPT Web"
+    assert gateway._routes["chatgpt"] == "playwright"
+    assert ("select_model", "chatgpt") in managed.calls
+
+
 def test_tool_setup_continues_after_failed_critical_and_prioritizes_sources(tmp_path):
     (tmp_path / 'assets').mkdir()
     (tmp_path / 'assets/toolchain.json').write_text(json.dumps({'artifacts': [
