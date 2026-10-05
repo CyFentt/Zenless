@@ -165,6 +165,14 @@ SectionEnd
 
 Section "Uninstall"
   SetShellVarContext current
+
+  ; Rubra.exe stays alive while the desktop Python process is running. Check it
+  ; before deleting shortcuts, runtime or user data so an open app cannot leave
+  ; a destructive partial uninstall.
+  ClearErrors
+  Delete "$INSTDIR\Rubra.exe"
+  IfErrors uninstall_close_required
+
   Delete "$DESKTOP\Rubra.lnk"
   Delete "$SMPROGRAMS\Rubra\Rubra.lnk"
   RMDir "$SMPROGRAMS\Rubra"
@@ -172,7 +180,6 @@ Section "Uninstall"
   RMDir /r "$INSTDIR\app.__rubra_old"
   RMDir /r "$INSTDIR\runtime"
   RMDir /r "$INSTDIR\data"
-  Delete "$INSTDIR\Rubra.exe"
   Delete "$INSTDIR\Rubra.exe.__rubra_old"
   Delete "$INSTDIR\Uninstall.exe"
   Delete "$INSTDIR\rubra-install.ini"
@@ -187,4 +194,11 @@ Section "Uninstall"
   RMDir "$INSTDIR"
   DeleteRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Rubra"
   DeleteRegKey HKCU "Software\Rubra"
+  Goto uninstall_done
+
+  uninstall_close_required:
+  MessageBox MB_OK|MB_ICONSTOP "Rubra is still running. Quit Rubra from the notification area, then run the uninstaller again."
+  Abort
+
+  uninstall_done:
 SectionEnd
