@@ -30,7 +30,7 @@ jobs:
       - name: Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.14"
+          python-version: "3.14.7"
           cache: pip
           cache-dependency-path: |
             requirements.txt
@@ -102,7 +102,7 @@ jobs:
       - name: Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.14"
+          python-version: "3.14.7"
           cache: pip
           cache-dependency-path: |
             requirements.txt
