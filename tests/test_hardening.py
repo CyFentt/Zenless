@@ -112,7 +112,7 @@ class HardeningTests(unittest.TestCase):
             store.create_task(second, "compact", TaskOptions())
             store.append_message(second, "Provider", "agent", huge)
             compacted = store.task_messages(second)[0]["content"]
-            self.assertIn("ZENLESS COMPACTED", compacted)
+            self.assertIn("RUBRA COMPACTED", compacted)
             self.assertLessEqual(len(compacted), store.MAX_MESSAGE_CHARS + 200)
 
     def test_storage_cleanup_never_traverses_profile_auth_state(self) -> None:
