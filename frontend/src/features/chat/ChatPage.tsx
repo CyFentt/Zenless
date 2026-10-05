@@ -80,7 +80,7 @@ export function ChatPage() {
         setCurrentJobId(result.jobId);
         const [job, snapshot] = await Promise.all([getApi().getJob(result.jobId), getApi().getMessages(result.jobId)]);
         upsertJob(job);
-        setMessages(snapshot);
+        if (useStore.getState().currentJobId === result.jobId) setMessages(snapshot);
       }
     } catch (error) {
       frontendDiagnostics.capture(error, 'chat', 'Failed to send message', { jobId: currentJobId ?? undefined });
