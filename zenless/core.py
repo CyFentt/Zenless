@@ -344,6 +344,42 @@ class ZenlessCore:
             raise CoreError("JOB_NOT_FOUND", "Job not found.", status=404)
         return self._task_to_job(task)
 
+    def _create_job(
+        self,
+        title: str,
+        options: dict[str, Any] | None = None,
+        *,
+        attachments: tuple[Path, ...] = (),
+        parent_job_id: str = "",
+    ) -> tuple[dict[str, Any], int]:
+        prepared_job: dict[str, Any] | None = None
+        initial_message_id = 0
+
+        def prepare(task_id: str, _message_id: int) -> None:
+            for path in attachments:
+                self._register_file_asset(path, job_id=task_id, kind="IMG" if self._is_image(path) else "RBX")
+
+        def ready(task_id: str, message_id: int) -> None:
+            nonlocal prepared_job, initial_message_id
+            prepared_job = self.job(task_id)
+            initial_message_id = message_id
+
+        try:
+            self.orchestrator.submit(
+                title,
+                TaskOptions.from_api(options),
+                attachment_paths=attachments,
+                studio_id=self._studio_target_id if self.connections()["studio"] == "READY" else "",
+                parent_task_id=parent_job_id,
+                prepare_callback=prepare if attachments else None,
+                ready_callback=ready,
+            )
+        except OrchestratorError as exc:
+            raise CoreError("JOB_BUSY", str(exc), status=409) from exc
+        if prepared_job is None or initial_message_id <= 0:
+            raise CoreError("JOB_PREPARATION_FAILED", "The job could not be prepared before execution.", status=500)
+        return prepared_job, initial_message_id
+
     def create_job(
         self,
         title: str,
@@ -352,22 +388,13 @@ class ZenlessCore:
         attachments: tuple[Path, ...] = (),
         parent_job_id: str = "",
     ) -> dict[str, Any]:
-        def prepare(task_id: str) -> None:
-            for path in attachments:
-                self._register_file_asset(path, job_id=task_id, kind="IMG" if self._is_image(path) else "RBX")
-
-        try:
-            task_id = self.orchestrator.submit(
-                title,
-                TaskOptions.from_api(options),
-                attachment_paths=attachments,
-                studio_id=self._studio_target_id if self.connections()["studio"] == "READY" else "",
-                parent_task_id=parent_job_id,
-                prepare_callback=prepare if attachments else None,
-            )
-        except OrchestratorError as exc:
-            raise CoreError("JOB_BUSY", str(exc), status=409) from exc
-        return self.job(task_id)
+        job, _ = self._create_job(
+            title,
+            options,
+            attachments=attachments,
+            parent_job_id=parent_job_id,
+        )
+        return job
 
     def pause_job(self, job_id: str) -> dict[str, Any]:
         if not self.orchestrator.pause(job_id):
@@ -463,15 +490,13 @@ class ZenlessCore:
         )
         task_options = TaskOptions.from_api(effective_options)
         self._preflight_providers(task_options)
-        job = self.create_job(
+        job, message_row_id = self._create_job(
             objective,
             options=effective_options,
             attachments=attachments,
             parent_job_id=job_id or "",
         )
-        user_messages = [message for message in self.messages(job["id"]) if message["role"] == "user"]
-        message_id = user_messages[-1]["id"] if user_messages else uuid.uuid4().hex
-        return {"messageId": message_id, "jobId": job["id"]}
+        return {"messageId": f"msg-{message_row_id}", "jobId": job["id"]}
 
     def cancel_generation(self, job_id: str) -> bool:
         result = self.cancel_job(job_id)
