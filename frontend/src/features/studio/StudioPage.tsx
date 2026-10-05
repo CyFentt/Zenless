@@ -17,8 +17,8 @@ export function StudioPage() {
   const setSelectedNode = useStore((s) => s.setSelectedStudioNode);
   const studioQuery = useStore((s) => s.studioQuery);
   const setStudioQuery = useStore((s) => s.setStudioQuery);
-  const currentJobId = useStore((s) => s.currentJobId);
   const inspectRequest = useRef(0);
+  const searchRequest = useRef(0);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [searchResults, setSearchResults] = useState<StudioNode[] | null>(null);
 
@@ -35,11 +35,16 @@ export function StudioPage() {
   }, [setStudioTree, setStudioState]);
 
   useEffect(() => {
-    if (!studioQuery.trim()) { setSearchResults(null); return; }
+    if (!studioQuery.trim()) {
+      searchRequest.current += 1;
+      setSearchResults(null);
+      return;
+    }
+    const request = ++searchRequest.current;
     const timer = window.setTimeout(() => {
       getApi().searchStudio(studioQuery)
-        .then(setSearchResults)
-        .catch((error) => frontendDiagnostics.capture(error, 'studio', 'Studio search failed'));
+        .then((results) => { if (request === searchRequest.current) setSearchResults(results); })
+        .catch((error) => { if (request === searchRequest.current) frontendDiagnostics.capture(error, 'studio', 'Studio search failed'); });
     }, 200);
     return () => window.clearTimeout(timer);
   }, [studioQuery]);
@@ -86,8 +91,8 @@ export function StudioPage() {
 
   const handlePlay = async () => {
     try {
-      if (currentJobId) await getApi().startTest(currentJobId);
-      else { const result = await getApi().startStudioTest(); useStore.setState({ activeTestJobId: result.jobId }); }
+      const result = await getApi().startStudioTest();
+      useStore.setState({ activeTestJobId: result.jobId });
       useStore.getState().setActivePage('test');
     }
     catch (error) { frontendDiagnostics.capture(error, 'studio', 'Failed to start Play Test'); }
