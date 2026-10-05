@@ -1186,7 +1186,7 @@ class ZenlessCore:
         with self._settings_lock:
             current = self.settings()
             if "autoApprove" in patch:
-                current["autoApprove"] = bool(patch["autoApprove"])
+                current["autoApprove"] = TaskOptions._boolean(patch["autoApprove"], bool(current["autoApprove"]))
                 current["approvalMode"] = "FULL_AUTO" if current["autoApprove"] else "ASK"
             if "approvalMode" in patch:
                 approval_mode = str(patch["approvalMode"] or "ASK").strip().upper().replace("-", "_").replace(" ", "_")
@@ -1203,9 +1203,9 @@ class ZenlessCore:
                 except ProjectIndexError as exc:
                     raise CoreError("INVALID_PROJECT_ROOT", str(exc), status=400) from exc
             if "semanticIndex" in patch:
-                current["semanticIndex"] = bool(patch["semanticIndex"])
+                current["semanticIndex"] = TaskOptions._boolean(patch["semanticIndex"], bool(current["semanticIndex"]))
             if "localAI" in patch:
-                current["localAI"] = bool(patch["localAI"])
+                current["localAI"] = TaskOptions._boolean(patch["localAI"], bool(current["localAI"]))
                 if not current["localAI"]:
                     self.local_ai.close()
             if "models" in patch and isinstance(patch["models"], dict):
@@ -1308,10 +1308,12 @@ class ZenlessCore:
                 self.events.publish("SETTINGS_CHANGED", {"settings": current})
             return True
 
-    def set_smart_routing(self, enabled: bool) -> bool:
+    def set_smart_routing(self, enabled: Any) -> bool:
         with self._settings_lock:
             current = self.settings()
-            current["models"]["smartRouting"] = bool(enabled)
+            current["models"]["smartRouting"] = TaskOptions._boolean(
+                enabled, bool(current["models"]["smartRouting"])
+            )
             self.store.set_setting("ui.settings", current)
             self.events.publish("SETTINGS_CHANGED", {"settings": current})
         return True
