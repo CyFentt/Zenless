@@ -96,7 +96,7 @@ class BrowserBridge:
             self._ready.clear()
             self._stop_requested.clear()
             self._start_error = ""
-            self._thread = threading.Thread(target=self._serve, name="Zenless-BrowserBridge", daemon=True)
+            self._thread = threading.Thread(target=self._serve, name="Rubra-BrowserBridge", daemon=True)
             self._thread.start()
         if not self._ready.wait(timeout):
             raise BridgeError("The bridge did not confirm startup within the expected time.")
@@ -236,7 +236,7 @@ class BrowserBridge:
                 if self._stop_requested.is_set():
                     threading.Thread(
                         target=server.shutdown,
-                        name="Zenless-BrowserBridge-EarlyStop",
+                        name="Rubra-BrowserBridge-EarlyStop",
                         daemon=True,
                     ).start()
                 server.serve_forever()
