@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import threading
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
@@ -147,3 +148,31 @@ def test_background_health_and_requests_do_not_close_active_login(tmp_path):
         with pytest.raises(BridgeError, match="LOGIN_IN_PROGRESS"):
             controller._handle(_Command("login", "deepseek"))
         context.assert_not_called()
+
+def test_frontend_lockfile_keeps_resolved_package_versions_consistent():
+    root = Path(__file__).resolve().parents[1]
+    lock = json.loads((root / "frontend" / "package-lock.json").read_text(encoding="utf-8"))
+    package = lock["packages"]["node_modules/is-extglob"]
+    assert package["version"] == "2.1.1"
+    assert "is-extglob-2.1.1.tgz" in package["resolved"]
+
+
+def test_development_bridge_accepts_rubra_session_contract():
+    root = Path(__file__).resolve().parents[1]
+    source = (root / "frontend" / "bridge" / "server.ts").read_text(encoding="utf-8")
+    assert "process.env.RUBRA_TOKEN || process.env.ZENLESS_TOKEN" in source
+    assert "req.headers['x-rubra-token'] === SESSION_TOKEN" in source
+    assert "X-Rubra-Token" in source
+
+
+def test_installer_replaces_immutable_payload_before_extracting_update():
+    root = Path(__file__).resolve().parents[1]
+    source = (root / "packaging" / "setup.nsi").read_text(encoding="utf-8")
+    app_cleanup = source.index('RMDir /r "$INSTDIR\\app"')
+    python_cleanup = source.index('RMDir /r "$INSTDIR\\runtime\\python"')
+    extraction = source.index('File /r "${PACKAGE}/*"')
+    assert app_cleanup < extraction
+    assert python_cleanup < extraction
+    assert "IfErrors close_required" in source[app_cleanup:extraction]
+    assert 'RMDir /r "$INSTDIR\\runtime"' not in source[:extraction]
+
