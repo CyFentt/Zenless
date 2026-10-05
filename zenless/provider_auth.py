@@ -60,8 +60,7 @@ def model_options_script(model: str = "") -> str:
         found.click();
         return {{ok: true, selected}};
       }}
-      const buttons = [...document.querySelectorAll('button[data-model]')].filter(node => visible(node) && (dataValue(node) || modelLabel(textValue(node))));
-      return [...new Set([...options, ...buttons].map(catalogValue).filter(Boolean))].slice(0,30);
+      return [...new Set(options.map(catalogValue).filter(Boolean))].slice(0,30);
     }})()"""
 
 
