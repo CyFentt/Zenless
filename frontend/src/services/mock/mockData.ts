@@ -38,10 +38,10 @@ export const mockConnections: ConnectionInfo = {
 };
 
 export const mockAgents: AgentInfo[] = [
-  { id: 'chatgpt', name: 'ChatGPT', status: 'READY', model: 'chatgpt-default', reasoning: true },
-  { id: 'deepseek', name: 'DeepSeek', status: 'READY', model: 'deepseek-default', reasoning: true },
-  { id: 'gemini', name: 'Gemini', status: 'READY', model: 'auto', reasoning: true },
-  { id: 'hunyuan', name: 'Hunyuan', status: 'LOGIN', version: 'hunyuan-current', quality: 'standard' },
+  { id: 'chatgpt', name: 'ChatGPT', status: 'READY', model: 'chatgpt-default' },
+  { id: 'deepseek', name: 'DeepSeek', status: 'READY', model: 'deepseek-default' },
+  { id: 'gemini', name: 'Gemini', status: 'READY', model: 'auto' },
+  { id: 'hunyuan', name: 'Hunyuan', status: 'LOGIN', version: 'hunyuan-current' },
   { id: 'studio', name: 'Studio', status: 'OFF' },
 ];
 
@@ -275,10 +275,10 @@ export const mockDiagnostics: Diagnostic[] = [
 
 export const mockSettings: Settings = {
   models: {
-    chatgpt: { model: 'chatgpt-default', reasoning: true },
-    deepseek: { model: 'deepseek-default', reasoning: true },
-    gemini: { model: 'gemini-default', reasoning: true },
-    hunyuan: { version: 'hunyuan-current', quality: 'standard' },
+    chatgpt: { model: 'chatgpt-default' },
+    deepseek: { model: 'deepseek-default' },
+    gemini: { model: 'gemini-default' },
+    hunyuan: { version: 'hunyuan-current' },
     smartRouting: true,
   },
   autoApprove: false,
@@ -306,10 +306,5 @@ export const mockModelCatalog: ModelCatalog = {
   ] },
   hunyuan: {
     versions: [{ id: 'hunyuan-current', label: 'Current', available: true }],
-    qualities: [
-      { id: 'draft', label: 'DRAFT', available: true },
-      { id: 'standard', label: 'STANDARD', available: true },
-      { id: 'high', label: 'HIGH', available: true },
-    ],
   },
 };
