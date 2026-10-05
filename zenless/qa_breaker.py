@@ -1705,6 +1705,7 @@ return HttpService:JSONEncode({{
         self.events.publish(
             "TEST_LOG",
             {
+                "jobId": job_id,
                 "log": {
                     "id": uuid.uuid4().hex,
                     "timestamp": int(time.time() * 1000),
