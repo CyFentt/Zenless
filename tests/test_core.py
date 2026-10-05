@@ -4,6 +4,7 @@ import json
 import tempfile
 import threading
 import unittest
+from unittest.mock import Mock
 from pathlib import Path
 
 from zenless.core import CoreError, ZenlessCore
@@ -130,6 +131,28 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(recovered["planning"]["stage"], Stage.PAUSED.value)
             self.assertEqual(recovered["applying"]["stage"], Stage.BLOCKED.value)
             self.assertIn("Safe recovery", recovered["applying"]["reason"])
+
+    def test_recovered_checkpoint_resume_restarts_as_child_job(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            core = object.__new__(ZenlessCore)
+            core.store = SQLiteStore(Path(folder) / "state.db")
+            core.store.create_task("parent", "Continue safely", TaskOptions())
+            core.store.update_task("parent", stage=Stage.PLANNING, status="running")
+            recovered = core.store.recover_interrupted_tasks()
+            self.assertTrue(recovered[0]["reason"].startswith("RECOVERED_CHECKPOINT:"))
+
+            core.orchestrator = Mock()
+            core.orchestrator.resume.return_value = False
+            core.orchestrator.submit.return_value = "child"
+            core.job = Mock(return_value={"id": "child"})
+
+            result = core.resume_job("parent")
+
+            self.assertEqual(result, {"id": "child"})
+            self.assertEqual(core.orchestrator.submit.call_args.kwargs["parent_task_id"], "parent")
+            parent = core.store.load_task("parent")
+            self.assertEqual(parent["stage"], Stage.BLOCKED.value)
+            self.assertIn("child", parent["error"])
 
     def test_provider_preflight_returns_structured_login_requirement(self) -> None:
         core = object.__new__(ZenlessCore)
