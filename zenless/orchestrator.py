@@ -573,12 +573,9 @@ class ZenlessOrchestrator:
         if options.automatic_play_test:
             console_output = self._run_quality_test(task_id, target.studio_id, cancel_event, apply_evidence, False)
             fix_count = 0
+            fix_limit = options.max_test_fixes if options.continuous_verification else 1
             while self._console_has_errors(console_output):
-                if (
-                    not options.auto_fix_errors
-                    or (not options.continuous_verification and fix_count >= options.max_test_fixes)
-                    or fix_count >= 64
-                ):
+                if not options.auto_fix_errors or fix_count >= fix_limit:
                     raise OrchestratorError(
                         "The play test returned errors and reached the correction limit.\n" + console_output[-6000:]
                     )
