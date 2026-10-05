@@ -513,8 +513,8 @@ export interface ZenlessEventMap {
   JOB_COMPLETE: { jobId: string };
   JOB_FAILED: { jobId: string; reason: string };
   CHAT_STREAM_STARTED: { messageId: string; jobId?: string };
-  CHAT_STREAM_DELTA: { messageId: string; delta: string };
-  CHAT_STREAM_FINISHED: { messageId: string };
+  CHAT_STREAM_DELTA: { messageId: string; jobId?: string; delta: string };
+  CHAT_STREAM_FINISHED: { messageId: string; jobId?: string };
   CHAT_MESSAGE: { message: ChatMessage };
   CHAT_ACTIVITY: { activity: ChatActivity };
   CONTEXT_UPDATED: { jobId: string; items: ContextItem[] };
