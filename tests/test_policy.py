@@ -63,6 +63,18 @@ class PolicyTests(unittest.TestCase):
         self.assertFalse(result.allowed)
         self.assertEqual(result.risk, "critical")
 
+    def test_removing_destructive_legacy_code_is_not_itself_critical(self) -> None:
+        action = ProposalAction(
+            "multi_edit",
+            {
+                "file_path": "game.ServerScriptService.Main",
+                "edits": [{"old_string": "workspace:ClearAllChildren()", "new_string": "return"}],
+            },
+        )
+        result = classify_action(action, AVAILABLE)
+        self.assertTrue(result.allowed)
+        self.assertEqual(result.risk, "medium")
+
     def test_invalid_path_is_rejected(self) -> None:
         action = ProposalAction(
             "multi_edit",
