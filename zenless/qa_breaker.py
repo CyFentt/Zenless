@@ -606,7 +606,8 @@ class QABreaker:
         risk_areas = ["mutation read-back", "Studio lifecycle", "runtime output"]
         if any("remote" in value.casefold() for value in changed_tools) or "remote" in feature.casefold():
             risk_areas.extend(["server authority", "replication", "duplicate requests"])
-        if any(term in feature.casefold() for term in ("ui", "hud", "gui", "button")):
+        feature_words = set(re.findall(r"\w+", feature.casefold()))
+        if feature_words.intersection({"ui", "hud", "gui", "button", "interface", "tela", "botão", "botao"}):
             risk_areas.append("UI reopen and rapid interaction")
         if rerun:
             risk_areas.append("regression after an applied fix")
@@ -714,7 +715,7 @@ class QABreaker:
         if (task.get("context") or {}).get("manual_test"):
             return False
         prompt = str(task.get("prompt", "")).casefold()
-        visual_terms = (
+        visual_terms = {
             "ui",
             "gui",
             "hud",
@@ -733,8 +734,25 @@ class QABreaker:
             "camera",
             "map",
             "environment",
-        )
-        return any(term in prompt for term in visual_terms)
+            "interface",
+            "tela",
+            "efeito",
+            "partícula",
+            "particula",
+            "iluminação",
+            "iluminacao",
+            "textura",
+            "malha",
+            "modelo",
+            "animação",
+            "animacao",
+            "câmera",
+            "mapa",
+            "ambiente",
+            "3d",
+        }
+        words = set(re.findall(r"\w+", prompt, flags=re.UNICODE))
+        return bool(words.intersection(visual_terms))
 
     def _run_official_playtest_subagent(
         self,
