@@ -120,6 +120,7 @@ class ZenlessCore:
         self._provider_threads: dict[str, threading.Thread] = {}
         self._provider_lock = threading.Lock()
         self._settings_lock = threading.RLock()
+        self._model_selection_lock = threading.Lock()
         self._studio_lock = threading.RLock()
         self._studio_refresh_lock = threading.Lock()
         self._studio_thread: threading.Thread | None = None
@@ -1153,37 +1154,39 @@ class ZenlessCore:
         return json.loads(json.dumps(catalog))
 
     def set_model(self, provider: str, model: str) -> bool:
-        if provider not in {"chatgpt", "deepseek", "gemini", "hunyuan"} or not model.strip():
-            raise CoreError("INVALID_MODEL", "Invalid model or provider.")
-        if model != "auto":
-            if not self.bridge.wait_for_provider(provider, timeout=0.5):
-                raise CoreError(
-                    "PROVIDER_LOGIN_REQUIRED",
-                    f"{PROVIDER_LABELS[provider]} requires login.",
-                    status=409,
-                    details={"provider": provider},
+        with self._model_selection_lock:
+            if provider not in {"chatgpt", "deepseek", "gemini", "hunyuan"} or not model.strip():
+                raise CoreError("INVALID_MODEL", "Invalid model or provider.")
+            if model != "auto":
+                if not self.bridge.wait_for_provider(provider, timeout=0.5):
+                    raise CoreError(
+                        "PROVIDER_LOGIN_REQUIRED",
+                        f"{PROVIDER_LABELS[provider]} requires login.",
+                        status=409,
+                        details={"provider": provider},
+                    )
+                response = self.bridge.request(
+                    provider, "select_model", {"model": model}, task_id="settings", timeout=15
                 )
-            response = self.bridge.request(
-                provider, "select_model", {"model": model}, task_id="settings", timeout=15
-            )
-            selected = str(response.get("selected") or "").strip()
-            if response.get("status") != "ok" or selected.casefold() != model.casefold():
-                raise CoreError(
-                    "MODEL_SELECTION_FAILED",
-                    f"{PROVIDER_LABELS[provider]} did not confirm the selected model: {model}",
-                    status=409,
-                    details={"provider": provider, "model": model, "selected": selected},
-                )
-        with self._settings_lock:
-            current = self.settings()
-            if provider == "hunyuan":
-                current["models"][provider]["version"] = model
-            else:
-                current["models"][provider]["model"] = model
-            self.store.set_setting("ui.settings", current)
-            self._model_cache = None
-            self.events.publish("SETTINGS_CHANGED", {"settings": current})
-        return True
+                selected = str(response.get("selected") or "").strip()
+                if response.get("status") != "ok" or selected.casefold() != model.casefold():
+                    raise CoreError(
+                        "MODEL_SELECTION_FAILED",
+                        f"{PROVIDER_LABELS[provider]} did not confirm the selected model: {model}",
+                        status=409,
+                        details={"provider": provider, "model": model, "selected": selected},
+                    )
+            with self._settings_lock:
+                current = self.settings()
+                if provider == "hunyuan":
+                    current["models"][provider]["version"] = model
+                else:
+                    current["models"][provider]["model"] = model
+                self.store.set_setting("ui.settings", current)
+                self._model_cache = None
+                self.events.publish("SETTINGS_CHANGED", {"settings": current})
+            return True
+    
 
     def set_smart_routing(self, enabled: bool) -> bool:
         with self._settings_lock:
