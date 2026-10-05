@@ -202,7 +202,7 @@ function ModelsTab({ settings, catalog, onChange }: { settings: Settings | null;
 
   return (
     <div className="p-6 max-w-2xl mx-auto w-full space-y-6 animate-fade-in">
-      <p className="text-xs text-ink-300 leading-relaxed">Model choices are loaded from connected providers. Reasoning and generation quality follow their available controls. Task effort is configured in the chat.</p>
+      <p className="text-xs text-ink-300 leading-relaxed">Model choices are loaded from connected providers and saved only after the provider confirms them. Provider-specific reasoning and generation-quality controls remain at the provider default; task effort is configured in chat.</p>
       <LocalModelsPanel />
       <Section title="BUILDER">
         <Row label="Model">
