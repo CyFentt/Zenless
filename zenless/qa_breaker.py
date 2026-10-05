@@ -395,7 +395,7 @@ class QABreaker:
                         "static-quality",
                         "External Luau static quality gate",
                         "STATIC",
-                        lambda: self._run_static_quality(job_id),
+                        lambda: self._run_static_quality(job_id, cancel_event),
                         failures,
                         logs,
                         seed,
@@ -848,7 +848,11 @@ class QABreaker:
         settings = self.store.get_setting("ui.settings", {})
         return str(settings.get("projectRoot") or "").strip() if isinstance(settings, dict) else ""
 
-    def _run_static_quality(self, job_id: str) -> tuple[str, str, str]:
+    def _run_static_quality(
+        self,
+        job_id: str,
+        cancel_event: threading.Event | None = None,
+    ) -> tuple[str, str, str]:
         expected = "Pinned external Roblox quality tools report no gating failures"
         project_root = self._qa_project_root(job_id, refresh=True)
         if not project_root:
@@ -856,7 +860,9 @@ class QABreaker:
         project = Path(project_root).expanduser().resolve()
         if not project.is_dir():
             return "FAILED", expected, f"Configured project directory does not exist: {project}"
-        checks = self.static_quality.run(project)
+        checks = self.static_quality.run(project, cancel_event=cancel_event)
+        if cancel_event is not None and cancel_event.is_set():
+            raise TaskCancelled("QA cancelled during static quality checks.")
         lines = [f"{item.name}: {item.status}\n{item.output}" for item in checks]
         marker = project / "rubra-studio.json"
         coverage_gap = False
