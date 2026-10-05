@@ -305,6 +305,7 @@ class OrchestratorTests(unittest.TestCase):
     def test_submit_rolls_back_persisted_task_when_ready_snapshot_fails(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             orchestrator, store = self.make_system(folder, FakeBridge({}), FakeStudio())
+            orchestrator.event_callback = Mock()
             prepared: list[str] = []
 
             def fail_ready(task_id: str, message_id: int) -> None:
@@ -319,6 +320,7 @@ class OrchestratorTests(unittest.TestCase):
             self.assertIsNone(store.load_task(prepared[0]))
             self.assertEqual(orchestrator.current_task_id, "")
             self.assertNotIn(prepared[0], orchestrator._tasks)
+            orchestrator.event_callback.assert_not_called()
 
     def make_system(
         self,
