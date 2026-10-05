@@ -6,7 +6,7 @@ import { Tabs, Toggle, Select } from '@/components/Tabs';
 import { Tooltip } from '@/components/Tooltip';
 import { StatusDot, StatusBadge } from '@/components/StatusDot';
 import { Modal } from '@/components/Modal';
-import type { ConnectionInfo, Diagnostic, LocalAIState, ModelCatalog, ModelSettings, ProviderId, Settings } from '@/types';
+import type { ConnectionInfo, Diagnostic, LocalAIState, ModelCatalog, ProviderId, Settings } from '@/types';
 
 type SettingsTab = 'general' | 'models' | 'links' | 'library' | 'logs';
 
@@ -180,10 +180,7 @@ function ModelsTab({ settings, catalog, onChange }: { settings: Settings | null;
   const selectModel = async (provider: 'chatgpt' | 'deepseek' | 'gemini' | 'hunyuan', value: string) => {
     try {
       await getApi().setModel(provider, value);
-      const nextModels: ModelSettings = provider === 'hunyuan'
-        ? { ...models, hunyuan: { ...models.hunyuan, version: value } }
-        : { ...models, [provider]: { ...models[provider], model: value } };
-      onChange({ ...settings, models: nextModels });
+      onChange(await getApi().getSettings());
     } catch (error) {
       frontendDiagnostics.capture(error, 'settings', `Failed to set ${provider} model`);
     }
@@ -192,7 +189,7 @@ function ModelsTab({ settings, catalog, onChange }: { settings: Settings | null;
   const setRouting = async (enabled: boolean) => {
     try {
       await getApi().setSmartRouting(enabled);
-      onChange({ ...settings, models: { ...models, smartRouting: enabled } });
+      onChange(await getApi().getSettings());
     } catch (error) {
       frontendDiagnostics.capture(error, 'settings', 'Failed to update smart routing');
     }
