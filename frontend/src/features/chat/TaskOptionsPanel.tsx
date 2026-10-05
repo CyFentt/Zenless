@@ -15,7 +15,7 @@ export function TaskOptionsPanel({ options, onChange, onClose }: Props) {
   };
 
   return (
-    <div className="w-64 shrink-0 bg-ink-900 border-l border-ink-600 animate-slide-right flex flex-col">
+    <div className="w-80 max-w-[45%] shrink-0 bg-ink-900 border-l border-ink-600 animate-slide-right flex flex-col">
       <div className="flex items-center justify-between px-3 h-9 border-b border-ink-600 shrink-0">
         <span className="text-2xs uppercase tracking-widest text-ink-0 font-medium">OPTIONS</span>
         <button onClick={onClose} className="text-ink-300 hover:text-ink-0" aria-label="Close">
@@ -24,27 +24,27 @@ export function TaskOptionsPanel({ options, onChange, onClose }: Props) {
       </div>
       <div className="flex-1 overflow-y-auto scrollbar-zen p-3 space-y-3">
         <OptionRow label="Visual First" hint="Required while 3D generation is enabled">
-          <Toggle
+          <Toggle hideLabel
             checked={options.visualFirst}
             onChange={(value) => set('visualFirst', value || options.create3D)}
             label="Visual First"
           />
         </OptionRow>
         <OptionRow label="Create 3D" hint="Generate 3D model from concept">
-          <Toggle
+          <Toggle hideLabel
             checked={options.create3D}
             onChange={(value) => onChange({ ...options, create3D: value, visualFirst: value || options.visualFirst })}
             label="Create 3D"
           />
         </OptionRow>
         <OptionRow label="Review" hint="Code review before applying">
-          <Toggle checked={options.review} onChange={(v) => set('review', v)} label="Review" />
+          <Toggle hideLabel checked={options.review} onChange={(v) => set('review', v)} label="Review" />
         </OptionRow>
         <OptionRow label="Auto Test" hint="Run Play Test after build">
-          <Toggle checked={options.autoTest} onChange={(v) => set('autoTest', v)} label="Auto Test" />
+          <Toggle hideLabel checked={options.autoTest} onChange={(v) => set('autoTest', v)} label="Auto Test" />
         </OptionRow>
         <OptionRow label="Auto Fix" hint="Automatically fix detected errors">
-          <Toggle checked={options.autoFix} onChange={(v) => set('autoFix', v)} label="Auto Fix" />
+          <Toggle hideLabel checked={options.autoFix} onChange={(v) => set('autoFix', v)} label="Auto Fix" />
         </OptionRow>
         <OptionRow label="Approval" hint="ASK waits at every write gate. SAFE AUTO skips low-risk code gates after an approved review. FULL AUTO skips local write gates but never bypasses policy blocks.">
           <Select
@@ -84,7 +84,7 @@ export function TaskOptionsPanel({ options, onChange, onClose }: Props) {
           />
         </OptionRow>
         <OptionRow label="Verify" hint="Continue repair and verification cycles until convergence or the hard safety cap">
-          <Toggle
+          <Toggle hideLabel
             checked={options.continuousVerification ?? true}
             onChange={(value) => set('continuousVerification', value)}
             label="Verify"
@@ -115,9 +115,9 @@ export function TaskOptionsPanel({ options, onChange, onClose }: Props) {
 function OptionRow({ label, hint, children }: { label: string; hint: string; children: React.ReactNode }) {
   return (
     <Tooltip content={hint} side="left">
-      <div className="flex items-center justify-between py-1 border-b border-ink-700">
+      <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)] items-center gap-3 py-2 border-b border-ink-700">
         <span className="text-2xs uppercase tracking-wider text-ink-300">{label}</span>
-        {children}
+        <div className="min-w-0 flex justify-end">{children}</div>
       </div>
     </Tooltip>
   );

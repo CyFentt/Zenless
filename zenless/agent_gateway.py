@@ -32,6 +32,8 @@ class AgentGateway:
         allow_extension_fallback: bool = False,
         local_available: Callable[[], bool] | None = None,
         local_complete: Callable[[str], str] | None = None,
+        selected_model: Callable[[str], str] | None = None,
+        local_cancel: Callable[[], None] | None = None,
     ) -> None:
         self.managed = managed
         self.embedded = embedded
@@ -44,10 +46,22 @@ class AgentGateway:
         self._stopping = threading.Event()
         self.local_available = local_available
         self.local_complete = local_complete
+        self.selected_model = selected_model
+        self.local_cancel = local_cancel
         self._local_attachments: dict[tuple[str, str], str] = {}
 
     def _can_use_local(self, provider: str) -> bool:
-        return provider in {"chatgpt", "deepseek"} and self.local_available is not None and self.local_available()
+        return (provider in {"chatgpt", "deepseek"} and self.local_available is not None
+                and self.local_available() and (self.selected_model is None or self.selected_model(provider) == "auto"))
+
+    def _apply_selected_model(self, route: str, provider: str, task_id: str) -> None:
+        model = self.selected_model(provider) if self.selected_model is not None else "auto"
+        if model == "auto":
+            return
+        result = self._request_via_route(route, provider, "select_model", {"model": model},
+                                        task_id=task_id, timeout=20, stream_callback=None)
+        if result.get("status") != "ok" or not result.get("selected"):
+            raise BridgeError(f"The selected {provider} model could not be confirmed: {model}")
 
     @property
     def running(self) -> bool:
@@ -168,6 +182,8 @@ class AgentGateway:
         stream_callback: Callable[[str], None] | None = None,
     ) -> str:
         route = self._selected_route(provider)
+        if route != "local":
+            self._apply_selected_model(route, provider, task_id)
         if route == "local":
             if not self._can_use_local(provider) or self.local_complete is None:
                 raise BridgeError("Local AI is unavailable. Install its runtime and model in Settings.")
@@ -250,10 +266,14 @@ class AgentGateway:
                     "transport": "local",
                 }
             if action == "cancel":
-                return {"status": "idle", "cancelled": False, "transport": "local"}
+                if self.local_cancel is not None:
+                    self.local_cancel()
+                return {"status": "idle", "cancelled": self.local_cancel is not None, "transport": "local"}
             raise BridgeError(f"Local route does not support {action}.")
         if provider == "hunyuan" and action in self._HUNYUAN_TRANSACTION_ACTIONS:
             route, capabilities = self._hunyuan_transaction_route(provider, task_id=task_id, timeout=timeout)
+            if action in {"generate_geometry", "generate_texture"}:
+                self._apply_selected_model(route, provider, task_id)
             if action == "capabilities":
                 return {
                     "status": "ok",
@@ -460,6 +480,9 @@ class AgentGateway:
     def _selected_route(self, provider: str) -> str:
         with self._route_lock:
             route = self._routes.get(provider)
+            if route == "local" and not self._can_use_local(provider):
+                self._routes.pop(provider, None)
+                route = None
         if route:
             return route
         if not self.wait_for_provider(provider, 5.0):

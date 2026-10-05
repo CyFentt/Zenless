@@ -258,13 +258,13 @@ export const mockStudioTree: StudioNode[] = [
 ];
 
 export const mockTestLogs: TestLog[] = [
-  { id: 'log_1', timestamp: now - 30000, level: 'ZEN', message: 'Play Test started' },
+  { id: 'log_1', timestamp: now - 30000, level: 'RUBRA', message: 'Play Test started' },
   { id: 'log_2', timestamp: now - 28000, level: 'SRV', message: 'BombService initialized' },
   { id: 'log_3', timestamp: now - 25000, level: 'CLI', message: 'CombatClient loaded' },
   { id: 'log_4', timestamp: now - 20000, level: 'WARN', message: 'RagdollService:180 Attachment not found, creating fallback' },
   { id: 'log_5', timestamp: now - 18000, level: 'ERR', message: 'RagdollService:184 Invalid attachment', file: 'RagdollService', line: 184, stack: 'RagdollService:apply:184\nRagdollService:init:12\nServerScriptService:main:5', cause: 'Attachment parent is nil', recovery: 'Creating new Attachment instance' },
-  { id: 'log_6', timestamp: now - 15000, level: 'ZEN', message: 'Auto-fix attempt 1/3: inject attachment creation' },
-  { id: 'log_7', timestamp: now - 10000, level: 'ZEN', message: 'Fix applied, re-running test' },
+  { id: 'log_6', timestamp: now - 15000, level: 'RUBRA', message: 'Auto-fix attempt 1/3: inject attachment creation' },
+  { id: 'log_7', timestamp: now - 10000, level: 'RUBRA', message: 'Fix applied, re-running test' },
   { id: 'log_8', timestamp: now - 5000, level: 'SRV', message: 'RagdollService initialized successfully' },
 ];
 

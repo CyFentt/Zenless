@@ -90,7 +90,7 @@ def run_native_host(runtime_file: Path) -> int:
                 finally:
                     stopped.set()
 
-            reader = threading.Thread(target=downstream, name="Zenless-NativeHost-Down", daemon=True)
+            reader = threading.Thread(target=downstream, name="Rubra-NativeHost-Down", daemon=True)
             reader.start()
             while not stopped.is_set():
                 message = read_native_message(source)

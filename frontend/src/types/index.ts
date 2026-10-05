@@ -343,7 +343,7 @@ export interface StudioNode {
 }
 
 export type TestStatus = "IDLE" | "STARTING" | "RUNNING" | "STOPPING" | "STOPPED" | "FAILED";
-export type LogLevel = "ERR" | "WARN" | "ZEN" | "SRV" | "CLI";
+export type LogLevel = "ERR" | "WARN" | "RUBRA" | "SRV" | "CLI";
 
 export interface TestLog {
   id: string;

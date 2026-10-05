@@ -97,7 +97,12 @@ return game:GetService("HttpService"):JSONEncode({{sources = sources, total = #i
 def export_sources(root: Path, studio_id: str, snapshot: SourceSnapshot) -> dict[str, Any]:
     root.mkdir(parents=True, exist_ok=True)
     marker = root / "rubra-studio.json"
-    previous = json.loads(marker.read_text(encoding="utf-8")) if marker.is_file() else {}
+    try:
+        previous = json.loads(marker.read_text(encoding="utf-8")) if marker.is_file() else {}
+        if not isinstance(previous, dict):
+            previous = {}
+    except (OSError, ValueError):
+        previous = {}
     files: list[str] = []
     mapping: dict[str, str] = {}
     for item in snapshot.scripts:
@@ -105,7 +110,9 @@ def export_sources(root: Path, studio_id: str, snapshot: SourceSnapshot) -> dict
             continue
         key = str(item.get("path")) + ":" + str(item.get("id", ""))
         name = "script_" + hashlib.sha256(key.encode()).hexdigest()[:24] + ".luau"
-        (root / name).write_text(item["source"], encoding="utf-8")
+        temporary = (root / name).with_suffix(".tmp")
+        temporary.write_text(item["source"], encoding="utf-8")
+        temporary.replace(root / name)
         files.append(name)
         mapping[name] = str(item["path"])
     manifest = {
@@ -120,7 +127,9 @@ def export_sources(root: Path, studio_id: str, snapshot: SourceSnapshot) -> dict
         ],
     }
     (root / 'selene.toml').write_text('std = "roblox"\n', encoding='utf-8')
-    marker.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    temporary = marker.with_suffix(".tmp")
+    temporary.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    temporary.replace(marker)
     for name in previous.get("files", []):
         if (
             isinstance(name, str)
@@ -302,6 +311,8 @@ def studio_edit_mode(result: MCPToolResult) -> bool | None:
                 "run",
                 "running",
                 "paused",
+                "start_play",
+                "run_server",
             }:
                 return mode.casefold() in {"edit", "stop", "stopped"}
     if "current studio mode: edit" in result.text.casefold():

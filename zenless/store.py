@@ -587,7 +587,7 @@ class SQLiteStore:
     def latest_test_run(self, job_id: str) -> dict[str, Any] | None:
         with closing(self._connect()) as connection:
             row = connection.execute(
-                "SELECT * FROM test_runs WHERE job_id = ? ORDER BY started_at DESC LIMIT 1", (job_id,)
+                "SELECT * FROM test_runs WHERE job_id = ? ORDER BY started_at DESC, rowid DESC LIMIT 1", (job_id,)
             ).fetchone()
         if row is None:
             return None

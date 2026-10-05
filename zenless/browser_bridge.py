@@ -296,6 +296,8 @@ class BrowserBridge:
             while True:
                 raw = connection.recv()
                 envelope = parse_envelope(raw)
+                if envelope.provider != session.provider:
+                    raise ProtocolError("Response provider does not match this session.")
                 session.last_seen = time.monotonic()
                 self._route_envelope(envelope)
         except ConnectionClosed, TimeoutError:
@@ -310,11 +312,14 @@ class BrowserBridge:
                 self._emit_status(session.provider, "Error", str(exc))
         finally:
             if session is not None:
+                removed = False
                 with self._sessions_lock:
                     if self._sessions.get(session.provider) is session:
                         self._sessions.pop(session.provider, None)
-                self._fail_provider(session.provider, "The browser service session disconnected.")
-                self._emit_status(session.provider, "Disconnected", "Tab unavailable")
+                        removed = True
+                if removed:
+                    self._fail_provider(session.provider, "The browser service session disconnected.")
+                    self._emit_status(session.provider, "Disconnected", "Tab unavailable")
 
     def _route_envelope(self, envelope: Envelope) -> None:
         if envelope.type == "bridge.heartbeat":

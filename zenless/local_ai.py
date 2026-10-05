@@ -24,6 +24,7 @@ class LocalAIService:
         self._port = 0
         self._log_path = self.portable_root / "data" / "logs" / "local-ai.log"
         self._lock = threading.RLock()
+        self._inference_lock = threading.Lock()
 
     @property
     def available(self) -> bool:
@@ -61,7 +62,7 @@ class LocalAIService:
         temperature: float = 0.15,
         timeout: float = 120.0,
     ) -> str:
-        with self._lock:
+        with self._inference_lock:
             return self._complete(prompt, max_tokens=max_tokens, temperature=temperature, timeout=timeout)
 
     def _complete(

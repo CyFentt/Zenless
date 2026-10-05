@@ -75,6 +75,7 @@ class _OfflineBridge:
 class _QAStudio:
     def __init__(self) -> None:
         self.running = True
+        self.playing = False
         self.tools = {
             "get_studio_state": object(),
             "start_stop_play": object(),
@@ -91,7 +92,9 @@ class _QAStudio:
         timeout: float = 0,
     ) -> MCPToolResult:
         self.calls.append((name, dict(arguments)))
-        text = "Current Studio mode: Edit" if name == "get_studio_state" else ""
+        if name == "start_stop_play":
+            self.playing = bool(arguments["is_start"])
+        text = "Current Studio mode: " + ("Play" if self.playing else "Edit") if name == "get_studio_state" else ""
         return MCPToolResult(name, text, False, ("text",))
 
 

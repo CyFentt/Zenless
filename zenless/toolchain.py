@@ -11,7 +11,7 @@ import threading
 import urllib.parse
 import urllib.request
 import zipfile
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Callable
 
@@ -46,36 +46,41 @@ class ToolchainManager:
     def ensure_default(self) -> list[InstallResult]:
         with self._lock:
             results: list[InstallResult] = []
-            for item in self.manifest.get("artifacts", []):
+            artifacts = self.manifest.get("artifacts", [])
+            models = [item for item in artifacts if str(item.get("target", "")).startswith("runtime/models/")]
+            small = [item for item in artifacts if item not in models]
+            queue = [(item, False) for item in small] + [(item, True) for item in self.manifest.get("sources", [])]
+            queue += [(item, False) for item in models]
+            for item, source in queue:
                 if self.cancel_event.is_set():
                     break
+                item_id = str(item["id"])
                 if item.get("auto", True) is False:
-                    results.append(InstallResult(str(item["id"]), "optional", "Available on demand"))
-                    continue
-                if not self._eligible(item):
-                    results.append(InstallResult(str(item["id"]), "skipped", "Hardware threshold not met"))
-                    continue
+                    result = InstallResult(item_id, "optional", "Available on demand")
+                elif not self._eligible(item):
+                    result = InstallResult(item_id, "skipped", "Hardware threshold not met")
+                else:
+                    try:
+                        path = self._ensure_source(item) if source else self._ensure_artifact(item)
+                        result = InstallResult(item_id, "ready", "Pinned source available" if source else "Verified and ready", str(path))
+                    except Exception as exc:
+                        result = InstallResult(item_id, "failed", str(exc))
+                results.append(result)
+                self._save_results(results)
+            if not self.cancel_event.is_set():
                 try:
-                    path = self._ensure_artifact(item)
-                    results.append(InstallResult(str(item["id"]), "ready", "Verified and ready", str(path)))
+                    self._ensure_npm_packages(results)
                 except Exception as exc:
-                    results.append(InstallResult(str(item["id"]), "failed", str(exc)))
-                    if item.get("critical"):
-                        raise
-            for item in self.manifest.get("sources", []):
-                if self.cancel_event.is_set():
-                    break
-                if item.get("auto", True) is False:
-                    results.append(InstallResult(str(item["id"]), "optional", "Available on demand"))
-                    continue
-                try:
-                    path = self._ensure_source(item)
-                    results.append(InstallResult(str(item["id"]), "ready", "Pinned source ready", str(path)))
-                except Exception as exc:
-                    results.append(InstallResult(str(item["id"]), "failed", str(exc)))
-            self._ensure_npm_packages(results)
+                    results.append(InstallResult("npm", "failed", str(exc)))
+            self._save_results(results)
             self._save_state()
             return results
+
+    def _save_results(self, results: list[InstallResult]) -> None:
+        target = self.runtime_root / "toolchain-results.json"
+        temporary = target.with_suffix(".tmp")
+        temporary.write_text(json.dumps({item.item_id: asdict(item) for item in results}, indent=2), encoding="utf-8")
+        os.replace(temporary, target)
 
     def install(self, item_id: str) -> InstallResult:
         target_id = item_id.strip()
@@ -174,6 +179,8 @@ class ToolchainManager:
             "markerSha256": marker_sha,
             "size": size,
         }
+        self._save_state()
+        self._status(item_id, f"Ready: {item.get('name', item_id)}")
         archive.unlink(missing_ok=True)
         return target
 
@@ -195,6 +202,8 @@ class ToolchainManager:
         self._download(f"https://github.com/{repo}/archive/{commit}.zip", archive)
         self._extract_atomic(archive, target, "zip", True)
         marker.write_text(json.dumps({"repo": repo, "commit": commit}, indent=2), encoding="utf-8")
+        self._save_state()
+        self._status(item_id, f"Ready: {item.get('name', item_id)}")
         archive.unlink(missing_ok=True)
         return target
 
@@ -215,6 +224,8 @@ class ToolchainManager:
             if item.get("auto", True) is False:
                 results.append(InstallResult(item_id, "optional", "Available on demand"))
                 continue
+            if self.cancel_event.is_set():
+                return
             package = str(item["package"])
             marker = prefix / ".rubra-packages" / item_id
             if marker.is_file() and marker.read_text(encoding="utf-8").strip() == package:
@@ -409,7 +420,8 @@ class ToolchainManager:
 
     def _load_state(self) -> dict[str, Any]:
         try:
-            return json.loads(self.state_path.read_text(encoding="utf-8"))
+            value = json.loads(self.state_path.read_text(encoding="utf-8"))
+            return value if isinstance(value, dict) else {}
         except Exception:
             return {}
 

@@ -362,6 +362,20 @@ class ManagedBrowserController:
             self._poll_login()
 
     def _handle(self, command: _Command) -> Any:
+        # Background probes must never replace the visible login context.
+        if self._login_provider:
+            if command.action == "health":
+                return {"ready": False, "runtime": "ready", "busy": True}
+            if command.action == "request":
+                raise BridgeError("LOGIN_IN_PROGRESS: finish the open provider login before sending requests.")
+            if command.action == "login":
+                if command.provider != self._login_provider:
+                    raise BridgeError("LOGIN_IN_PROGRESS: finish or close the current provider login first.")
+                page = self._pages.get(command.provider)
+                if page is not None and not page.is_closed():
+                    page.bring_to_front()
+                    return {"state": "login_window_open", "url": page.url}
+                self._login_provider = ""
         if command.action == "health":
             if self._runtime_blocked:
                 return {"ready": False, "runtime": "unavailable"}
@@ -370,7 +384,7 @@ class ManagedBrowserController:
                 return {"ready": False, "runtime": "missing"}
             self._ensure_context(headed=False)
             page = self._ensure_page(command.provider)
-            ready = bool(page.evaluate(authentication_script(command.provider, self.provider_specs[command.provider].inputs, self.provider_specs[command.provider].url)).get("ready"))
+            ready = bool(page.evaluate(authentication_script(command.provider, self.provider_specs[command.provider].inputs, self.provider_specs[command.provider].url)).get("authenticated"))
             self._set_state(
                 command.provider,
                 "Ready" if ready else "Login Required",
@@ -481,9 +495,9 @@ class ManagedBrowserController:
             raise BridgeError("Prompt is empty.")
         composer.fill(prompt)
         sender = self._first_visible(page, spec.sends)
-        if sender is None or sender.is_disabled():
+        if sender is None:
             raise BridgeError(f"Submit button is unavailable for {command.provider}.")
-        sender.click()
+        sender.click(timeout=10_000)
         self._set_state(command.provider, "Working", "Waiting for provider response")
         text = self._wait_response(page, spec, before_count, before_text, command)
         result: dict[str, Any] = {"status": "ok", "text": text}
@@ -685,7 +699,12 @@ class ManagedBrowserController:
             self._login_provider = ""
             self._set_state(provider, "Login Required", "Managed login window was closed")
             return
-        if not page.evaluate(authentication_script(provider, self.provider_specs[provider].inputs, self.provider_specs[provider].url)).get("ready"):
+        try:
+            authenticated = page.evaluate(authentication_script(provider, self.provider_specs[provider].inputs, self.provider_specs[provider].url)).get("authenticated")
+        except Exception:
+            self._login_ready_at = 0.0
+            return
+        if not authenticated:
             self._login_ready_at = 0.0
             return
         if not self._login_ready_at:

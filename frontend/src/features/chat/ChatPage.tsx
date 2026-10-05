@@ -29,7 +29,15 @@ export function ChatPage() {
   const [sending, setSending] = useState(false);
   const [loggingProvider, setLoggingProvider] = useState<ProviderId | null>(null);
   const [showOptions, setShowOptions] = useState(false);
-  const [options, setOptions] = useState<TaskOptions>(DEFAULT_TASK_OPTIONS);
+  const settings = useStore((s) => s.settings);
+  const [optionOverrides, setOptionOverrides] = useState<Partial<TaskOptions>>({});
+  const options: TaskOptions = { ...DEFAULT_TASK_OPTIONS,
+    ...(settings ? { approvalMode: settings.approvalMode, approval: settings.approvalMode !== 'FULL_AUTO', revisions: settings.maxRevisions, smartRouting: settings.models.smartRouting } : {}),
+    ...optionOverrides };
+  const setOptions = (next: TaskOptions) => setOptionOverrides((previous) => {
+    const changed = Object.fromEntries(Object.entries(next).filter(([key, value]) => value !== options[key as keyof TaskOptions]));
+    return { ...previous, ...changed };
+  });
   const [attachments, setAttachments] = useState<{ id: string; file: File; previewUrl?: string }[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -173,9 +181,9 @@ export function ChatPage() {
                 ))}
               </div>
             )}
-            <div className="rubra-composer flex items-end gap-2 rounded-xl border border-ink-600 bg-ink-900 p-2 focus-within:border-zen-red transition-colors">
+            <div className="rubra-composer flex items-center gap-2 rounded-xl border border-ink-600 bg-ink-900 p-2 focus-within:border-zen-red transition-colors">
               <Tooltip content="Attach">
-                <button onClick={handleAttach} className="w-8 h-8 flex items-center justify-center text-ink-300 hover:text-ink-0 border border-ink-600 hover:border-ink-500 transition-colors" aria-label="Attach file">
+                <button onClick={handleAttach} className="w-8 h-8 shrink-0 flex items-center justify-center text-ink-300 hover:text-ink-0 border border-ink-600 hover:border-ink-500 transition-colors" aria-label="Attach file">
                   <Paperclip size={14} strokeWidth={1.5} />
                 </button>
               </Tooltip>
@@ -191,12 +199,12 @@ export function ChatPage() {
                 style={{ minHeight: '48px', maxHeight: '180px' }}
               />
               <Tooltip content="Options">
-                <button onClick={() => setShowOptions(!showOptions)} className={`w-8 h-8 flex items-center justify-center border transition-colors ${showOptions ? 'text-ink-0 bg-ink-700 border-ink-500' : 'text-ink-300 border-ink-600 hover:border-ink-500 hover:text-ink-0'}`} aria-label="Task options">
+                <button onClick={() => setShowOptions(!showOptions)} className={`w-8 h-8 shrink-0 flex items-center justify-center border transition-colors ${showOptions ? 'text-ink-0 bg-ink-700 border-ink-500' : 'text-ink-300 border-ink-600 hover:border-ink-500 hover:text-ink-0'}`} aria-label="Task options">
                   <Settings2 size={14} strokeWidth={1.5} />
                 </button>
               </Tooltip>
               {working && currentJobId && <Tooltip content="Stop the active task"><button aria-label="Stop task" onClick={() => void getApi().cancelGeneration(currentJobId).catch((error) => frontendDiagnostics.capture(error, 'chat', 'Failed to stop task'))} className="w-8 h-8 rounded-lg flex items-center justify-center text-zen-redBright border border-zen-red"><Square size={13} /></button></Tooltip>}
-              <button onClick={handleSend} disabled={sending || working || (!input.trim() && attachments.length === 0)} className="w-8 h-8 flex items-center justify-center text-white bg-zen-red rounded-lg disabled:opacity-30 hover:bg-zen-redBright transition-colors" aria-label="Send">
+              <button onClick={handleSend} disabled={sending || working || (!input.trim() && attachments.length === 0)} className="w-8 h-8 shrink-0 flex items-center justify-center text-white bg-zen-red rounded-lg disabled:opacity-30 hover:bg-zen-redBright transition-colors" aria-label="Send">
                 <ArrowUp size={14} strokeWidth={1.5} />
               </button>
             </div>

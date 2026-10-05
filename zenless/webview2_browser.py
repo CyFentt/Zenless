@@ -82,10 +82,10 @@ class WebView2BrowserController:
                 stderr=subprocess.PIPE,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
-            self._reader = threading.Thread(target=self._read_loop, name="Zenless-WebView2-stdout", daemon=True)
+            self._reader = threading.Thread(target=self._read_loop, name="Rubra-WebView2-stdout", daemon=True)
             self._stderr_reader = threading.Thread(
                 target=self._read_stderr,
-                name="Zenless-WebView2-stderr",
+                name="Rubra-WebView2-stderr",
                 daemon=True,
             )
             self._reader.start()
@@ -217,7 +217,7 @@ class WebView2BrowserController:
         suffix = Path(parsed.path).suffix.casefold()
         if parsed.scheme != "https" or suffix not in {".glb", ".gltf", ".fbx", ".obj"}:
             raise BridgeError("The 3D artifact URL is not a supported HTTPS download.")
-        request = Request(url, headers={"User-Agent": "Zenless/1.0 WebView2"})
+        request = Request(url, headers={"User-Agent": "Rubra/1.0 WebView2"})
         target_dir = self.data_root / "downloads" / task_id[:64]
         target_dir.mkdir(parents=True, exist_ok=True)
         target = target_dir / f"hunyuan-{uuid.uuid4().hex[:8]}{suffix}"

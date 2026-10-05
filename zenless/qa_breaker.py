@@ -278,8 +278,7 @@ class QABreaker:
         if profile not in PROFILES:
             raise ValueError("Invalid QA profile.")
         with self._manual_lock:
-            running = self._manual_threads.get(job_id)
-            if running is not None and running.is_alive():
+            if any(thread.is_alive() for thread in self._manual_threads.values()):
                 return False
             cancel = threading.Event()
             thread = threading.Thread(
@@ -374,6 +373,8 @@ class QABreaker:
                 )
                 self._enforce_bound(started_at, profile, cancel_event)
 
+                if outcomes[-1] == "FAILED":
+                    raise MCPError("Studio is not confirmed in Edit mode. Existing Play sessions are not restarted.")
                 output, play_outcome = self._run_play_case(
                     run_id,
                     job_id,
@@ -541,6 +542,7 @@ class QABreaker:
 
     def _manual_worker(self, job_id: str, profile: str, cancel: threading.Event) -> None:
         try:
+            self._log(job_id, "RUBRA", "Connecting to the open Studio project…")
             if not self.studio.running:
                 self.studio.start()
             studios = []
@@ -564,7 +566,7 @@ class QABreaker:
                 cancel_event=cancel,
             )
         except TaskCancelled:
-            self._log(job_id, "ZEN", "Play Test stopped by the user.")
+            self._log(job_id, "RUBRA", "Play Test stopped by the user.")
             self.events.publish("TEST_FINISHED", {"passed": False, "cancelled": True, "jobId": job_id})
         except Exception as exc:
             self._log(job_id, "ERR", f"Manual QA failed: {exc}")
@@ -631,7 +633,8 @@ class QABreaker:
                     "Run the opt-in StudioTestService multiplayer harness when its exact protocol marker exists",
                 ]
             )
-        scenarios.extend(self._ai_scenarios(job_id, feature, changed_tools, risk_areas))
+        if profile.name in {"DEEP", "EXHAUSTIVE"} and not (task.get("context") or {}).get("manual_test"):
+            scenarios.extend(self._ai_scenarios(job_id, feature, changed_tools, risk_areas))
         return TestPlan(
             profile=profile.name,
             feature=feature,
@@ -1070,13 +1073,27 @@ class QABreaker:
 
         def play() -> tuple[str, str, str]:
             if "start_stop_play" not in self.studio.tools:
-                return "SKIPPED", "StudioMCP does not expose start_stop_play", ""
+                return "FAILED", "Studio can start Play", "Studio MCP does not expose start_stop_play."
             started = False
             try:
+                self._log(job_id, "RUBRA", "Requesting Play in Roblox Studio…")
                 result = self.studio.call_tool("start_stop_play", {"is_start": True}, studio_id=studio_id, timeout=60)
                 if result.is_error:
                     return "FAILED", "Play Test starts", result.compact(3000)
                 started = True
+                if "get_studio_state" in self.studio.tools:
+                    confirm_deadline = time.monotonic() + 12
+                    while True:
+                        self._check_cancel(cancel_event)
+                        state = self.studio.call_tool("get_studio_state", {}, studio_id=studio_id, timeout=10)
+                        if not state.is_error and studio_edit_mode(state) is False:
+                            break
+                        if time.monotonic() >= confirm_deadline:
+                            return "FAILED", "Studio enters Play", "Play was requested, but Studio did not confirm Play mode: " + state.compact(1500)
+                        cancel_event.wait(0.25)
+                    self._log(job_id, "RUBRA", "Studio confirmed Play. Observing gameplay and collecting frames…")
+                else:
+                    self._log(job_id, "WARN", "Play was accepted; this Studio server cannot confirm its mode.")
                 started_at = time.monotonic()
                 duration = min(self.play_test_seconds, profile.max_duration / 3)
                 deadline = started_at + duration
@@ -1099,6 +1116,7 @@ class QABreaker:
                 return "PASSED", "No runtime errors", output_holder["text"][-6000:]
             finally:
                 if started:
+                    self._log(job_id, "RUBRA", "Stopping the Studio play session…")
                     stopped = self.studio.call_tool(
                         "start_stop_play", {"is_start": False}, studio_id=studio_id, timeout=60
                     )
@@ -1134,6 +1152,7 @@ class QABreaker:
     ) -> str:
         case_id = f"{run_id[:10]}-{case_suffix}"
         started_ms = int(time.time() * 1000)
+        self._log(job_id, "RUBRA", name + "…")
         self.events.publish(
             "TEST_CASE_STARTED",
             {
@@ -1180,7 +1199,7 @@ class QABreaker:
             duration_ms=duration_ms,
         )
         self.events.publish("TEST_CASE_FINISHED", {"jobId": job_id, "testCase": case})
-        level = "ERR" if status == "FAILED" else ("WARN" if status == "SKIPPED" else "ZEN")
+        level = "ERR" if status == "FAILED" else ("WARN" if status == "SKIPPED" else "RUBRA")
         self._log(job_id, level, f"{name}: {status} — {actual or expected}", case_id=case_id)
         logs.append(f"{level} {name}: {status} — {actual or expected}")
         if status == "FAILED":
@@ -1341,7 +1360,7 @@ class QABreaker:
                         else:
                             capture = self._call_validated(
                                 "screen_capture",
-                                {"capture_id": f"ZenlessQA_{seed:08x}"},
+                                {"capture_id": f"RubraQA_{seed:08x}"},
                                 studio_id=studio_id,
                                 timeout=45,
                             )
@@ -1399,7 +1418,7 @@ class QABreaker:
             return (
                 "SKIPPED",
                 expected,
-                "script_grep is unavailable; Zenless did not guess whether a harness exists",
+                "script_grep is unavailable; Rubra did not guess whether a harness exists",
             )
         if not self._tool_supports("execute_luau", {"code", "datamodel_type"}, "Edit"):
             return (
@@ -1411,7 +1430,7 @@ class QABreaker:
             return (
                 "SKIPPED",
                 expected,
-                "start_stop_play is unavailable, so Zenless cannot guarantee multiplayer cleanup",
+                "start_stop_play is unavailable, so Rubra cannot guarantee multiplayer cleanup",
             )
 
         launched = False

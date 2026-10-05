@@ -51,6 +51,7 @@ class WebViewHost:
         self.source = source
         self.target = target
         self._windows: dict[str, Any] = {}
+        self._dismissed: dict[str, threading.Event] = {}
         self._control: Any = None
         self._stop = threading.Event()
         self._requests: queue.Queue[dict[str, Any] | None] = queue.Queue()
@@ -84,7 +85,7 @@ class WebViewHost:
         return 0
 
     def _worker(self) -> None:
-        reader = threading.Thread(target=self._reader, name="Zenless-WebViewHost-Reader", daemon=False)
+        reader = threading.Thread(target=self._reader, name="Rubra-WebViewHost-Reader", daemon=False)
         reader.start()
         try:
             while not self._stop.is_set():
@@ -174,11 +175,13 @@ class WebViewHost:
         if action == "health":
             state = self._composer_state(window, spec)
             return {
-                "ready": bool(state.get("ready")),
+                "ready": bool(state.get("authenticated")),
                 "url": str(window.get_current_url() or spec.url),
                 "capabilities": self._capabilities(window, spec),
             }
         if action == "login":
+            dismissed = self._dismissed.setdefault(provider, threading.Event())
+            dismissed.clear()
             window.show()
             window.restore()
             deadline = time.monotonic() + max(30.0, min(900.0, float(payload.get("timeout", 600))))
@@ -186,10 +189,16 @@ class WebViewHost:
             while time.monotonic() < deadline and not self._stop.wait(0.75):
                 if self._windows.get(provider) is not window:
                     raise RuntimeError("LOGIN_CANCELLED: Login window was closed. Click Login to reopen it.")
-                state = self._composer_state(window, spec)
-                if state.get("ready"):
+                try:
+                    state = self._composer_state(window, spec)
+                except Exception:
+                    if dismissed.is_set():
+                        raise RuntimeError("LOGIN_CANCELLED: Session could not be verified. Click Login to reopen it.")
+                    ready_since = 0.0
+                    continue
+                if state.get("authenticated"):
                     ready_since = ready_since or time.monotonic()
-                    if time.monotonic() - ready_since >= 3.0:
+                    if dismissed.is_set() or time.monotonic() - ready_since >= 3.0:
                         window.hide()
                         return {
                             "state": "ready",
@@ -198,6 +207,8 @@ class WebViewHost:
                         }
                 else:
                     ready_since = 0.0
+                    if dismissed.is_set():
+                        raise RuntimeError("LOGIN_CANCELLED: Login was not confirmed. Your session was kept; click Login to reopen it.")
             if self._stop.is_set():
                 raise RuntimeError("Login cancelled because Rubra is closing")
             raise TimeoutError(f"LOGIN_CANCELLED: Login timeout for {provider}")
@@ -232,11 +243,7 @@ class WebViewHost:
 
         existing = self._windows.get(provider)
         if existing is not None:
-            try:
-                existing.evaluate_js("document.readyState")
-                return existing
-            except Exception:
-                self._windows.pop(provider, None)
+            return existing
         spec = self.provider_specs[provider]
         window = webview.create_window(
             f"Rubra • {provider}",
@@ -249,12 +256,21 @@ class WebViewHost:
         if window is None:
             raise RuntimeError(f"Could not create WebView2 window for {provider}")
         self._windows[provider] = window
+        dismissed = self._dismissed.setdefault(provider, threading.Event())
+
+        def on_closing() -> bool:
+            if self._stop.is_set():
+                return True
+            dismissed.set()
+            window.hide()
+            return False
 
         def on_closed() -> None:
             if self._windows.get(provider) is window:
                 self._windows.pop(provider, None)
 
         window.events.closed += on_closed
+        window.events.closing += on_closing
         deadline = time.monotonic() + 45.0
         while time.monotonic() < deadline and not self._stop.wait(0.25):
             try:
@@ -414,6 +430,16 @@ class WebViewHost:
             raise RuntimeError(str(reason))
         before_count = int(setup.get("beforeCount") or 0)
         before_text = str(setup.get("beforeText") or "")
+        send_deadline = time.monotonic() + 10
+        while not self._stop.is_set():
+            sent = window.evaluate_js(self._submit_script(spec))
+            if sent is True:
+                break
+            if time.monotonic() >= send_deadline:
+                raise RuntimeError("Send button did not become available. The prompt was not submitted.")
+            self._stop.wait(0.1)
+        else:
+            raise RuntimeError("Rubra stopped before submitting the prompt.")
         timeout_ms = int(payload.get("timeout_ms") or 360_000)
         deadline = time.monotonic() + max(10.0, min(900.0, timeout_ms / 1000))
         last_text = ""
@@ -573,12 +599,23 @@ class WebViewHost:
           }}
           input.dispatchEvent(new InputEvent('input', {{bubbles: true, inputType: 'insertText', data: prompt}}));
           input.dispatchEvent(new Event('change', {{bubbles: true}}));
-          const sender = first(sendSelectors);
-          if (!sender || sender.disabled) return {{ok: false, error: 'Send button unavailable'}};
-          sender.click();
           return {{ok: true, beforeCount: before.length, beforeText}};
         }})()
         """
+
+    @staticmethod
+    def _submit_script(spec: ProviderSpec) -> str:
+        return f"""(() => {{
+          for (const selector of {json.dumps(spec.sends)}) {{
+            const button = [...document.querySelectorAll(selector)].find(node => {{
+              const box = node.getBoundingClientRect();
+              return box.width > 0 && box.height > 0 && getComputedStyle(node).visibility !== 'hidden'
+                && !node.disabled && node.getAttribute('aria-disabled') !== 'true';
+            }});
+            if (button) {{ button.click(); return true; }}
+          }}
+          return false;
+        }})()"""
 
     @staticmethod
     def _response_script(spec: ProviderSpec) -> str:

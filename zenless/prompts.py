@@ -47,7 +47,7 @@ Schema:
   ],
   "visual_prompt": "optional concept prompt or empty",
   "model_3d_prompt": "optional 3D prompt or empty",
-  "tests": ["exact checks Zenless should run"],
+  "tests": ["exact checks Rubra should run"],
   "final_message": "short user-facing result after successful execution"
 }
 """.strip()

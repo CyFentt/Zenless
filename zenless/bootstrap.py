@@ -92,7 +92,7 @@ class NativeSplash:
     def show(self) -> None:
         if sys.platform != "win32" or self._thread is not None:
             return
-        self._thread = threading.Thread(target=self._run, name="Zenless-NativeSplash", daemon=True)
+        self._thread = threading.Thread(target=self._run, name="Rubra-NativeSplash", daemon=True)
         self._thread.start()
         self._ready.wait(2.0)
 

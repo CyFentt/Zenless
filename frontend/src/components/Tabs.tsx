@@ -59,11 +59,11 @@ export function Segmented({ options, active, onChange }: SegmentedProps) {
   );
 }
 
-export function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label?: string }) {
+export function Toggle({ checked, onChange, label, hideLabel = false }: { checked: boolean; onChange: (v: boolean) => void; label?: string; hideLabel?: boolean }) {
   return (
     <button
       onClick={() => onChange(!checked)}
-      className="inline-flex items-center gap-2"
+      className="inline-flex shrink-0 items-center gap-2 min-h-8"
       role="switch"
       aria-checked={checked}
       aria-label={label}
@@ -71,7 +71,7 @@ export function Toggle({ checked, onChange, label }: { checked: boolean; onChang
       <span className={`relative w-8 h-4 border transition-colors duration-150 ${checked ? 'bg-ink-600 border-ink-500' : 'bg-ink-800 border-ink-600'}`}>
         <span className={`absolute top-0.5 w-2.5 h-2.5 transition-transform duration-150 ${checked ? 'left-4 bg-ink-0' : 'left-0.5 bg-ink-300'}`} />
       </span>
-      {label && <span className="text-xs text-ink-100">{label}</span>}
+      {label && !hideLabel && <span className="text-xs text-ink-100">{label}</span>}
     </button>
   );
 }

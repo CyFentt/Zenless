@@ -60,7 +60,7 @@ class StorageManager:
     def cleanup_browser_cache(self, profile_root: Path) -> tuple[int, int]:
         profile = profile_root.resolve()
         if not self._is_within(profile, self.data_root):
-            raise ValueError("Browser profile must remain inside the Zenless data directory.")
+            raise ValueError("Browser profile must remain inside the Rubra data directory.")
         targets = [path for path in profile.rglob("*") if path.is_dir() and path.name in self._CACHE_NAMES]
         files = 0
         bytes_removed = 0

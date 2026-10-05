@@ -1,3 +1,16 @@
+# Rubra 2.1.2 prerelease
+
+- Keep login windows alive during navigation and background health checks. Detect authenticated profiles even when the composer is hidden; retain sessions on manual close.
+- Reapply explicit model choices before web requests and preserve saved chat options. Align the composer and options controls; use Rubra in the test console.
+- Start manual Play tests without waiting for AI planning. Confirm Studio actually leaves Edit mode and expose failed starts instead of reporting success.
+- Clear completed task ownership, refresh idle Studio inventory and tolerate unavailable optional context tools.
+- Continue independent tool installations after a download fails, persist individual failure reasons and expose installation progress.
+- Allow local inference cancellation and recover corrupted source-export metadata safely.
+
+Validation: 190 Python tests, 72 frontend unit tests and 21 Chromium UI tests; Python/TypeScript checks and lint. Five Python checks require unavailable Windows/Lune environments and are skipped. Five pinned upstream tool/source downloads were verified successfully. Browser UI tests use fixtures, not live provider accounts.
+
+Native Windows login, installer/tray behavior and real Roblox Studio execution still require validation on Windows. This remains a prerelease. Close the previous Rubra process before installation.
+
 # Rubra 2.1.1 prerelease
 
 This release addresses live Studio inventory failures and improves development against the already open game.

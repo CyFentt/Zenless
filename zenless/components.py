@@ -136,7 +136,7 @@ class ComponentBootstrap:
 
     def prepare(self) -> list[ComponentStatus]:
         statuses: list[ComponentStatus] = []
-        self.bus.emit("workspace", "Preparing Workspace", BootstrapStatus.RUNNING, "Creating local Zenless storage")
+        self.bus.emit("workspace", "Preparing Workspace", BootstrapStatus.RUNNING, "Creating local Rubra storage")
         for folder in ("logs", "runs", "downloads", "temp", "webview-profile", "browser-profile"):
             (self.data_root / folder).mkdir(parents=True, exist_ok=True)
         self.bus.emit("workspace", "Preparing Workspace", BootstrapStatus.READY, "Local folders are writable")
@@ -165,6 +165,6 @@ class ComponentBootstrap:
                 message=str(exc),
                 exc=exc,
                 impact="The embedded browser is unavailable; Playwright or the extension may still work.",
-                recovery_action="Retry Zenless with an internet connection or repair WebView2 from Windows Apps.",
+                recovery_action="Retry Rubra with an internet connection or repair WebView2 from Windows Apps.",
             )
         return statuses

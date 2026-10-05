@@ -75,6 +75,19 @@ class ToolRegistry:
                     "reason": f"Pinned to {str(item.get('commit') or '')[:12]}",
                 }
             )
+        try:
+            outcomes = json.loads((self.portable_root / "runtime/toolchain-results.json").read_text(encoding="utf-8"))
+            if not isinstance(outcomes, dict):
+                outcomes = {}
+        except (OSError, ValueError):
+            outcomes = {}
+        for descriptor in result:
+            outcome = outcomes.get(descriptor["id"].removeprefix("source:"), {})
+            if isinstance(outcome, dict) and descriptor["status"] != "INSTALLED":
+                if outcome.get("state") in {"optional", "skipped"}:
+                    descriptor["status"] = "OPTIONAL"
+                if outcome.get("detail"):
+                    descriptor["reason"] = str(outcome["detail"])
         return result
 
     def summary(self) -> dict[str, int]:

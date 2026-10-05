@@ -234,7 +234,7 @@ class ErrorBus:
             message=str(exc_value),
             exc=exc_value,
             impact="The current operation or application may stop.",
-            recovery_action="Review crash.log and zenless.log, then restart Zenless.",
+            recovery_action="Review crash.log and zenless.log, then restart Rubra.",
         )
 
     def _thread_exception(self, args: threading.ExceptHookArgs) -> None:

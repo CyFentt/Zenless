@@ -146,7 +146,7 @@ class ZenlessOrchestrator:
         thread = threading.Thread(
             target=self._run_guarded,
             args=(task_id, objective, options, cancel_event, attachment_paths),
-            name=f"Zenless-Task-{task_id[:8]}",
+            name=f"Rubra-Task-{task_id[:8]}",
             daemon=True,
         )
         with self._state_lock:
@@ -329,6 +329,8 @@ class ZenlessOrchestrator:
                 self._cancel.pop(task_id, None)
                 self._pause.pop(task_id, None)
                 self._paused_from.pop(task_id, None)
+                if self.current_task_id == task_id:
+                    self.current_task_id = ""
                 stale = [key for key in self._gates if key[0] == task_id]
                 for key in stale:
                     self._gates.pop(key, None)
@@ -681,9 +683,13 @@ class ZenlessOrchestrator:
         for tool_name, arguments in calls:
             if tool_name not in self.studio.tools:
                 continue
-            result = self.studio.call_tool(tool_name, arguments, studio_id=studio_id, timeout=90)
+            try:
+                result = self.studio.call_tool(tool_name, arguments, studio_id=studio_id, timeout=30)
+            except MCPError as exc:
+                context["reads"][tool_name] = "READ_UNAVAILABLE: " + str(exc)
+                continue
             context["reads"][tool_name + f":{len(context['reads'])}"] = result.compact(28_000)
-            self._emit(task_id, Stage.COLLECTING_CONTEXT, f"Context collected: {tool_name}.", "success")
+            self._emit(task_id, Stage.COLLECTING_CONTEXT, f"Context collected: {tool_name}.", "warning" if result.is_error else "success")
         context["tool_count"] = len(self.studio.tools)
         return self.brain.compact_context(context)
 
@@ -1063,7 +1069,7 @@ class ZenlessOrchestrator:
         self.store.append_message(task_id, "Builder", "visual-qa", raw)
         qa = extract_json_object(raw)
         return {
-            "approved": bool(qa.get("approved")),
+            "approved": qa.get("approved") is True,
             "failed_views": [str(item).casefold() for item in qa.get("failed_views", [])],
             "warnings": [str(item) for item in qa.get("warnings", [])],
             "summary": str(qa.get("summary") or "Visual QA provided no summary."),

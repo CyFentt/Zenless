@@ -338,10 +338,20 @@ function LinksTab({ connections }: { connections: ConnectionInfo }) {
 
 function LibraryTab() {
   const tools = useStore((s) => s.tools);
+  const setTools = useStore((s) => s.setTools);
+  useEffect(() => {
+    let active = true;
+    const refresh = () => getApi().getTools().then((items) => { if (active) setTools(items); })
+      .catch((error) => frontendDiagnostics.capture(error, 'tools', 'Unable to refresh tools'));
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 3000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [setTools]);
   const installed = tools.filter((tool) => tool.status === 'INSTALLED').length;
 
   return (
-    <div className="p-4 max-w-2xl space-y-4 animate-fade-in">
+    <div className="p-6 max-w-2xl mx-auto w-full space-y-4 animate-fade-in">
+      <LocalModelsPanel />
       <div className="flex items-center justify-between">
         <span className="text-2xs uppercase tracking-widest text-ink-300">UPSTREAM TOOLCHAIN</span>
         <span className="text-2xs font-mono text-ink-400">{installed}/{tools.length || 0}</span>
@@ -353,9 +363,9 @@ function LibraryTab() {
           <div key={tool.id} className="grid grid-cols-[1fr_auto] gap-3 py-2 border-b border-ink-700">
             <div className="min-w-0">
               <div className="text-xs text-ink-100 truncate">{tool.name}</div>
-              <div className="text-2xs text-ink-400 truncate">{tool.description || tool.reason || tool.category}</div>
+              <div className="text-2xs text-ink-400 break-words">{tool.status === 'INSTALLED' ? tool.description || tool.category : tool.reason || tool.description}</div>
             </div>
-            <StatusBadge status={tool.status === 'INSTALLED' ? 'READY' : 'OFF'} />
+            <span className="text-xs text-ink-300 self-center">{tool.status === 'INSTALLED' ? 'Installed' : tool.status === 'OPTIONAL' ? 'Optional' : 'Not installed'}</span>
           </div>
         ))}
       </div>

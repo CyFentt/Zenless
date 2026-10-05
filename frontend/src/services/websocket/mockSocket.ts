@@ -118,7 +118,7 @@ export class MockZenlessSocket implements ZenlessSocket {
       const ts = this.mockApi.getMockTestState();
       if (ts.status !== "RUNNING") return;
       const logId = `log_${Date.now()}`;
-      const levels = ["SRV", "CLI", "ZEN", "WARN"] as const;
+      const levels = ["SRV", "CLI", "RUBRA", "WARN"] as const;
       const level = levels[Math.floor(Math.random() * levels.length)];
       const messages = [
         "Physics step completed",

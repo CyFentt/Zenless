@@ -43,7 +43,7 @@ def ensure_webview2(resource_root: Path, data_root: Path) -> Path:
     if not installer.is_file():
         temporary.parent.mkdir(parents=True, exist_ok=True)
         partial = temporary.with_suffix(".download")
-        request = Request(WEBVIEW2_BOOTSTRAPPER_URL, headers={"User-Agent": "Zenless/2.0"})
+        request = Request(WEBVIEW2_BOOTSTRAPPER_URL, headers={"User-Agent": "Rubra/2.0"})
         try:
             with urlopen(request, timeout=60) as response, partial.open("wb") as stream:
                 shutil.copyfileobj(response, stream, length=1024 * 1024)

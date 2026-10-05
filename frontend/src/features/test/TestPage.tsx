@@ -7,7 +7,7 @@ import { Modal } from "@/components/Modal";
 import { Play, Square } from "lucide-react";
 import type { TestLog, LogLevel } from "@/types";
 
-const FILTERS = ["ALL", "ERR", "WARN", "ZEN", "SRV", "CLI"] as const;
+const FILTERS = ["ALL", "ERR", "WARN", "RUBRA", "SRV", "CLI"] as const;
 
 export function TestPage() {
   const testState = useStore((s) => s.testState);
@@ -108,7 +108,7 @@ export function TestPage() {
   const levelColor: Record<LogLevel, string> = {
     ERR: "text-zen-errBright",
     WARN: "text-zen-warnBright",
-    ZEN: "text-ink-50",
+    RUBRA: "text-ink-50",
     SRV: "text-ink-100",
     CLI: "text-ink-150",
   };

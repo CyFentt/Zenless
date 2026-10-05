@@ -170,6 +170,9 @@ class ZenlessCore:
             local_complete=lambda prompt: self.local_ai.complete(
                 prompt, max_tokens=2048, temperature=0.15, timeout=300
             ),
+            selected_model=lambda provider: str(self.settings()["models"].get(provider, {}).get(
+                "version" if provider == "hunyuan" else "model", "auto")),
+            local_cancel=self.local_ai.close,
         )
         try:
             self.studio: Any = StudioMCPClient(
@@ -768,6 +771,8 @@ class ZenlessCore:
             with self._studio_lock:
                 if target.studio_id != self._studio_target_id:
                     self._studio_tree, self._studio_nodes = [], {}
+                    self._studio_inventory = {"complete": False, "total": 0, "source": ""}
+                    self._studio_tree_error = ""
                 self._studio_target_id = target.studio_id
                 self._studio_label = target.label
             self._set_connection("studio", "READY")
@@ -826,7 +831,7 @@ class ZenlessCore:
                         or getattr(self, "_studio_tree_error", "")
                         or (
                             time.monotonic() - getattr(self, "_last_studio_inventory", 0) >= 30
-                            and self.orchestrator.current_task_id is None
+                            and not self.orchestrator.current_task_id
                             and not self.qa.running(self._studio_test_id)
                         )
                     ):
@@ -915,6 +920,8 @@ class ZenlessCore:
 
     def start_test(self, job_id: str, profile: str = "STANDARD") -> bool:
         self._require_task(job_id)
+        if self.orchestrator.current_task_id:
+            raise CoreError("STUDIO_BUSY", "Wait for the active task before starting a manual test.", status=409)
         if not self.qa.start_manual(job_id, profile):
             raise CoreError("TEST_ALREADY_RUNNING", "A test is already running.", status=409)
         return True
@@ -930,6 +937,8 @@ class ZenlessCore:
             )
         if self.connections()["studio"] != "READY":
             self.refresh_studio()
+        if self.connections()["studio"] != "READY" or not self._studio_target_id:
+            raise CoreError("STUDIO_UNAVAILABLE", "Open a place in Roblox Studio and enable its MCP server.", status=409)
         if self.qa.running(self._studio_test_id):
             raise CoreError("TEST_ALREADY_RUNNING", "A test is already running.", status=409)
         job_id = uuid.uuid4().hex
@@ -1015,9 +1024,13 @@ class ZenlessCore:
             failures = [item.item_id for item in results if item.state == "failed"]
             self._tools_state = {
                 "state": "ERROR" if failures else "READY",
-                "detail": "Retry: " + ", ".join(failures) if failures else "Tools and skills prepared",
+                "detail": "; ".join(f"{item.item_id}: {item.detail}" for item in results if item.state == "failed") if failures else "Tools and skills prepared",
             }
             self._model_cache = None
+            if self.local_ai.available and self.settings()["localAI"]:
+                for provider in ("chatgpt", "deepseek"):
+                    if self.connections()[provider] != "READY":
+                        self.bridge.wait_for_provider(provider, timeout=0.5)
         except Exception as exc:
             self._tools_state = {"state": "ERROR", "detail": str(exc)}
             if not self._closing.is_set():
@@ -1107,10 +1120,9 @@ class ZenlessCore:
                 names = []
             if not names:
                 continue
-            options = [
-                {"id": name, "label": "Local model for this role" if response.get("transport") == "local" else name}
-                for name in names
-            ]
+            options = [{"id": "auto", "label": "Current provider default"}]
+            selected = settings[provider].get("version" if provider == "hunyuan" else "model", "auto")
+            options.extend({"id": name, "label": name} for name in dict.fromkeys([selected, *names]) if name != "auto")
             if provider == "hunyuan":
                 catalog[provider]["versions"] = options
             else:
@@ -1261,8 +1273,22 @@ class ZenlessCore:
         self._studio_thread = threading.Thread(target=self._monitor_studio, name="Rubra-Studio-Monitor", daemon=True)
         self._studio_thread.start()
         self._refresh_provider_states()
+        threading.Thread(target=self._restore_provider_sessions, name="Rubra-Session-Restore", daemon=True).start()
         index_thread = threading.Thread(target=self._index_project_background, name="Rubra-Project-Index", daemon=True)
         index_thread.start()
+
+    def _restore_provider_sessions(self) -> None:
+        roots = (self.data_root / "webview-profile", self.data_root / "browser-profile")
+        if not any(root.is_dir() and any(root.iterdir()) for root in roots):
+            return
+        for provider in PROVIDER_LABELS:
+            if self._closing.is_set():
+                return
+            with self._provider_lock:
+                thread = self._provider_threads.get(provider)
+                logging_in = thread is not None and thread.is_alive()
+            if not logging_in:
+                self.bridge.wait_for_provider(provider, timeout=2)
 
     def _login_worker(self, provider: str) -> None:
         self._set_connection(provider, "LOGIN")
@@ -1495,6 +1521,11 @@ class ZenlessCore:
                 "autoTest": bool(options.get("automatic_play_test", True)),
                 "autoFix": bool(options.get("auto_fix_errors", True)),
                 "approval": bool(options.get("require_approval", True)),
+                "approvalMode": str(options.get("approval_mode", "ask")).upper(),
+                "effort": str(options.get("effort_level", "auto")).upper(),
+                "research": str(options.get("research_mode", "auto")).upper(),
+                "smartRouting": bool(options.get("smart_routing", True)),
+                "continuousVerification": bool(options.get("continuous_verification", True)),
                 "risk": str(options.get("risk_level", "medium")),
                 "revisions": int(options.get("max_revisions", 3)),
                 "fixAttempts": int(options.get("max_test_fixes", 3)),

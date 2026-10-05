@@ -10,8 +10,11 @@ def authentication_script(provider: str, inputs: tuple[str, ...], origin_url: st
             '[data-testid="accounts-profile-button"]',
             '[data-testid="user-menu-button"]',
             'button[aria-label*="User menu"]',
+            '[aria-label="Open profile menu"]',
+            '[aria-label="Abrir menu de perfil"]',
+            '[data-testid="profile-button"]',
         ],
-        "deepseek": ['[class*="user-avatar"]', '[class*="userAvatar"]', '[data-testid="user-avatar"]'],
+        "deepseek": ['[class*="user-avatar"]', '[class*="userAvatar"]', '[data-testid="user-avatar"]', '[class*="ds-avatar"] img', '[aria-label="User menu"]'],
         "gemini": ['a[aria-label*="Google Account"]', 'a[aria-label*="Conta do Google"]', "[data-ogsr-up] img"],
         "hunyuan": ['[class*="user-avatar"]', '[class*="userAvatar"]', '[data-testid="user-avatar"]'],
     }
@@ -24,9 +27,9 @@ def authentication_script(provider: str, inputs: tuple[str, ...], origin_url: st
         const style = getComputedStyle(node), box = node.getBoundingClientRect();
         return style.visibility !== 'hidden' && style.display !== 'none' && box.width > 0 && box.height > 0;
       }};
-      const any = selectors => selectors.some(selector => [...document.querySelectorAll(selector)].some(visible));
+      const any = selectors => selectors.some(selector => [...document.querySelectorAll(selector)].some(node => visible(node) || [...node.querySelectorAll('img, span, svg')].some(visible)));
       const composer = any({json.dumps(inputs)});
-      const guest = [...document.querySelectorAll('button, a')].some(node => visible(node) && /^(log in|sign in|entrar|fazer login|登录|登入)$/i.test((node.innerText || node.textContent || '').trim()));
+      const guest = [...document.querySelectorAll('button, a, [role="button"]')].some(node => visible(node) && /^(log in|sign in|sign up|entrar|fazer login|iniciar sessão|登录|登入)$/i.test((node.innerText || node.textContent || '').trim()));
       const account = any({json.dumps(account_selectors.get(provider, []))});
       const authPage = /(?:^|\\/)(?:login|signin|sign-in|auth)(?:\\/|$)/i.test(location.pathname) ||
         /^(?:accounts\\.google\\.com|auth\\.openai\\.com|auth0\\.openai\\.com)$/.test(location.hostname);

@@ -53,7 +53,7 @@ class DiscordIntegration:
         request = Request(
             self._webhook_url,
             data=payload,
-            headers={"Content-Type": "application/json", "User-Agent": "Zenless/1.0"},
+            headers={"Content-Type": "application/json", "User-Agent": "Rubra/1.0"},
             method="POST",
         )
         try:

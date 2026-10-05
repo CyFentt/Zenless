@@ -9,7 +9,7 @@ from typing import Any
 PROTOCOL_VERSION = 1
 MAX_ENVELOPE_BYTES = 2 * 1024 * 1024
 MESSAGE_TYPE = re.compile(r"^[a-z][a-z0-9_.-]{1,63}$")
-PROVIDERS = {"chatgpt", "deepseek", "hunyuan", "bridge"}
+PROVIDERS = {"chatgpt", "deepseek", "gemini", "hunyuan", "bridge"}
 
 
 class ProtocolError(ValueError):
@@ -91,7 +91,7 @@ def parse_envelope(raw: str | bytes) -> Envelope:
     if not MESSAGE_TYPE.fullmatch(message_type):
         raise ProtocolError("Invalid envelope type.")
     source = str(data.get("source", ""))
-    if source not in {"zenless", "extension", "native-host", "content"}:
+    if source not in {"rubra", "zenless", "extension", "native-host", "content"}:
         raise ProtocolError("Invalid envelope source.")
     provider = str(data.get("provider", "bridge"))
     if provider not in PROVIDERS:
