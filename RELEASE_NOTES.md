@@ -10,6 +10,8 @@
 - Make Smart Routing consistently control local text fallback, including QA scenario generation, while visual QA requires an authenticated web image-capable provider.
 - Make continuous verification obey Fix Attempts, cancel npm and static-quality child processes on Stop/Quit, force-kill an unresponsive WebView2 helper, and prevent open-app partial uninstalls.
 - Harden portable packaging with rollback-safe updates, verified wheel-cache recovery, archive link rejection and reversible tool-directory swaps.
+- Make chat job creation rollback-safe before worker startup, register attachments before dispatch and scope identical attachment assets per job.
+- Build legacy source wheels in an offline environment with SHA-256-verified pinned pip/setuptools, pin CI Python 3.14.7 and record source-build provenance in release.json.
 - Prepare chat jobs, persisted messages and attachment assets before worker execution; roll back failed pre-start jobs and keep identical assets isolated per job.
 - Build source-only Python dependencies with SHA-256-pinned offline pip/setuptools tooling, pin the CI Python patch release and record source-build provenance in the portable receipt.
 
