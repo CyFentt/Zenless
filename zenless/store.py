@@ -234,17 +234,18 @@ class SQLiteStore:
                 (event.task_id, event.stage.value, event.kind, event.message, event.detail, timestamp),
             )
 
-    def append_message(self, task_id: str, sender: str, role: str, content: str) -> None:
+    def append_message(self, task_id: str, sender: str, role: str, content: str) -> int:
         compact = self._compact_message(content)
         with closing(self._connect()) as connection:
             connection.execute("BEGIN IMMEDIATE")
-            connection.execute(
+            cursor = connection.execute(
                 """
                 INSERT INTO messages(task_id, sender, role, content, created_at)
                 VALUES (?, ?, ?, ?, ?)
                 """,
                 (task_id, sender, role, compact, now_iso()),
             )
+            message_id = int(cursor.lastrowid)
             connection.execute(
                 """
                 DELETE FROM messages
@@ -255,6 +256,7 @@ class SQLiteStore:
                 (task_id, task_id, self.MAX_MESSAGES_PER_TASK),
             )
             connection.execute("COMMIT")
+            return message_id
 
     def maintenance(self) -> None:
         with closing(self._connect()) as connection:
