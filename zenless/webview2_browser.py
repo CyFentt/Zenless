@@ -119,8 +119,12 @@ class WebView2BrowserController:
             process.terminate()
             try:
                 process.wait(timeout=5)
-            except subprocess.TimeoutExpired as exc:
-                raise BridgeError("WebView2 helper did not stop cooperatively.") from exc
+            except subprocess.TimeoutExpired:
+                process.kill()
+                try:
+                    process.wait(timeout=2)
+                except subprocess.TimeoutExpired as exc:
+                    raise BridgeError("WebView2 helper could not be terminated.") from exc
         for thread in (self._reader, self._stderr_reader):
             if thread is not None and thread is not threading.current_thread():
                 thread.join(timeout=2)
