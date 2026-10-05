@@ -157,6 +157,15 @@ class LocalWebBridge:
         response.headers["X-Request-Id"] = request_id
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            "base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; "
+            "script-src 'self'; style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data: blob:; font-src 'self' data:; "
+            "connect-src 'self' ws://127.0.0.1:* ws://localhost:*"
+        )
         content_type = str(getattr(response, "content_type", "") or "").casefold()
         response.headers["Cache-Control"] = (
             "no-store"
