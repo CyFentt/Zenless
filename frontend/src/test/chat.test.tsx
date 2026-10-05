@@ -27,7 +27,7 @@ describe('ChatPage', () => {
     fireEvent.click(screen.getByLabelText('Send'));
 
     expect(await screen.findByText(`${role} requires login.`)).toBeInTheDocument();
-    expect(screen.getByText('Build a collectible coin system')).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('Message Rubra')).toHaveValue('Build a collectible coin system');
     fireEvent.click(screen.getByRole('button', { name: 'LOGIN' }));
     await waitFor(() => expect(loginProvider).toHaveBeenCalledWith(provider));
   });
