@@ -59,13 +59,8 @@ export function TestPage() {
       resetTestDetails();
       setElapsed(0);
       setTestState({ ...testState, status: "STARTING" });
-      if (currentJobId) {
-        await getApi().startTest(currentJobId);
-        useStore.setState({ activeTestJobId: currentJobId });
-      } else {
-        const result = await getApi().startStudioTest();
-        useStore.setState({ activeTestJobId: result.jobId });
-      }
+      const result = await getApi().startStudioTest();
+      useStore.setState({ activeTestJobId: result.jobId });
     } catch (error) {
       frontendDiagnostics.capture(error, "test", "Failed to start Play Test");
       setTestState({ ...testState, status: "FAILED" });
