@@ -157,7 +157,12 @@ class LocalWebBridge:
         response.headers["X-Request-Id"] = request_id
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "no-referrer"
-        response.headers["Cache-Control"] = "no-store" if request.path.startswith("/api/") else "public, max-age=3600"
+        content_type = str(getattr(response, "content_type", "") or "").casefold()
+        response.headers["Cache-Control"] = (
+            "no-store"
+            if request.path.startswith("/api/") or request.path == "/ws" or content_type == "text/html"
+            else "public, max-age=3600"
+        )
         return response
 
     def _validate_local_request(self, request: web.Request) -> None:
