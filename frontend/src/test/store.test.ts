@@ -105,6 +105,13 @@ describe('Store', () => {
     expect(useStore.getState().testCases[0]).toMatchObject({ id: 'case_1', status: 'PASSED', durationMs: 40 });
   });
 
+  it('clears manual test ownership after the matching test finishes', () => {
+    useStore.setState({ activeTestJobId: 'manual-test' });
+    handleEvent({ type: 'TEST_FINISHED', data: { jobId: 'manual-test', passed: true } });
+    expect(useStore.getState().activeTestJobId).toBeNull();
+    expect(useStore.getState().testState.status).toBe('STOPPED');
+  });
+
   it('stores TEST_FAILURE details and exposes them as an error log', () => {
     useStore.getState().resetTestDetails();
     useStore.getState().setTestLogs([]);
