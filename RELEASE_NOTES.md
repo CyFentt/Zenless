@@ -7,9 +7,9 @@
 - Continue independent tool installations after a download fails, persist individual failure reasons and expose installation progress.
 - Allow local inference cancellation and recover corrupted source-export metadata safely.
 
-Validation: 190 Python tests, 72 frontend unit tests and 21 Chromium UI tests; Python/TypeScript checks and lint. Five Python checks require unavailable Windows/Lune environments and are skipped. Five pinned upstream tool/source downloads were verified successfully. Browser UI tests use fixtures, not live provider accounts.
+Baseline validation before the final hardening pass covered 190 Python tests, 72 frontend unit tests and 21 Chromium UI tests, plus Python/TypeScript checks and lint. The final hardening pass added regression coverage for safe chat continuation, standalone Play, provider routing/model confirmation, installer rollback, approval races, security headers, stale UI snapshots, legacy-code repair and settings consistency. The current GitHub Actions runner is failing before a runner is allocated, so no workflow steps execute for the current HEAD; those baseline counts must not be treated as a clean run of this exact revision.
 
-Native Windows login, installer/tray behavior and real Roblox Studio execution still require validation on Windows. This remains a prerelease. Close the previous Rubra process before installation.
+Native Windows login, installer/tray/update behavior, live provider surfaces and real Roblox Studio execution still require a clean Windows/CI validation before release. This remains a prerelease. Close the previous Rubra process before installation.
 
 # Rubra 2.1.1 prerelease
 
