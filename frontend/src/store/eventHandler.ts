@@ -64,15 +64,16 @@ export function handleEvent(event: ZenlessEvent) {
       store.addActivity(event.data.activity);
       break;
     case 'CONTEXT_UPDATED':
-      store.setContextItems(event.data.items);
+      if (useStore.getState().currentJobId === event.data.jobId) store.setContextItems(event.data.items);
       break;
     case 'CHANGES_UPDATED':
-      store.setChangedFiles(event.data.files);
+      if (useStore.getState().currentJobId === event.data.jobId) store.setChangedFiles(event.data.files);
       break;
     case 'REVIEW_READY':
-      store.setChangedFiles(event.data.review.files);
+      if (useStore.getState().currentJobId === event.data.jobId) store.setChangedFiles(event.data.review.files);
       break;
     case 'VISUAL_GENERATION_CHANGED':
+      if (useStore.getState().currentJobId !== event.data.jobId) break;
       if (event.data.view) {
         store.setViews(
           useStore.getState().views.map((v) =>
@@ -89,6 +90,7 @@ export function handleEvent(event: ZenlessEvent) {
       }
       break;
     case 'VISUAL_READY':
+      if (useStore.getState().currentJobId !== event.data.jobId) break;
       {
         const current = useStore.getState().views;
         const exists = current.some((v) => v.name === event.data.view);
@@ -102,6 +104,7 @@ export function handleEvent(event: ZenlessEvent) {
       }
       break;
     case 'VISUAL_APPROVED':
+      if (useStore.getState().currentJobId !== event.data.jobId) break;
       store.setViews(
         useStore.getState().views.map((v) =>
           !event.data.view || v.name === event.data.view ? { ...v, state: 'APPROVED' } : v,
@@ -113,6 +116,7 @@ export function handleEvent(event: ZenlessEvent) {
       }
       break;
     case 'MODEL_GENERATION_CHANGED':
+      if (useStore.getState().currentJobId !== event.data.jobId) break;
       {
         const mi = useStore.getState().modelInfo;
         if (event.data.target === 'geometry') {
@@ -123,9 +127,11 @@ export function handleEvent(event: ZenlessEvent) {
       }
       break;
     case 'MODEL_READY':
+      if (useStore.getState().currentJobId !== event.data.jobId) break;
       store.setModelInfo({ ...useStore.getState().modelInfo, state: 'READY', modelUrl: event.data.modelUrl, filename: event.data.filename });
       break;
     case 'MODEL_APPROVED':
+      if (useStore.getState().currentJobId !== event.data.jobId) break;
       store.setModelInfo({ ...useStore.getState().modelInfo, state: 'APPROVED' });
       break;
     case 'ASSETS_UPDATED':
