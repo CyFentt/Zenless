@@ -20,6 +20,82 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Initialize report
+        run: |
+          mkdir -p .ci-report
+          printf "runner_python=" > .ci-report/report.txt
+          python --version >> .ci-report/report.txt 2>&1 || true
+          printf "runner_node=" >> .ci-report/report.txt
+          node --version >> .ci-report/report.txt 2>&1 || true
+
+      - name: Checkout
+        id: diag-checkout
+        continue-on-error: true
+        uses: actions/checkout@v4
+
+      - name: Python
+        id: diag-python
+        continue-on-error: true
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Node
+        id: diag-node
+        continue-on-error: true
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Run diagnostic validation
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          {
+            echo "checkout=${{ steps.diag-checkout.outcome }}"
+            echo "python_setup=${{ steps.diag-python.outcome }}"
+            echo "node_setup=${{ steps.diag-node.outcome }}"
+            python --version
+            node --version
+            python -m pip install --upgrade pip
+            echo "pip_upgrade=$?"
+            python -m pip install -r requirements-dev.txt
+            echo "python_deps=$?"
+            python -m compileall -q main.py zenless
+            echo "compile=$?"
+            python -m ruff check .
+            echo "ruff=$?"
+            python -m pyright
+            echo "pyright=$?"
+            python -m pytest -o addopts= -q
+            echo "pytest=$?"
+            npm --prefix frontend ci
+            echo "npm_ci=$?"
+            npm --prefix frontend run lint
+            echo "eslint=$?"
+            npm --prefix frontend run typecheck
+            echo "typescript=$?"
+            npm --prefix frontend run test
+            echo "vitest=$?"
+            npm --prefix frontend run build
+            echo "frontend_build=$?"
+          } >> .ci-report/report.txt 2>&1
+          tail -n 400 .ci-report/report.txt
+
+      - name: Upload diagnostic report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Rubra-Full-CI-Diagnostics
+          path: .ci-report/report.txt
+          if-no-files-found: error
+          retention-days: 7
+
   validate:
     runs-on: ubuntu-latest
     timeout-minutes: 30
