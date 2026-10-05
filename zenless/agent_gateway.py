@@ -59,10 +59,20 @@ class AgentGateway:
         model = self.selected_model(provider) if self.selected_model is not None else "auto"
         if model == "auto":
             return
-        result = self._request_via_route(route, provider, "select_model", {"model": model},
-                                        task_id=task_id, timeout=20, stream_callback=None)
-        if result.get("status") != "ok" or not result.get("selected"):
-            raise BridgeError(f"The selected {provider} model could not be confirmed: {model}")
+        result = self._request_via_route(
+            route,
+            provider,
+            "select_model",
+            {"model": model},
+            task_id=task_id,
+            timeout=20,
+            stream_callback=None,
+        )
+        selected = str(result.get("selected") or "").strip()
+        if result.get("status") != "ok" or selected.casefold() != str(model).strip().casefold():
+            raise BridgeError(
+                f"The selected {provider} model could not be confirmed: requested {model}, provider reported {selected or 'none'}"
+            )
 
     @property
     def running(self) -> bool:
@@ -179,9 +189,15 @@ class AgentGateway:
         with self._route_lock:
             routes = dict(self._routes)
         result: dict[str, dict[str, str]] = {}
-        for provider in set(managed) | set(embedded) | set(extension):
+        for provider in set(managed) | set(embedded) | set(extension) | set(routes):
             route = routes.get(provider)
-            if route == "extension" and provider in extension:
+            if route == "local" and self._can_use_local(provider):
+                result[provider] = {
+                    "state": "Ready",
+                    "detail": "Local fallback; web provider is not currently authenticated",
+                    "transport": "local",
+                }
+            elif route == "extension" and provider in extension:
                 result[provider] = dict(extension[provider])
             elif route == "webview2" and provider in embedded:
                 result[provider] = dict(embedded[provider])
