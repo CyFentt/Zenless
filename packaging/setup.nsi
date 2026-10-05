@@ -125,18 +125,32 @@ Section "Rubra"
   Goto close_required
 
   install_failed:
-  ; Remove any partially extracted immutable payload and restore the previous
-  ; working version. Mutable runtime tools and user data are never removed here.
+  ; Remove any partially extracted immutable payload. Existing user data and
+  ; downloaded runtime content are never removed here.
   Delete "$INSTDIR\Rubra.exe"
   RMDir /r "$INSTDIR\app"
   RMDir /r "$INSTDIR\runtime\python"
-  IfFileExists "$INSTDIR\Rubra.exe.__rubra_old" 0 +2
-    Rename "$INSTDIR\Rubra.exe.__rubra_old" "$INSTDIR\Rubra.exe"
-  IfFileExists "$INSTDIR\app.__rubra_old\*" 0 +2
-    Rename "$INSTDIR\app.__rubra_old" "$INSTDIR\app"
-  IfFileExists "$INSTDIR\runtime\python.__rubra_old\*" 0 +2
-    Rename "$INSTDIR\runtime\python.__rubra_old" "$INSTDIR\runtime\python"
+  StrCmp $0 "Rubra" restore_previous fresh_install_failed
+
+  restore_previous:
+  ClearErrors
+  Rename "$INSTDIR\Rubra.exe.__rubra_old" "$INSTDIR\Rubra.exe"
+  IfErrors recovery_failed
+  ClearErrors
+  Rename "$INSTDIR\app.__rubra_old" "$INSTDIR\app"
+  IfErrors recovery_failed
+  ClearErrors
+  Rename "$INSTDIR\runtime\python.__rubra_old" "$INSTDIR\runtime\python"
+  IfErrors recovery_failed
   MessageBox MB_OK|MB_ICONSTOP "Rubra could not install the replacement payload. The previous application files were restored."
+  Abort
+
+  recovery_failed:
+  MessageBox MB_OK|MB_ICONSTOP "Rubra could not finish the update or fully restore the previous payload. Recovery backups were kept in the installation folder."
+  Abort
+
+  fresh_install_failed:
+  MessageBox MB_OK|MB_ICONSTOP "Rubra could not finish installation. Partial application files were removed; run the installer again."
   Abort
 
   close_required:
@@ -155,9 +169,11 @@ Section "Uninstall"
   Delete "$SMPROGRAMS\Rubra\Rubra.lnk"
   RMDir "$SMPROGRAMS\Rubra"
   RMDir /r "$INSTDIR\app"
+  RMDir /r "$INSTDIR\app.__rubra_old"
   RMDir /r "$INSTDIR\runtime"
   RMDir /r "$INSTDIR\data"
   Delete "$INSTDIR\Rubra.exe"
+  Delete "$INSTDIR\Rubra.exe.__rubra_old"
   Delete "$INSTDIR\Uninstall.exe"
   Delete "$INSTDIR\rubra-install.ini"
   Delete "$INSTDIR\LICENSE"
