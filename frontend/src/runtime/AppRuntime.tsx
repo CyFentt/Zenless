@@ -17,6 +17,7 @@ export class ApplicationRuntime {
   private unsubscribeEvent = () => {};
   private unsubscribeStatus = () => {};
   private unsubscribeDiagnostics = () => {};
+  private unsubscribeJob = () => {};
 
   constructor(private api: ZenlessAPI, private socket: ZenlessSocket) {}
 
@@ -39,6 +40,11 @@ export class ApplicationRuntime {
       this.unsubscribeStatus = this.socket.on('status', (status) => this.handleSocketStatus(status));
       this.socket.connect();
       await this.rehydrate();
+      if (!this.active) return;
+      this.unsubscribeJob = useStore.subscribe((state, previous) => {
+        if (!this.active || state.currentJobId === previous.currentJobId) return;
+        void this.loadSelectedJob(state.currentJobId);
+      });
     } catch (error) {
       if (!this.active) return;
       frontendDiagnostics.capture(error, 'runtime', 'Application startup failed');
@@ -53,6 +59,8 @@ export class ApplicationRuntime {
     this.unsubscribeEvent();
     this.unsubscribeStatus();
     this.unsubscribeDiagnostics();
+    this.unsubscribeJob();
+    this.unsubscribeJob = () => {};
     this.socket.disconnect();
   }
 
@@ -134,6 +142,41 @@ export class ApplicationRuntime {
     if (!this.active) return;
     useStore.getState().setRuntimeHydrated(true);
     useStore.getState().setBootError('');
+  }
+
+  private async loadSelectedJob(jobId: string | null): Promise<void> {
+    if (!this.active) return;
+    const state = useStore.getState();
+    const preserveActiveTest = !!state.activeTestJobId && state.activeTestJobId !== jobId;
+    useStore.setState({
+      messages: [],
+      contextItems: [],
+      changedFiles: [],
+      selectedFileId: null,
+      views: [],
+      conceptVersion: 0,
+      conceptStatus: 'EMPTY',
+      conceptPrompt: '',
+      modelInfo: { state: 'EMPTY', geometryStatus: 'IDLE', textureStatus: 'IDLE' },
+      ...(!preserveActiveTest ? {
+        testState: { status: 'IDLE', elapsedMs: 0, fixAttempt: 0, maxFixAttempts: 3 },
+        testLogs: [],
+        testCaptures: [],
+        testCases: [],
+        testFailures: [],
+      } : {}),
+    });
+    if (!jobId) return;
+    try {
+      const job = await this.api.getJob(jobId);
+      if (!this.active || useStore.getState().currentJobId !== jobId) return;
+      useStore.getState().upsertJob(job);
+      await this.loadJobSnapshot(job);
+    } catch (error) {
+      if (this.active && useStore.getState().currentJobId === jobId) {
+        frontendDiagnostics.capture(error, 'runtime', 'Failed to load the selected task', { jobId });
+      }
+    }
   }
 
   private async loadJobSnapshot(job: Job): Promise<void> {
