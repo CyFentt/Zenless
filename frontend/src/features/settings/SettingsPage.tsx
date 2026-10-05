@@ -348,13 +348,14 @@ function LibraryTab() {
     return () => { active = false; window.clearInterval(timer); };
   }, [setTools]);
   const installed = tools.filter((tool) => tool.status === 'INSTALLED').length;
+  const failed = tools.filter((tool) => tool.status === 'FAILED').length;
 
   return (
     <div className="p-6 max-w-2xl mx-auto w-full space-y-4 animate-fade-in">
       <LocalModelsPanel />
       <div className="flex items-center justify-between">
         <span className="text-2xs uppercase tracking-widest text-ink-300">UPSTREAM TOOLCHAIN</span>
-        <span className="text-2xs font-mono text-ink-400">{installed}/{tools.length || 0}</span>
+        <span className="text-2xs font-mono text-ink-400">{installed}/{tools.length || 0} installed{failed ? ` · ${failed} failed` : ''}</span>
       </div>
       <div className="border-t border-ink-700">
         {tools.length === 0 ? (
@@ -365,7 +366,9 @@ function LibraryTab() {
               <div className="text-xs text-ink-100 truncate">{tool.name}</div>
               <div className="text-2xs text-ink-400 break-words">{tool.status === 'INSTALLED' ? tool.description || tool.category : tool.reason || tool.description}</div>
             </div>
-            <span className="text-xs text-ink-300 self-center">{tool.status === 'INSTALLED' ? 'Installed' : tool.status === 'OPTIONAL' ? 'Optional' : 'Not installed'}</span>
+            <span className={`text-xs self-center ${tool.status === 'FAILED' ? 'text-zen-errBright' : 'text-ink-300'}`}>
+              {tool.status === 'INSTALLED' ? 'Installed' : tool.status === 'FAILED' ? 'Failed' : tool.status === 'OPTIONAL' ? 'Optional' : 'Not installed'}
+            </span>
           </div>
         ))}
       </div>
