@@ -32,6 +32,7 @@ def core(tmp_path):
     value._closing = threading.Event()
     value._connections = {"studio": "OFF"}
     value._connections_lock = threading.RLock()
+    value._settings_lock = threading.RLock()
     value._studio_lock = threading.RLock()
     value._studio_refresh_lock = threading.Lock()
     value._test_start_lock = threading.Lock()
