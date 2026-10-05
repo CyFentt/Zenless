@@ -78,10 +78,10 @@ def _milliseconds(value: str) -> int:
 class ZenlessCore:
     DEFAULT_SETTINGS = {
         "models": {
-            "chatgpt": {"model": "auto", "reasoning": True},
-            "deepseek": {"model": "auto", "reasoning": True},
-            "gemini": {"model": "auto", "reasoning": True},
-            "hunyuan": {"version": "auto", "quality": "standard"},
+            "chatgpt": {"model": "auto"},
+            "deepseek": {"model": "auto"},
+            "gemini": {"model": "auto"},
+            "hunyuan": {"version": "auto"},
             "smartRouting": True,
         },
         "autoApprove": False,
@@ -287,28 +287,24 @@ class ZenlessCore:
                 "name": PROVIDER_LABELS["chatgpt"],
                 "status": connections["chatgpt"],
                 "model": models["chatgpt"]["model"],
-                "reasoning": bool(models["chatgpt"]["reasoning"]),
             },
             {
                 "id": "deepseek",
                 "name": PROVIDER_LABELS["deepseek"],
                 "status": connections["deepseek"],
                 "model": models["deepseek"]["model"],
-                "reasoning": bool(models["deepseek"]["reasoning"]),
             },
             {
                 "id": "gemini",
                 "name": PROVIDER_LABELS["gemini"],
                 "status": connections["gemini"],
                 "model": models["gemini"]["model"],
-                "reasoning": bool(models["gemini"]["reasoning"]),
             },
             {
                 "id": "hunyuan",
                 "name": PROVIDER_LABELS["hunyuan"],
                 "status": connections["hunyuan"],
                 "version": models["hunyuan"]["version"],
-                "quality": models["hunyuan"]["quality"],
             },
             {"id": "studio", "name": "Studio", "status": connections["studio"]},
         ]
@@ -1116,10 +1112,6 @@ class ZenlessCore:
             },
             "hunyuan": {
                 "versions": [{"id": settings["hunyuan"]["version"], "label": settings["hunyuan"]["version"]}],
-                "qualities": [
-                    {"id": "standard", "label": "Standard"},
-                    {"id": "high", "label": "High"},
-                ],
             },
         }
         for provider in ("chatgpt", "deepseek", "gemini", "hunyuan"):
@@ -1706,10 +1698,13 @@ class ZenlessCore:
     @staticmethod
     def _merge_models(current: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:
         result = json.loads(json.dumps(current))
-        for provider in ("chatgpt", "deepseek", "gemini", "hunyuan"):
+        for provider in ("chatgpt", "deepseek", "gemini"):
             value = patch.get(provider)
-            if isinstance(value, dict):
-                result[provider].update(value)
+            if isinstance(value, dict) and "model" in value:
+                result[provider]["model"] = str(value["model"] or "auto")
+        value = patch.get("hunyuan")
+        if isinstance(value, dict) and "version" in value:
+            result["hunyuan"]["version"] = str(value["version"] or "auto")
         if "smartRouting" in patch:
             result["smartRouting"] = bool(patch["smartRouting"])
         return result
