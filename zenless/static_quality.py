@@ -32,9 +32,13 @@ class StaticQualityRunner:
         if not files:
             return [StaticCheck("Luau source discovery", "SKIPPED", "No .luau or .lua files were found.")]
         checks: list[StaticCheck] = []
+        if cancel_event is not None and cancel_event.is_set():
+            return checks
         stylua = self._tool("stylua", "stylua.exe")
         if stylua is not None:
             checks.append(self._run_command("StyLua check", [str(stylua), "--check", str(project)], project, timeout, cancel_event))
+            if cancel_event is not None and cancel_event.is_set():
+                return checks
         else:
             checks.append(StaticCheck("StyLua check", "SKIPPED", "StyLua is not installed."))
 
@@ -42,6 +46,8 @@ class StaticQualityRunner:
         has_selene_config = any((project / name).is_file() for name in ("selene.toml", "selene.yml", "selene.yaml"))
         if selene is not None and has_selene_config:
             checks.append(self._run_command("Selene lint", [str(selene), str(project)], project, timeout, cancel_event))
+            if cancel_event is not None and cancel_event.is_set():
+                return checks
         elif selene is None:
             checks.append(StaticCheck("Selene lint", "SKIPPED", "Selene is not installed."))
         else:
@@ -62,6 +68,8 @@ class StaticQualityRunner:
             )
             checks.append(check)
             target.unlink(missing_ok=True)
+            if cancel_event is not None and cancel_event.is_set():
+                return checks
         elif rojo is None:
             checks.append(StaticCheck("Rojo build", "SKIPPED", "Rojo is not installed."))
         else:
@@ -78,6 +86,8 @@ class StaticQualityRunner:
             if result.status == "FAILED":
                 result = StaticCheck(result.name, "WARNING", result.output)
             checks.append(result)
+            if cancel_event is not None and cancel_event.is_set():
+                return checks
         elif luau_lsp is None:
             checks.append(StaticCheck("Luau LSP analyze", "SKIPPED", "Luau Language Server is not installed."))
         else:
