@@ -90,9 +90,13 @@ class WebView2BrowserController:
             )
             self._reader.start()
             self._stderr_reader.start()
-        result = self._request("ping", "", {}, timeout=timeout)
-        if result.get("engine") != "webview2":
-            raise BridgeError("WebView2 helper returned an invalid handshake.")
+        try:
+            result = self._request("ping", "", {}, timeout=max(0.1, timeout))
+            if result.get("engine") != "webview2":
+                raise BridgeError("WebView2 helper returned an invalid handshake.")
+        except Exception:
+            self.stop(timeout=min(2.0, max(0.1, timeout)))
+            raise
 
     def stop(self, timeout: float = 8.0) -> None:
         with self._lifecycle_lock:
@@ -130,10 +134,15 @@ class WebView2BrowserController:
             return {key: dict(value) for key, value in self._states.items()}
 
     def wait_for_provider(self, provider: str, timeout: float = 20.0) -> bool:
+        budget = max(0.05, float(timeout))
+        deadline = time.monotonic() + budget
         try:
             if not self.running:
-                self.start(timeout=max(20.0, timeout))
-            result = self._request("health", provider, {}, timeout=max(20.0, timeout))
+                self.start(timeout=max(0.05, deadline - time.monotonic()))
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            result = self._request("health", provider, {}, timeout=remaining)
         except BridgeError as exc:
             self._set_state(provider, "Unavailable", str(exc))
             return False
@@ -267,7 +276,7 @@ class WebView2BrowserController:
         ).encode("utf-8")
         try:
             write_native_message(cast(BinaryIO, process.stdin), message, self._write_lock)
-            if not pending.event.wait(max(1.0, timeout)):
+            if not pending.event.wait(max(0.05, float(timeout))):
                 raise BridgeError(f"WebView2 timeout during {action}/{provider or 'core'}.")
             if pending.error:
                 raise BridgeError(pending.error)
