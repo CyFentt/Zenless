@@ -77,9 +77,9 @@ def ensure_webview2(resource_root: Path, data_root: Path) -> Path:
 
 def _verify_microsoft_signature(path: Path) -> None:
     environment = dict(os.environ)
-    environment["ZENLESS_VERIFY_FILE"] = str(path.resolve())
+    environment["RUBRA_VERIFY_FILE"] = str(path.resolve())
     command = (
-        "$s=Get-AuthenticodeSignature -LiteralPath $env:ZENLESS_VERIFY_FILE; "
+        "$s=Get-AuthenticodeSignature -LiteralPath $env:RUBRA_VERIFY_FILE; "
         "if($s.Status -ne 'Valid' -or $s.SignerCertificate.Subject -notmatch 'Microsoft'){exit 7}"
     )
     result = subprocess.run(
