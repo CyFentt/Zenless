@@ -78,7 +78,7 @@ class ErrorBus:
         self._logger.setLevel(logging.INFO)
         self._logger.propagate = False
         handler = RotatingFileHandler(
-            self.log_root / "zenless.log",
+            self.log_root / "rubra.log",
             maxBytes=2 * 1024 * 1024,
             backupCount=3,
             encoding="utf-8",
@@ -234,7 +234,7 @@ class ErrorBus:
             message=str(exc_value),
             exc=exc_value,
             impact="The current operation or application may stop.",
-            recovery_action="Review crash.log and zenless.log, then restart Rubra.",
+            recovery_action="Review crash.log and rubra.log, then restart Rubra.",
         )
 
     def _thread_exception(self, args: threading.ExceptHookArgs) -> None:
