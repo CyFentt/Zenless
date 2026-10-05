@@ -1930,7 +1930,9 @@ class ZenlessCore:
         if isinstance(value, dict) and "version" in value:
             result["hunyuan"]["version"] = str(value["version"] or "auto")
         if "smartRouting" in patch:
-            result["smartRouting"] = bool(patch["smartRouting"])
+            result["smartRouting"] = TaskOptions._boolean(
+                patch["smartRouting"], bool(result["smartRouting"])
+            )
         return result
 
     @staticmethod
