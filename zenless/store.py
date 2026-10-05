@@ -305,7 +305,10 @@ class SQLiteStore:
                 else:
                     next_stage = Stage.PAUSED.value
                     next_status = "waiting"
-                    reason = "Checkpoint recovered after an unexpected shutdown; resuming restarts only the pre-change phase."
+                    reason = (
+                        "RECOVERED_CHECKPOINT: Checkpoint recovered after an unexpected shutdown; "
+                        "resuming restarts only the pre-change phase."
+                    )
                 connection.execute(
                     "UPDATE tasks SET stage = ?, status = ?, error = ?, updated_at = ? WHERE id = ?",
                     (next_stage, next_status, reason, timestamp, task_id),
