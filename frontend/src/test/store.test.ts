@@ -78,6 +78,22 @@ describe('Store', () => {
     expect(useStore.getState().messages).toEqual([{ ...message, content: 'Final' }]);
   });
 
+  it('releases a completed standalone test when switching jobs but preserves a running one', () => {
+    useStore.setState({
+      activeTestJobId: 'manual-test',
+      testState: { status: 'STOPPED', elapsedMs: 0, fixAttempt: 0, maxFixAttempts: 3 },
+    });
+    useStore.getState().setCurrentJobId('other-job');
+    expect(useStore.getState().activeTestJobId).toBeNull();
+
+    useStore.setState({
+      activeTestJobId: 'manual-test',
+      testState: { status: 'RUNNING', elapsedMs: 0, fixAttempt: 0, maxFixAttempts: 3 },
+    });
+    useStore.getState().setCurrentJobId('another-job');
+    expect(useStore.getState().activeTestJobId).toBe('manual-test');
+  });
+
   it('addTestLog appends', () => {
     const initial = useStore.getState().testLogs.length;
     useStore.getState().addTestLog({ id: 'log_test', timestamp: Date.now(), level: 'ERR', message: 'test' });
