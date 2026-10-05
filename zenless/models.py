@@ -193,24 +193,25 @@ class TaskOptions:
             except TypeError, ValueError:
                 return default
 
-        create_3d_asset = bool(raw.get("Create 3D Asset", False))
+        create_3d_asset = cls._boolean(raw.get("Create 3D Asset"), False)
+        require_approval = cls._boolean(raw.get("Require Approval Before Studio Changes"), True)
         return cls(
-            visual_first=bool(raw.get("Visual First", False)) or create_3d_asset,
+            visual_first=cls._boolean(raw.get("Visual First"), False) or create_3d_asset,
             create_3d_asset=create_3d_asset,
-            independent_review=bool(raw.get("Independent Review", True)),
-            automatic_play_test=bool(raw.get("Automatic Play Test", True)),
-            auto_fix_errors=bool(raw.get("Auto Fix Errors", True)),
-            require_approval=bool(raw.get("Require Approval Before Studio Changes", True)),
+            independent_review=cls._boolean(raw.get("Independent Review"), True),
+            automatic_play_test=cls._boolean(raw.get("Automatic Play Test"), True),
+            auto_fix_errors=cls._boolean(raw.get("Auto Fix Errors"), True),
+            require_approval=require_approval,
             approval_mode=cls._approval_mode(
                 raw.get("Approval Mode"),
-                "ask" if bool(raw.get("Require Approval Before Studio Changes", True)) else "full_auto",
+                "ask" if require_approval else "full_auto",
             ),
             max_revisions=bounded_int("Max Revisions", 3),
             max_test_fixes=bounded_int("Max Test Fixes", 3),
-            continuous_verification=bool(raw.get("Continuous Verification", True)),
+            continuous_verification=cls._boolean(raw.get("Continuous Verification"), True),
             effort_level=cls._effort(raw.get("Effort", "auto")),
             research_mode=cls._research(raw.get("Research", "auto")),
-            smart_routing=bool(raw.get("Smart Routing", True)),
+            smart_routing=cls._boolean(raw.get("Smart Routing"), True),
             risk_level=cls._risk(raw.get("Risk", raw.get("Risk Level", "medium"))),
         )
 
@@ -224,28 +225,44 @@ class TaskOptions:
             except TypeError, ValueError:
                 return default
 
-        create_3d_asset = bool(source.get("create3D", False))
-        legacy_approval = bool(source.get("approval", True))
+        create_3d_asset = cls._boolean(source.get("create3D"), False)
+        legacy_approval = cls._boolean(source.get("approval"), True)
         approval_mode = cls._approval_mode(
             source.get("approvalMode"),
             "ask" if legacy_approval else "full_auto",
         )
         return cls(
-            visual_first=bool(source.get("visualFirst", False)) or create_3d_asset,
+            visual_first=cls._boolean(source.get("visualFirst"), False) or create_3d_asset,
             create_3d_asset=create_3d_asset,
-            independent_review=bool(source.get("review", True)),
-            automatic_play_test=bool(source.get("autoTest", True)),
-            auto_fix_errors=bool(source.get("autoFix", True)),
+            independent_review=cls._boolean(source.get("review"), True),
+            automatic_play_test=cls._boolean(source.get("autoTest"), True),
+            auto_fix_errors=cls._boolean(source.get("autoFix"), True),
             require_approval=approval_mode != "full_auto",
             approval_mode=approval_mode,
             max_revisions=bounded_int("revisions", 3),
             max_test_fixes=bounded_int("fixAttempts", 3),
-            continuous_verification=bool(source.get("continuousVerification", True)),
+            continuous_verification=cls._boolean(source.get("continuousVerification"), True),
             effort_level=cls._effort(source.get("effort", "auto")),
             research_mode=cls._research(source.get("research", "auto")),
-            smart_routing=bool(source.get("smartRouting", True)),
+            smart_routing=cls._boolean(source.get("smartRouting"), True),
             risk_level=cls._risk(source.get("risk", "medium")),
         )
+
+    @staticmethod
+    def _boolean(value: Any, default: bool) -> bool:
+        if value is None:
+            return default
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, int | float):
+            return bool(value)
+        if isinstance(value, str):
+            normalized = value.strip().casefold()
+            if normalized in {"true", "1", "yes", "on"}:
+                return True
+            if normalized in {"false", "0", "no", "off"}:
+                return False
+        return default
 
     @staticmethod
     def _risk(value: Any) -> str:
@@ -288,11 +305,13 @@ class ProposalAction:
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> "ProposalAction":
+        raw_arguments = raw.get("arguments")
+        risk = str(raw.get("risk", "medium")).strip().casefold()
         return cls(
-            tool=str(raw.get("tool", "")).strip(),
-            arguments=dict(raw.get("arguments") or {}),
-            reason=str(raw.get("reason", "")).strip(),
-            risk=str(raw.get("risk", "medium")).strip().lower(),
+            tool=str(raw.get("tool", "")).strip()[:160],
+            arguments=dict(raw_arguments) if isinstance(raw_arguments, dict) else {},
+            reason=str(raw.get("reason", "")).strip()[:4000],
+            risk=risk if risk in {"low", "medium", "high", "critical"} else "medium",
         )
 
 
@@ -312,16 +331,26 @@ class AgentProposal:
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any], raw_text: str = "") -> "AgentProposal":
-        actions_raw = raw.get("actions") or []
-        actions = [ProposalAction.from_dict(item) for item in actions_raw if isinstance(item, dict)]
+        actions_raw = raw.get("actions")
+        actions = [
+            ProposalAction.from_dict(item)
+            for item in (actions_raw[:64] if isinstance(actions_raw, list) else [])
+            if isinstance(item, dict)
+        ]
+        tests_raw = raw.get("tests")
+        tests = [
+            str(item).strip()[:1000]
+            for item in (tests_raw[:64] if isinstance(tests_raw, list) else [])
+            if str(item).strip()
+        ]
         return cls(
-            summary=str(raw.get("summary", "")).strip(),
+            summary=str(raw.get("summary", "")).strip()[:12_000],
             actions=actions,
-            final_message=str(raw.get("final_message", "")).strip(),
-            visual_prompt=str(raw.get("visual_prompt", "")).strip(),
-            model_3d_prompt=str(raw.get("model_3d_prompt", "")).strip(),
-            tests=[str(item).strip() for item in raw.get("tests", []) if str(item).strip()],
-            raw_text=raw_text,
+            final_message=str(raw.get("final_message", "")).strip()[:20_000],
+            visual_prompt=str(raw.get("visual_prompt", "")).strip()[:12_000],
+            model_3d_prompt=str(raw.get("model_3d_prompt", "")).strip()[:12_000],
+            tests=tests,
+            raw_text=raw_text[:120_000],
         )
 
 
@@ -349,15 +378,23 @@ class ReviewResult:
             confidence = max(0.0, min(1.0, float(raw.get("confidence", 0.0))))
         except TypeError, ValueError:
             confidence = 0.0
+        def strings(key: str) -> list[str]:
+            value = raw.get(key)
+            if not isinstance(value, list):
+                return []
+            return [str(item).strip()[:2000] for item in value[:64] if str(item).strip()]
+
+        risk = str(raw.get("risk", "medium")).strip().casefold()
+        verdict = str(raw.get("verdict", "revise")).strip().casefold()
         return cls(
-            verdict=str(raw.get("verdict", "revise")).strip().lower(),
-            summary=str(raw.get("summary", "")).strip(),
-            issues=[str(item).strip() for item in raw.get("issues", []) if str(item).strip()],
-            required_changes=[str(item).strip() for item in raw.get("required_changes", []) if str(item).strip()],
-            tests_required=[str(item).strip() for item in raw.get("tests_required", []) if str(item).strip()],
-            risk=str(raw.get("risk", "medium")).strip().lower(),
+            verdict=verdict if verdict in {"approve", "approved", "revise", "block"} else "revise",
+            summary=str(raw.get("summary", "")).strip()[:12_000],
+            issues=strings("issues"),
+            required_changes=strings("required_changes"),
+            tests_required=strings("tests_required"),
+            risk=risk if risk in {"low", "medium", "high", "critical"} else "medium",
             confidence=confidence,
-            raw_text=raw_text,
+            raw_text=raw_text[:120_000],
         )
 
 
