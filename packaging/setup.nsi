@@ -69,9 +69,11 @@ Section "Rubra"
   ; Replace them completely on update so removed/renamed files from an older
   ; release cannot survive and shadow the new code. User data, downloaded
   ; tools, models and caches elsewhere under runtime are intentionally kept.
+  ClearErrors
   RMDir /r "$INSTDIR\app"
   RMDir /r "$INSTDIR\runtime\python"
   Delete "$INSTDIR\Rubra.exe"
+  IfErrors close_required
 
   SetOutPath "$INSTDIR"
   ClearErrors
@@ -90,6 +92,9 @@ Section "Rubra"
   CreateShortcut "$SMPROGRAMS\Rubra\Rubra.lnk" "$INSTDIR\Rubra.exe" "" "$INSTDIR\Rubra.exe"
   CreateShortcut "$DESKTOP\Rubra.lnk" "$INSTDIR\Rubra.exe" "" "$INSTDIR\Rubra.exe"
   Goto done
+  close_required:
+  MessageBox MB_OK|MB_ICONSTOP "Rubra is still using application files. Quit Rubra from the notification area, then run the installer again."
+  Abort
   install_failed:
   MessageBox MB_OK|MB_ICONSTOP "Rubra could not update all application files. Close Rubra completely and run the installer again."
   Abort
