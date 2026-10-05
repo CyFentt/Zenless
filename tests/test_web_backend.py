@@ -125,6 +125,9 @@ class WebBackendTests(unittest.TestCase):
                 self.assertTrue(self._request(base + "/api/status", headers=headers)["ready"])
                 with urlopen(base + "/", timeout=5) as response:
                     self.assertEqual(response.headers.get("Cache-Control"), "no-store")
+                    self.assertEqual(response.headers.get("X-Frame-Options"), "DENY")
+                    self.assertIn("frame-ancestors 'none'", response.headers.get("Content-Security-Policy", ""))
+                    self.assertIn("camera=()", response.headers.get("Permissions-Policy", ""))
 
                 with self.assertRaises(HTTPError) as unauthorized:
                     self._request(base + "/api/status", headers={"X-Rubra-Token": "wrong"})
