@@ -313,7 +313,10 @@ class WebViewHost:
             or state.get("sameProvider") is False
         ):
             return state
-        capabilities = self._capabilities(window, spec)
+        try:
+            capabilities = self._capabilities(window, spec)
+        except Exception:
+            return state
         state["capabilities"] = capabilities
         if (
             bool(capabilities.get("upload_files"))
