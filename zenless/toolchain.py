@@ -9,6 +9,7 @@ import tarfile
 import tempfile
 import threading
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
@@ -292,25 +293,66 @@ class ToolchainManager:
     def _download(self, url: str, target: Path) -> None:
         target.parent.mkdir(parents=True, exist_ok=True)
         partial = target.with_suffix(target.suffix + ".partial")
-        request = urllib.request.Request(url, headers={"User-Agent": "Rubra/1"})
-        try:
-            with urllib.request.urlopen(request, timeout=90) as response, partial.open("wb") as stream:
-                total = int(response.headers.get("Content-Length") or 0)
-                copied = 0
-                last_percent = -1
-                while chunk := response.read(1024 * 1024):
-                    if self.cancel_event.is_set():
-                        raise ToolchainError("Tool preparation cancelled.")
-                    stream.write(chunk)
-                    copied += len(chunk)
-                    percent = int(copied * 100 / total) if total else -1
-                    if percent != last_percent:
-                        self._status(target.stem, f"Downloading {percent}%" if total else f"Downloading {copied // (1024 * 1024)} MB")
-                        last_percent = percent
-            os.replace(partial, target)
-        except Exception:
-            partial.unlink(missing_ok=True)
-            raise
+        last_error: BaseException | None = None
+        for attempt in range(5):
+            if self.cancel_event.is_set():
+                raise ToolchainError("Tool preparation cancelled. The partial download was kept for resume.")
+            resume_from = partial.stat().st_size if partial.is_file() else 0
+            headers = {"User-Agent": "Rubra/1", "Accept-Encoding": "identity"}
+            if resume_from:
+                headers["Range"] = f"bytes={resume_from}-"
+            request = urllib.request.Request(url, headers=headers)
+            try:
+                with urllib.request.urlopen(request, timeout=120) as response:
+                    status = int(getattr(response, "status", 200) or 200)
+                    resumed = resume_from > 0 and status == 206
+                    if resume_from and not resumed:
+                        resume_from = 0
+                    total_remaining = int(response.headers.get("Content-Length") or 0)
+                    total = resume_from + total_remaining if total_remaining else 0
+                    copied = resume_from
+                    mode = "ab" if resumed else "wb"
+                    last_percent = int(copied * 100 / total) if total else -1
+                    with partial.open(mode) as stream:
+                        while chunk := response.read(1024 * 1024):
+                            if self.cancel_event.is_set():
+                                raise ToolchainError(
+                                    "Tool preparation cancelled. The partial download was kept for resume."
+                                )
+                            stream.write(chunk)
+                            copied += len(chunk)
+                            percent = int(copied * 100 / total) if total else -1
+                            if percent != last_percent:
+                                detail = (
+                                    f"Downloading {percent}% ({copied // (1024 * 1024)} MB)"
+                                    if total
+                                    else f"Downloading {copied // (1024 * 1024)} MB"
+                                )
+                                self._status(target.stem, detail)
+                                last_percent = percent
+                os.replace(partial, target)
+                return
+            except ToolchainError:
+                raise
+            except urllib.error.HTTPError as exc:
+                last_error = exc
+                if exc.code == 416 and partial.exists():
+                    partial.unlink(missing_ok=True)
+            except (OSError, TimeoutError, urllib.error.URLError) as exc:
+                last_error = exc
+            if attempt < 4:
+                delay = min(16.0, 2.0 ** attempt)
+                self._status(
+                    target.stem,
+                    f"Download interrupted; resuming in {int(delay)}s ({attempt + 1}/5)",
+                )
+                if self.cancel_event.wait(delay):
+                    raise ToolchainError(
+                        "Tool preparation cancelled. The partial download was kept for resume."
+                    )
+        raise ToolchainError(
+            f"Download failed after 5 attempts; partial data was kept for resume: {last_error}"
+        )
 
     def _extract_atomic(self, archive: Path, target: Path, kind: str, flatten: bool) -> None:
         target.parent.mkdir(parents=True, exist_ok=True)
