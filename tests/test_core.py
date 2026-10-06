@@ -372,6 +372,7 @@ class CoreTests(unittest.TestCase):
 
         self.assertTrue(core.stop_test("job-test"))
 
+        core.qa.wait_for_manual_tests.assert_called_once_with(3.0)
         core._refresh_provider_states.assert_called_once_with()
         core.orchestrator.cancel.assert_not_called()
 
