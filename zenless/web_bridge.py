@@ -205,6 +205,13 @@ class LocalWebBridge:
 
         app.router.add_post("/api/chat", self._chat)
         app.router.add_post("/api/chat/{job_id}/cancel", self._cancel_generation)
+        app.router.add_get("/api/prompt-queue", self._sync_handler(self.core.prompt_queue))
+        app.router.add_post("/api/prompt-queue", self._enqueue_prompt)
+        app.router.add_patch("/api/prompt-queue/config", self._update_prompt_queue_config)
+        app.router.add_patch("/api/prompt-queue/{queue_id}", self._update_prompt_queue_item)
+        app.router.add_post("/api/prompt-queue/{queue_id}/retry", self._retry_prompt_queue_item)
+        app.router.add_post("/api/prompt-queue/{queue_id}/move", self._move_prompt_queue_item)
+        app.router.add_delete("/api/prompt-queue/{queue_id}", self._delete_prompt_queue_item)
 
         app.router.add_get("/api/jobs/{job_id}/context", self._context)
         app.router.add_post("/api/jobs/{job_id}/context/refresh", self._refresh_context)
@@ -322,6 +329,66 @@ class LocalWebBridge:
 
     async def _cancel_generation(self, request: web.Request) -> web.Response:
         return self._json({"ok": await asyncio.to_thread(self.core.cancel_generation, request.match_info["job_id"])})
+
+    async def _enqueue_prompt(self, request: web.Request) -> web.Response:
+        body = await self._json_body(request)
+        content = str(body.get("content") or "")
+        parent_job_id = str(body.get("jobId") or "")
+        raw_options = body.get("options")
+        if raw_options is not None and not isinstance(raw_options, dict):
+            raise CoreError("INVALID_TASK_OPTIONS", "Invalid task options.")
+        async def dispatch() -> dict[str, Any]:
+            return await asyncio.to_thread(
+                self.core.enqueue_prompt,
+                content,
+                parent_job_id=parent_job_id,
+                options=dict(raw_options or {}),
+            )
+        return await self._idempotent(request, "prompt-queue", parent_job_id, dispatch)
+
+    async def _update_prompt_queue_config(self, request: web.Request) -> web.Response:
+        body = await self._json_body(request)
+        return self._json(await asyncio.to_thread(self.core.update_prompt_queue_config, body))
+
+    async def _update_prompt_queue_item(self, request: web.Request) -> web.Response:
+        body = await self._json_body(request)
+        raw_options = body.get("options")
+        if raw_options is not None and not isinstance(raw_options, dict):
+            raise CoreError("INVALID_TASK_OPTIONS", "Invalid task options.")
+        return self._json(
+            await asyncio.to_thread(
+                self.core.update_prompt_queue_item,
+                request.match_info["queue_id"],
+                content=str(body["content"]) if "content" in body else None,
+                options=dict(raw_options) if isinstance(raw_options, dict) else None,
+            )
+        )
+
+    async def _retry_prompt_queue_item(self, request: web.Request) -> web.Response:
+        return self._json(
+            await asyncio.to_thread(self.core.retry_prompt_queue_item, request.match_info["queue_id"])
+        )
+
+    async def _move_prompt_queue_item(self, request: web.Request) -> web.Response:
+        body = await self._json_body(request)
+        try:
+            direction = int(body.get("direction") or 0)
+        except TypeError, ValueError:
+            direction = 0
+        if direction == 0:
+            raise CoreError("INVALID_QUEUE_MOVE", "Queue move direction must be -1 or 1.")
+        return self._json(
+            await asyncio.to_thread(
+                self.core.move_prompt_queue_item,
+                request.match_info["queue_id"],
+                direction,
+            )
+        )
+
+    async def _delete_prompt_queue_item(self, request: web.Request) -> web.Response:
+        return self._json(
+            {"ok": await asyncio.to_thread(self.core.delete_prompt_queue_item, request.match_info["queue_id"])}
+        )
 
     async def _context(self, request: web.Request) -> web.Response:
         return self._json(self.core.context(request.match_info["job_id"]))
