@@ -80,3 +80,48 @@ button:disabled { cursor: default; opacity: .5; }
 button { transition: color 150ms ease, background-color 150ms ease, border-color 150ms ease, transform 100ms ease; }
 button:active:not(:disabled) { transform: translateY(1px); }
 .pywebview-drag-region { user-select: none; }
+
+.rubra-wordmark {
+  color: #fff7f8;
+  text-shadow:
+    0 0 8px rgba(255, 51, 68, .55),
+    0 0 20px rgba(197, 31, 44, .32);
+  filter: drop-shadow(0 0 8px rgba(197, 31, 44, .22));
+  animation: rubra-wordmark-breathe 4.8s ease-in-out infinite;
+}
+
+.rubra-mark {
+  display: inline-flex;
+  width: 2rem;
+  height: 2rem;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(255, 51, 68, .45);
+  border-radius: .55rem;
+  color: #fff7f8;
+  background: radial-gradient(circle at 50% 30%, rgba(197,31,44,.22), rgba(9,4,5,.82) 68%);
+  box-shadow: 0 0 18px rgba(197,31,44,.16), inset 0 0 12px rgba(197,31,44,.08);
+  text-shadow: 0 0 8px rgba(255,51,68,.65);
+}
+
+@keyframes rubra-wordmark-breathe {
+  0%, 100% { text-shadow: 0 0 7px rgba(255,51,68,.42), 0 0 16px rgba(197,31,44,.22); }
+  50% { text-shadow: 0 0 10px rgba(255,51,68,.72), 0 0 24px rgba(197,31,44,.38); }
+}
+
+#root::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9999;
+  background:
+    radial-gradient(circle at 12% 8%, rgba(197,31,44,.055), transparent 26%),
+    radial-gradient(circle at 86% 88%, rgba(197,31,44,.035), transparent 30%);
+  mix-blend-mode: screen;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rubra-wordmark { animation: none !important; }
+}
+
