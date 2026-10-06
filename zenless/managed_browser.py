@@ -620,6 +620,10 @@ class ManagedBrowserController:
         while time.monotonic() < deadline:
             if self._stop.is_set() or command.cancelled.is_set():
                 raise BridgeError("Managed browser operation cancelled.")
+            failure = self._provider_failure(page)
+            if failure is not None:
+                code, detail = failure
+                raise BridgeError(f"{code}: {detail}")
             locator = self._response_locator(page, spec)
             count = locator.count() if locator is not None else 0
             text = self._last_text(locator)
@@ -845,6 +849,39 @@ class ManagedBrowserController:
             return locator.last.inner_text().strip()
         except Exception:
             return ""
+
+    @staticmethod
+    def _provider_failure(page: Any) -> tuple[str, str] | None:
+        selectors = (
+            "[role='alert']",
+            "[aria-live='assertive']",
+            "[class*='error']",
+            "[class*='toast']",
+            "[class*='notice']",
+        )
+        try:
+            locator = page.locator(", ".join(selectors))
+            count = min(locator.count(), 40)
+        except Exception:
+            return None
+        for index in range(count - 1, -1, -1):
+            node = locator.nth(index)
+            try:
+                if not node.is_visible():
+                    continue
+                text = (node.inner_text(timeout=250) or "").strip()
+            except Exception:
+                continue
+            if not text or len(text) > 700:
+                continue
+            lowered = text.casefold()
+            if any(term in lowered for term in ("rate limit", "too many requests", "reached your limit", "usage limit", "quota exceeded")):
+                return "PROVIDER_RATE_LIMIT", text
+            if any(term in lowered for term in ("server is busy", "servers are busy", "high traffic", "overloaded", "capacity")):
+                return "PROVIDER_CAPACITY", text
+            if any(term in lowered for term in ("network error", "connection error", "failed to fetch", "try again later")):
+                return "PROVIDER_TRANSIENT_ERROR", text
+        return None
 
     def _is_streaming(self, page: Any, spec: ProviderSpec) -> bool:
         return self._first_visible(page, spec.stops) is not None
