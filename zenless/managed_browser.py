@@ -623,6 +623,16 @@ class ManagedBrowserController:
             locator = self._response_locator(page, spec)
             count = locator.count() if locator is not None else 0
             text = self._last_text(locator)
+            if len(text) > 512_000:
+                stop = self._first_visible(page, spec.stops)
+                if stop is not None:
+                    try:
+                        stop.click(timeout=2_000)
+                    except Exception:
+                        pass
+                raise BridgeError(
+                    "PROVIDER_RESPONSE_LIMIT: Provider response exceeded Rubra's 512,000-character safety cap."
+                )
             is_new = count > before_count or bool(text and text != before_text)
             if is_new and text:
                 if text != last_text:
