@@ -551,6 +551,6 @@ export interface LocalAIState {
   available: boolean;
   running: boolean;
   model: string;
-  models?: { name: string; installed: boolean }[];
+  models?: { id?: string; name: string; installed: boolean; state?: string; detail?: string }[];
   setup: { state: string; detail: string };
 }
