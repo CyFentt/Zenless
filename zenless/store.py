@@ -228,7 +228,10 @@ class SQLiteStore:
 
     def delete_task(self, task_id: str) -> bool:
         with closing(self._connect()) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute("DELETE FROM assets WHERE job_id = ?", (task_id,))
             cursor = connection.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+            connection.execute("COMMIT")
             return cursor.rowcount == 1
 
     def update_task(self, task_id: str, **changes: Any) -> None:
@@ -514,12 +517,14 @@ class SQLiteStore:
             connection.execute("COMMIT")
 
     def recover_prompt_queue(self) -> list[str]:
+        recovered: list[str] = []
         with closing(self._connect()) as connection:
-            rows = connection.execute(
+            connection.execute("BEGIN IMMEDIATE")
+            preparing = connection.execute(
                 "SELECT id FROM prompt_queue WHERE state = 'preparing'"
             ).fetchall()
-            ids = [str(row["id"]) for row in rows]
-            if ids:
+            preparing_ids = [str(row["id"]) for row in preparing]
+            if preparing_ids:
                 connection.execute(
                     """
                     UPDATE prompt_queue
@@ -531,7 +536,60 @@ class SQLiteStore:
                     """,
                     (now_iso(),),
                 )
-        return ids
+                recovered.extend(preparing_ids)
+
+            inflight = connection.execute(
+                """
+                SELECT q.id, q.dispatched_job_id, t.stage, t.status
+                FROM prompt_queue AS q
+                LEFT JOIN tasks AS t ON t.id = q.dispatched_job_id
+                WHERE q.state = 'inflight'
+                """
+            ).fetchall()
+            for row in inflight:
+                queue_id = str(row["id"])
+                job_id = str(row["dispatched_job_id"] or "")
+                status = str(row["status"] or "").casefold()
+                stage = str(row["stage"] or "")
+                if not job_id or not status:
+                    message = (
+                        "The dispatched task cannot be confirmed after restart; automatic resend is blocked "
+                        "to prevent duplicate work."
+                    )
+                elif status == "complete":
+                    connection.execute(
+                        "UPDATE prompt_queue SET state = 'completed', last_error = '', updated_at = ? WHERE id = ?",
+                        (now_iso(), queue_id),
+                    )
+                    continue
+                elif status in {"failed", "blocked"}:
+                    connection.execute(
+                        "UPDATE prompt_queue SET state = 'failed', last_error = ?, updated_at = ? WHERE id = ?",
+                        (f"Recovered linked task ended as {status}.", now_iso(), queue_id),
+                    )
+                    recovered.append(queue_id)
+                    continue
+                elif status == "waiting" or stage == Stage.PAUSED.value:
+                    message = (
+                        "The linked task was recovered into a paused checkpoint after restart. "
+                        "Resume or cancel that task explicitly before retrying this queue item."
+                    )
+                else:
+                    continue
+                connection.execute(
+                    """
+                    UPDATE prompt_queue
+                    SET state = 'blocked',
+                        last_error = ?,
+                        next_attempt_at = '',
+                        updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (message, now_iso(), queue_id),
+                )
+                recovered.append(queue_id)
+            connection.execute("COMMIT")
+        return recovered
 
     def claim_operation(self, key: str, kind: str, resource_id: str = "") -> dict[str, Any]:
         timestamp = now_iso()
