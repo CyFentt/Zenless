@@ -161,6 +161,10 @@ class AgentGateway:
         with self._route_lock:
             self._routes.clear()
             self._task_routes.clear()
+        with self._health_lock:
+            self._failure_times.clear()
+            self._open_until.clear()
+            self._open_reason.clear()
         self.managed.stop()
         self.embedded.stop()
         if self.extension is not None:
@@ -304,7 +308,8 @@ class AgentGateway:
             routes = dict(self._routes)
         result: dict[str, dict[str, str]] = {}
         providers = set(managed) | set(embedded) | set(extension) | set(routes)
-        providers.update(self._open_until)
+        with self._health_lock:
+            providers.update(self._open_until)
         for provider in providers:
             route = routes.get(provider)
             cooldown, reason = self._circuit_status(provider)
