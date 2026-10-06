@@ -315,7 +315,7 @@ function LinksTab({ connections, agents }: { connections: ConnectionInfo; agents
     if (state === 'READY') {
       setLoggingIn(false);
       setLoginModal(null);
-    } else if (state === 'ERR' || state === 'OFF') {
+    } else if (state === 'LOGIN' || state === 'ERR' || state === 'OFF') {
       setLoggingIn(false);
     }
   }, [connections, loginModal]);
