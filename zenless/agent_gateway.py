@@ -105,7 +105,11 @@ class AgentGateway:
             result = self.embedded.login(provider, timeout=timeout)
             route = "webview2"
         except BridgeError as embedded_error:
-            if "LOGIN_CANCELLED" in str(embedded_error):
+            message = str(embedded_error)
+            if "LOGIN_CANCELLED" in message or "LOGIN_CHALLENGE" in message:
+                # Do not escalate anti-bot challenges into Playwright. Production challenge
+                # systems intentionally reject automated browsers; preserve the WebView2
+                # profile and leave the provider optional/retryable instead.
                 raise
             if self._stopping.is_set():
                 raise BridgeError("Rubra is closing; provider login was cancelled.") from embedded_error
