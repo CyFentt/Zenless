@@ -272,6 +272,32 @@ class CoreTests(unittest.TestCase):
 
         self.assertEqual(result["deepseek"], "CONNECTING")
 
+    def test_frontend_diagnostic_is_bounded_and_forwarded_to_error_bus(self) -> None:
+        core = object.__new__(ZenlessCore)
+        core.diagnostics = Mock()
+        payload = {
+            "severity": "error",
+            "source": "window",
+            "component": "react",
+            "message": "Render failed",
+            "file": "app.tsx",
+            "line": 42,
+            "function": "Widget",
+            "stack": "x" * 25000,
+            "requestId": "request-1",
+        }
+
+        self.assertTrue(core.report_frontend_diagnostic(payload))
+
+        kwargs = core.diagnostics.report.call_args.kwargs
+        self.assertEqual(kwargs["severity"], "ERROR")
+        self.assertEqual(kwargs["source"], "window")
+        self.assertEqual(kwargs["file_name"], "app.tsx")
+        self.assertEqual(kwargs["line_number"], 42)
+        self.assertEqual(kwargs["function_name"], "Widget")
+        self.assertEqual(len(kwargs["stack_trace"]), 20000)
+        self.assertEqual(kwargs["request_id"], "request-1")
+
     def test_degraded_provider_status_is_visible_in_diagnostics_without_invalidating_login(self) -> None:
         core = object.__new__(ZenlessCore)
         core._connections = {"chatgpt": "READY"}
