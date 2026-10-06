@@ -151,6 +151,10 @@ class WebView2BrowserController:
         except BridgeError as exc:
             self._set_state(provider, "Unavailable", str(exc))
             return False
+        if bool(result.get("busy")):
+            current = self.provider_status().get(provider, {})
+            state = str(current.get("state") or "").casefold()
+            return state in {"ready", "connected", "working", "degraded", "routed"}
         ready = bool(result.get("ready"))
         challenge = bool(result.get("challenge"))
         detail = (
