@@ -248,6 +248,30 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(len(core.store.assets("job-a")), 1)
             self.assertEqual(core.store.assets("job-b"), [])
 
+    def test_connections_do_not_downgrade_active_login_to_login_required(self) -> None:
+        core = object.__new__(ZenlessCore)
+        core._closing = threading.Event()
+        core._connections = {
+            "bridge": "READY",
+            "browser": "READY",
+            "chatgpt": "OFF",
+            "deepseek": "CONNECTING",
+            "gemini": "OFF",
+            "hunyuan": "OFF",
+            "studio": "OFF",
+        }
+        core._connections_lock = threading.RLock()
+        core._provider_threads = {"deepseek": Mock()}
+        core._provider_threads["deepseek"].is_alive.return_value = True
+        core.bridge = Mock()
+        core.bridge.provider_status.return_value = {
+            "deepseek": {"state": "Login Required", "detail": "manual login"}
+        }
+
+        result = core.connections()
+
+        self.assertEqual(result["deepseek"], "CONNECTING")
+
     def test_login_challenge_returns_provider_to_login_attention_state(self) -> None:
         core = object.__new__(ZenlessCore)
         core._connections = {"deepseek": "OFF"}
