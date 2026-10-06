@@ -37,7 +37,11 @@ class LocalAIService:
         )
 
     def model_status(self) -> list[dict[str, object]]:
-        return [{"name": path.stem, "installed": path.is_file()} for path in self._model_paths()]
+        coder, general = self._model_paths()
+        return [
+            {"id": "qwen-coder-7b", "name": coder.stem, "installed": coder.is_file()},
+            {"id": "qwen3-4b", "name": general.stem, "installed": general.is_file()},
+        ]
 
     def _select_model(self, prompt: str) -> None:
         coder, general = self._model_paths()
