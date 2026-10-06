@@ -176,6 +176,9 @@ class WebViewHost:
             state = self._composer_state(window, spec)
             return {
                 "ready": bool(state.get("authenticated")),
+                "authenticated": bool(state.get("authenticated")),
+                "challenge": bool(state.get("challenge")),
+                "guest": bool(state.get("guest")),
                 "url": str(window.get_current_url() or spec.url),
                 "capabilities": self._capabilities(window, spec),
             }
