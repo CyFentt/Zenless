@@ -247,6 +247,7 @@ function ModelsTab({ settings, catalog, onChange }: { settings: Settings | null;
 function LocalModelsPanel() {
   const [state, setState] = useState<LocalAIState | null>(null);
   const [busy, setBusy] = useState(false);
+  const [busyModelId, setBusyModelId] = useState<string | null>(null);
   useEffect(() => {
     let active = true;
     const refresh = () => getApi().getLocalAIState().then((value) => { if (active) setState(value); }).catch((error) => frontendDiagnostics.capture(error, 'local-ai', 'Unable to load local model status'));
@@ -262,9 +263,30 @@ function LocalModelsPanel() {
       <div key={model.name} className="py-2 border-b border-ink-700 text-xs">
         <div className="flex justify-between gap-4">
           <span className="text-ink-100">{model.name}</span>
-          <span className={model.installed ? 'text-zen-okBright' : model.state === 'failed' ? 'text-zen-errBright' : 'text-ink-300'}>
-            {model.installed ? 'Installed' : model.state === 'failed' ? 'Failed' : model.state === 'skipped' ? 'Skipped' : 'Setup needed'}
-          </span>
+          <div className="flex items-center gap-2">
+            <span className={model.installed ? 'text-zen-okBright' : model.state === 'failed' ? 'text-zen-errBright' : 'text-ink-300'}>
+              {model.installed ? 'Installed' : model.state === 'failed' ? 'Failed' : model.state === 'skipped' ? 'Skipped' : 'Setup needed'}
+            </span>
+            {!model.installed && model.id && model.state !== 'skipped' && (
+              <button
+                disabled={busy || busyModelId !== null || state?.setup.state === 'INSTALLING'}
+                onClick={async () => {
+                  setBusyModelId(model.id!);
+                  try {
+                    await getApi().prepareLocalAIItem(model.id!);
+                    setState(await getApi().getLocalAIState());
+                  } catch (error) {
+                    frontendDiagnostics.capture(error, 'local-ai', `Local component setup failed: ${model.id}`);
+                  } finally {
+                    setBusyModelId(null);
+                  }
+                }}
+                className="h-6 px-2 text-[10px] uppercase tracking-wider border border-ink-600 text-ink-100 hover:border-zen-red disabled:opacity-40"
+              >
+                {busyModelId === model.id ? 'Starting…' : model.state === 'failed' ? 'Retry' : 'Install'}
+              </button>
+            )}
+          </div>
         </div>
         {!model.installed && model.detail && <p className="mt-1 text-2xs text-ink-400 break-words">{model.detail}</p>}
       </div>
