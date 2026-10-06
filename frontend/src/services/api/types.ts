@@ -102,6 +102,7 @@ export interface ZenlessAPI {
 
   getLocalAIState(): Promise<LocalAIState>;
   prepareLocalAI(): Promise<{ ok: boolean }>;
+  prepareLocalAIItem(id: string): Promise<{ ok: boolean }>;
   getSettings(): Promise<Settings>;
   updateSettings(partial: Partial<Settings>): Promise<Settings>;
   getModels(): Promise<ModelCatalog>;
