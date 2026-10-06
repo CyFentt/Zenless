@@ -261,6 +261,9 @@ export class RealZenlessAPI implements ZenlessAPI {
 
   getLocalAIState(): Promise<LocalAIState> { return request('/api/local-ai'); }
   prepareLocalAI(): Promise<{ ok: boolean }> { return request('/api/local-ai/prepare', { method: 'POST' }); }
+  prepareLocalAIItem(id: string): Promise<{ ok: boolean }> {
+    return request(`/api/local-ai/${encodeURIComponent(id)}/prepare`, { method: 'POST' });
+  }
   getSettings(): Promise<Settings> { return request('/api/settings'); }
   updateSettings(partial: Partial<Settings>): Promise<Settings> { return request('/api/settings', { method: 'PATCH', body: partial }); }
   getModels(): Promise<ModelCatalog> { return request('/api/settings/models'); }
