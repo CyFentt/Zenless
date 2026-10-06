@@ -313,10 +313,13 @@ class ZenlessOrchestrator:
     ) -> str:
         message_id = uuid.uuid4().hex
         task = self.store.load_task(task_id) or {}
+        stored_options = task.get("options") if isinstance(task.get("options"), dict) else {}
+        smart_routing = bool(stored_options.get("smart_routing", True))
         try:
             stage = Stage(str(task.get("stage") or Stage.PLANNING.value))
         except ValueError:
             stage = Stage.PLANNING
+        streamed = False
 
         def publish(kind: str, detail: str = "") -> None:
             if self.event_callback is None:
@@ -332,22 +335,93 @@ class ZenlessOrchestrator:
                 )
             )
 
-        publish("stream_start", provider)
-        try:
+        def on_delta(delta: str) -> None:
+            nonlocal streamed
+            value = str(delta)
+            if value:
+                streamed = True
+                publish("stream_delta", value)
+
+        def send(target: str) -> str:
             try:
                 return self.bridge.send_prompt(
-                    provider,
+                    target,
                     prompt,
                     task_id=task_id,
                     timeout=timeout,
-                    stream_callback=lambda delta: publish("stream_delta", str(delta)),
+                    stream_callback=on_delta,
                 )
             except TypeError as exc:
                 if "stream_callback" not in str(exc):
                     raise
-                return self.bridge.send_prompt(provider, prompt, task_id=task_id, timeout=timeout)
+                return self.bridge.send_prompt(target, prompt, task_id=task_id, timeout=timeout)
+
+        publish("stream_start", provider)
+        try:
+            try:
+                return send(provider)
+            except BridgeError as primary_error:
+                if (
+                    provider != "deepseek"
+                    or not smart_routing
+                    or streamed
+                    or not self._recoverable_provider_error(primary_error)
+                ):
+                    raise
+
+                prefer_local = getattr(self.bridge, "prefer_local", None)
+                if callable(prefer_local):
+                    try:
+                        local_selected = bool(prefer_local("deepseek"))
+                    except Exception:
+                        local_selected = False
+                    if local_selected:
+                        self._emit(
+                            task_id,
+                            stage,
+                            "Reviewer web route is unavailable; Smart Routing handed review to the local model.",
+                            "warning",
+                            str(primary_error)[:1000],
+                        )
+                        publish("stream_start", "local-reviewer")
+                        return send("deepseek")
+
+                if self.bridge.wait_for_provider("gemini", timeout=0.75):
+                    self._emit(
+                        task_id,
+                        stage,
+                        "Reviewer web route is unavailable; Smart Routing handed review to Gemini.",
+                        "warning",
+                        str(primary_error)[:1000],
+                    )
+                    publish("stream_start", "gemini")
+                    return send("gemini")
+                raise
         finally:
             publish("stream_finish", provider)
+
+    @staticmethod
+    def _recoverable_provider_error(error: BaseException) -> bool:
+        message = str(error).casefold()
+        return any(
+            marker in message
+            for marker in (
+                "provider_rate_limit",
+                "provider_capacity",
+                "provider_transient_error",
+                "rate limit",
+                "too many requests",
+                "reached your limit",
+                "usage limit",
+                "quota exceeded",
+                "server is busy",
+                "servers are busy",
+                "high traffic",
+                "overloaded",
+                "response timeout",
+                "timed out waiting for a complete response",
+            )
+        )
 
     def _run_guarded(
         self,
