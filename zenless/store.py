@@ -30,6 +30,18 @@ class SQLiteStore:
         "final_text",
         "error",
     }
+    _QUEUE_COLUMNS = {
+        "position",
+        "state",
+        "content",
+        "parent_job_id",
+        "options_json",
+        "dispatched_job_id",
+        "attempts",
+        "max_attempts",
+        "last_error",
+        "next_attempt_at",
+    }
 
     def __init__(self, path: Path) -> None:
         self.path = path
@@ -164,6 +176,22 @@ class SQLiteStore:
                     FOREIGN KEY(job_id) REFERENCES tasks(id) ON DELETE CASCADE
                 );
 
+                CREATE TABLE IF NOT EXISTS prompt_queue (
+                    id TEXT PRIMARY KEY,
+                    position INTEGER NOT NULL,
+                    state TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    parent_job_id TEXT NOT NULL DEFAULT '',
+                    options_json TEXT NOT NULL DEFAULT '{}',
+                    dispatched_job_id TEXT NOT NULL DEFAULT '',
+                    attempts INTEGER NOT NULL DEFAULT 0,
+                    max_attempts INTEGER NOT NULL DEFAULT 3,
+                    last_error TEXT NOT NULL DEFAULT '',
+                    next_attempt_at TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_events_task ON events(task_id, id);
                 CREATE INDEX IF NOT EXISTS idx_messages_task ON messages(task_id, id);
                 CREATE INDEX IF NOT EXISTS idx_tasks_updated ON tasks(updated_at DESC);
@@ -171,6 +199,8 @@ class SQLiteStore:
                 CREATE INDEX IF NOT EXISTS idx_context_job ON context_items(job_id, relevance DESC);
                 CREATE INDEX IF NOT EXISTS idx_test_runs_job ON test_runs(job_id, started_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_test_cases_run ON test_cases(run_id, created_at);
+                CREATE INDEX IF NOT EXISTS idx_prompt_queue_position ON prompt_queue(position, created_at);
+                CREATE INDEX IF NOT EXISTS idx_prompt_queue_state ON prompt_queue(state, position);
                 """
             )
             columns = {str(row["name"]) for row in connection.execute("PRAGMA table_info(tasks)")}
@@ -389,6 +419,119 @@ class SQLiteStore:
         with closing(self._connect()) as connection:
             rows = connection.execute("SELECT * FROM messages WHERE task_id = ? ORDER BY id", (task_id,)).fetchall()
         return [dict(row) for row in rows]
+
+    def enqueue_prompt(
+        self,
+        queue_id: str,
+        content: str,
+        *,
+        parent_job_id: str = "",
+        options: dict[str, Any] | None = None,
+        max_attempts: int = 3,
+    ) -> dict[str, Any]:
+        timestamp = now_iso()
+        with closing(self._connect()) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute("SELECT COALESCE(MAX(position), 0) AS position FROM prompt_queue").fetchone()
+            position = int(row["position"] or 0) + 10
+            connection.execute(
+                """
+                INSERT INTO prompt_queue(
+                    id, position, state, content, parent_job_id, options_json,
+                    max_attempts, created_at, updated_at
+                ) VALUES (?, ?, 'queued', ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    queue_id,
+                    position,
+                    content,
+                    parent_job_id,
+                    json.dumps(options or {}, ensure_ascii=False),
+                    max(1, min(8, int(max_attempts))),
+                    timestamp,
+                    timestamp,
+                ),
+            )
+            row = connection.execute("SELECT * FROM prompt_queue WHERE id = ?", (queue_id,)).fetchone()
+            connection.execute("COMMIT")
+        if row is None:
+            raise RuntimeError("Prompt queue insert did not return a row.")
+        return self._decode_prompt_queue(row)
+
+    def prompt_queue_items(self, limit: int = 64) -> list[dict[str, Any]]:
+        safe_limit = max(1, min(128, int(limit)))
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                "SELECT * FROM prompt_queue ORDER BY position, created_at LIMIT ?",
+                (safe_limit,),
+            ).fetchall()
+        return [self._decode_prompt_queue(row) for row in rows]
+
+    def prompt_queue_item(self, queue_id: str) -> dict[str, Any] | None:
+        with closing(self._connect()) as connection:
+            row = connection.execute("SELECT * FROM prompt_queue WHERE id = ?", (queue_id,)).fetchone()
+        return self._decode_prompt_queue(row) if row is not None else None
+
+    def update_prompt_queue_item(self, queue_id: str, **changes: Any) -> None:
+        unknown = set(changes) - self._QUEUE_COLUMNS
+        if unknown:
+            raise ValueError(f"Unknown prompt queue fields: {sorted(unknown)}")
+        if not changes:
+            return
+        encoded: dict[str, Any] = {}
+        for key, value in changes.items():
+            if key == "options_json" and not isinstance(value, str):
+                encoded[key] = json.dumps(value, ensure_ascii=False)
+            else:
+                encoded[key] = value
+        encoded["updated_at"] = now_iso()
+        assignments = ", ".join(f"{key} = ?" for key in encoded)
+        with closing(self._connect()) as connection:
+            cursor = connection.execute(
+                f"UPDATE prompt_queue SET {assignments} WHERE id = ?",
+                [*encoded.values(), queue_id],
+            )
+            if cursor.rowcount != 1:
+                raise KeyError(f"Prompt queue item not found: {queue_id}")
+
+    def delete_prompt_queue_item(self, queue_id: str) -> bool:
+        with closing(self._connect()) as connection:
+            cursor = connection.execute("DELETE FROM prompt_queue WHERE id = ?", (queue_id,))
+        return cursor.rowcount == 1
+
+    def reorder_prompt_queue(self, ordered_ids: list[str]) -> None:
+        with closing(self._connect()) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            rows = connection.execute("SELECT id FROM prompt_queue").fetchall()
+            known = {str(row["id"]) for row in rows}
+            supplied = [queue_id for queue_id in ordered_ids if queue_id in known]
+            tail = [queue_id for queue_id in known if queue_id not in supplied]
+            for index, queue_id in enumerate([*supplied, *sorted(tail)], start=1):
+                connection.execute(
+                    "UPDATE prompt_queue SET position = ?, updated_at = ? WHERE id = ?",
+                    (index * 10, now_iso(), queue_id),
+                )
+            connection.execute("COMMIT")
+
+    def recover_prompt_queue(self) -> list[str]:
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                "SELECT id FROM prompt_queue WHERE state = 'preparing'"
+            ).fetchall()
+            ids = [str(row["id"]) for row in rows]
+            if ids:
+                connection.execute(
+                    """
+                    UPDATE prompt_queue
+                    SET state = 'blocked',
+                        last_error = 'Delivery outcome became uncertain during shutdown. Verify task history, then retry manually.',
+                        next_attempt_at = '',
+                        updated_at = ?
+                    WHERE state = 'preparing'
+                    """,
+                    (now_iso(),),
+                )
+        return ids
 
     def claim_operation(self, key: str, kind: str, resource_id: str = "") -> dict[str, Any]:
         timestamp = now_iso()
@@ -633,6 +776,10 @@ class SQLiteStore:
     @staticmethod
     def _decode_operation(row: sqlite3.Row) -> dict[str, Any]:
         return SQLiteStore._decode_json_column(dict(row), "response_json", "response")
+
+    @staticmethod
+    def _decode_prompt_queue(row: sqlite3.Row) -> dict[str, Any]:
+        return SQLiteStore._decode_json_column(dict(row), "options_json", "options")
 
     @staticmethod
     def _decode_json_column(data: dict[str, Any], source: str, target: str) -> dict[str, Any]:
