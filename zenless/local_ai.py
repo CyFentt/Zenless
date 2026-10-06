@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import socket
@@ -16,6 +17,9 @@ class LocalAIError(RuntimeError):
 
 
 class LocalAIService:
+    CONTEXT_SIZE = 32768
+    MAX_PROMPT_CHARS = 64_000
+
     def __init__(self, portable_root: Path) -> None:
         self.portable_root = portable_root.resolve()
         self.runtime_root = self.portable_root / "runtime"
@@ -80,6 +84,7 @@ class LocalAIService:
         value = prompt.strip()
         if not value:
             raise LocalAIError("Local prompt is empty.")
+        value = self._compact_prompt(value)
         self._select_model(value)
         self._ensure_started()
         payload = {
@@ -136,6 +141,21 @@ class LocalAIService:
             "Local output is still truncated after three continuations. Reduce the task scope before applying changes."
         )
 
+    @classmethod
+    def _compact_prompt(cls, prompt: str) -> str:
+        if len(prompt) <= cls.MAX_PROMPT_CHARS:
+            return prompt
+        digest = hashlib.sha256(prompt.encode("utf-8", "replace")).hexdigest()
+        marker = (
+            "\n\n[RUBRA LOCAL CONTEXT COMPACTED "
+            f"original_chars={len(prompt)} sha256={digest}; "
+            "middle evidence omitted to preserve the role contract and most recent evidence]\n\n"
+        )
+        budget = cls.MAX_PROMPT_CHARS - len(marker)
+        head = max(1, budget * 3 // 4)
+        tail = max(1, budget - head)
+        return prompt[:head] + marker + prompt[-tail:]
+
     def close(self) -> None:
         self._stop_process()
 
@@ -175,7 +195,7 @@ class LocalAIService:
             "--port",
             str(port),
             "--ctx-size",
-            "16384",
+            str(self.CONTEXT_SIZE),
             "--threads",
             "4",
             "--parallel",
