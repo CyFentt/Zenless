@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, lazy, Suspense } from 'react';
-import { Paperclip, ArrowUp, Settings2, X, Square, ScanSearch, Wrench, Code2, ListPlus, ChevronUp, ChevronDown, RotateCcw, Trash2, Pause, Play, Pencil } from 'lucide-react';
+import { Paperclip, ArrowUp, Settings2, X, Square, ScanSearch, Wrench, Code2, ListPlus, ChevronUp, ChevronDown, RotateCcw, Trash2, Pause, Play, Pencil, Check } from 'lucide-react';
 import { useStore } from '@/store';
 import { getApi } from '@/services';
 import { ApiError } from '@/services/api/realApi';
@@ -359,8 +359,15 @@ function PromptQueuePanel({ snapshot, onChange }: { snapshot: PromptQueueSnapsho
           <p className="px-3 py-5 text-center text-2xs uppercase tracking-wider text-ink-400">Queue empty</p>
         ) : visible.map((item, index) => {
           const active = item.state === 'PREPARING' || item.state === 'INFLIGHT';
+          const uncertain = item.state === 'SENT_UNCONFIRMED';
           const failed = item.state === 'FAILED' || item.state === 'BLOCKED';
-          const stateClass = failed ? 'text-zen-errBright' : active ? 'text-zen-warnBright' : item.state === 'COMPLETED' ? 'text-zen-okBright' : 'text-ink-400';
+          const stateClass = failed
+            ? 'text-zen-errBright'
+            : active || uncertain
+              ? 'text-zen-warnBright'
+              : item.state === 'COMPLETED'
+                ? 'text-zen-okBright'
+                : 'text-ink-400';
           return (
             <div key={item.id} className="px-3 py-2 border-b border-ink-800 last:border-0">
               <div className="flex items-start gap-2">
@@ -387,7 +394,8 @@ function PromptQueuePanel({ snapshot, onChange }: { snapshot: PromptQueueSnapsho
                       {!active && item.state !== 'COMPLETED' && <button title="Edit" onClick={() => { setEditingId(item.id); setDraft(item.content); }} className="w-6 h-6 grid place-items-center text-ink-300 hover:text-ink-0"><Pencil size={10}/></button>}
                       {!active && item.state !== 'COMPLETED' && <button title="Move up" disabled={index === 0 || busyId === item.id} onClick={() => void mutate(item.id, () => getApi().movePromptQueueItem(item.id, -1))} className="w-6 h-6 grid place-items-center text-ink-300 disabled:opacity-25"><ChevronUp size={10}/></button>}
                       {!active && item.state !== 'COMPLETED' && <button title="Move down" disabled={index === visible.length - 1 || busyId === item.id} onClick={() => void mutate(item.id, () => getApi().movePromptQueueItem(item.id, 1))} className="w-6 h-6 grid place-items-center text-ink-300 disabled:opacity-25"><ChevronDown size={10}/></button>}
-                      {failed && <button title="Retry" disabled={busyId === item.id} onClick={() => void mutate(item.id, () => getApi().retryPromptQueueItem(item.id))} className="w-6 h-6 grid place-items-center text-zen-warnBright"><RotateCcw size={10}/></button>}
+                      {uncertain && <button title="Mark sent after verifying Recent Tasks" disabled={busyId === item.id} onClick={() => void mutate(item.id, () => getApi().confirmPromptQueueItem(item.id))} className="w-6 h-6 grid place-items-center text-zen-okBright"><Check size={10}/></button>}
+                      {(failed || uncertain) && <button title={uncertain ? "Retry only if the prompt was not sent" : "Retry"} disabled={busyId === item.id} onClick={() => void mutate(item.id, () => getApi().retryPromptQueueItem(item.id))} className="w-6 h-6 grid place-items-center text-zen-warnBright"><RotateCcw size={10}/></button>}
                       {!active && <button title="Remove" disabled={busyId === item.id} onClick={() => void mutate(item.id, () => getApi().deletePromptQueueItem(item.id))} className="w-6 h-6 grid place-items-center text-ink-400 hover:text-zen-errBright"><Trash2 size={10}/></button>}
                     </>
                   )}
