@@ -144,6 +144,36 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(retried["attempts"], 0)
             self.assertEqual(retried["lastError"], "")
 
+    def test_prompt_queue_cannot_resume_with_unconfirmed_delivery(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            core = object.__new__(ZenlessCore)
+            core.store = SQLiteStore(Path(folder) / "queue.db")
+            core.events = EventBus()
+            core._queue_wake = threading.Event()
+            core.store.set_setting(
+                "prompt_queue.config",
+                {
+                    "paused": True,
+                    "continueOnFailure": False,
+                    "chainConversation": True,
+                    "delaySeconds": 2,
+                    "maxAttempts": 3,
+                },
+            )
+            core.store.enqueue_prompt("queue-uncertain", "Potentially sent")
+            core.store.update_prompt_queue_item(
+                "queue-uncertain",
+                state="sent_unconfirmed",
+                attempts=1,
+                last_error="Delivery outcome is uncertain.",
+            )
+
+            with self.assertRaises(CoreError) as raised:
+                core.update_prompt_queue_config({"paused": False})
+
+            self.assertEqual(raised.exception.code, "QUEUE_UNCONFIRMED_DELIVERY")
+            self.assertTrue(core._prompt_queue_config()["paused"])
+
     def test_prompt_queue_recovery_blocks_inflight_paused_checkpoint(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             store = SQLiteStore(Path(folder) / "queue.db")
