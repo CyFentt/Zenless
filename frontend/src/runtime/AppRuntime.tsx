@@ -99,7 +99,7 @@ export class ApplicationRuntime {
 
   private async loadSnapshot(): Promise<void> {
     const studioVersion = useStore.getState().studioVersion;
-    const [bootstrap, connections, agents, tools, jobs, settings, diagnostics, assets, studioState, studioTree] = await Promise.all([
+    const [bootstrap, connections, agents, tools, jobs, settings, diagnostics, assets, studioState, studioTree, promptQueue] = await Promise.all([
       this.api.bootstrap(),
       this.api.getConnections(),
       this.api.getAgents(),
@@ -110,6 +110,7 @@ export class ApplicationRuntime {
       this.api.getAssets(),
       this.api.getStudioState(),
       this.api.getStudioTree(),
+      this.api.getPromptQueue(),
     ]);
     if (!this.active) return;
     const store = useStore.getState();
@@ -124,6 +125,7 @@ export class ApplicationRuntime {
     const backendIds = new Set(diagnostics.map((diagnostic) => diagnostic.id));
     store.setDiagnostics([...diagnostics, ...frontend.filter((diagnostic) => !backendIds.has(diagnostic.id))]);
     store.setAssets(assets);
+    store.setPromptQueue(promptQueue);
     if (studioVersion === useStore.getState().studioVersion) {
       store.setStudioState(studioState.state);
       useStore.setState({ studioTreeError: studioState.treeError || '' });
