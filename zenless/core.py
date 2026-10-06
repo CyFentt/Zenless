@@ -1874,13 +1874,16 @@ class ZenlessCore:
                     recovery_action="Resume only pre-mutation checkpoints; inspect blocked mutation evidence manually.",
                 )
             for queue_id in recovered_queue:
+                queue_item = self.store.prompt_queue_item(queue_id) or {}
+                state = str(queue_item.get("state") or "blocked")
+                reason = str(queue_item.get("last_error") or "Queue recovery requires explicit review.")
                 self.diagnostics.report(
                     severity="WARNING",
                     source="queue",
                     component="recovery",
-                    message="A prompt was being prepared when Rubra stopped; automatic resend was blocked.",
-                    impact=f"Queue item {queue_id} requires an explicit retry so it cannot be submitted twice.",
-                    recovery_action="Check Recent Tasks, then use Retry on the queued prompt only if no matching job exists.",
+                    message=f"Recovered queue item is {state}: {reason}",
+                    impact=f"Queue item {queue_id} will not be automatically resent after an uncertain restart state.",
+                    recovery_action="Check Recent Tasks and the linked job before using Retry, Resume, or Remove.",
                 )
         except Exception as exc:
             self._set_boot("STATE", "OFF")
