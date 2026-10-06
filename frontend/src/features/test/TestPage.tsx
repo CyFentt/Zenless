@@ -21,6 +21,8 @@ export function TestPage() {
   const resetTestDetails = useStore((s) => s.resetTestDetails);
   const currentJobId = useStore((s) => s.currentJobId);
   const testJobId = useStore((s) => s.activeTestJobId);
+  const setConnections = useStore((s) => s.setConnections);
+  const setAgents = useStore((s) => s.setAgents);
   const [pending, setPending] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [selectedLog, setSelectedLog] = useState<TestLog | null>(null);
@@ -74,6 +76,9 @@ export function TestPage() {
     try {
       setTestState({ ...testState, status: "STOPPING" });
       await getApi().stopTest(activeTest);
+      const [connections, agents] = await Promise.all([getApi().getConnections(), getApi().getAgents()]);
+      setConnections(connections);
+      setAgents(agents);
 
     } catch (error) {
       frontendDiagnostics.capture(error, "test", "Failed to stop Play Test");
