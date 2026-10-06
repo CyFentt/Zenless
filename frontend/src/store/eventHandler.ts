@@ -25,7 +25,10 @@ export function handleEvent(event: ZenlessEvent) {
       store.setConnections(event.data);
       break;
     case 'AGENT_STATUS_CHANGED':
-      store.upsertAgent(event.data.agent, { status: event.data.status });
+      store.upsertAgent(event.data.agent, {
+        status: event.data.status,
+        ...(event.data.detail !== undefined ? { detail: event.data.detail } : {}),
+      });
       break;
     case 'PIPELINE_STATE_CHANGED':
       store.updateJob(event.data.jobId, { stage: event.data.stage });
