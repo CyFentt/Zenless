@@ -229,7 +229,11 @@ class WebView2BrowserController:
                     result["download_error"] = str(exc)
                     self._report(exc, "artifact-download")
         except BridgeError as exc:
-            self._set_state(provider, "Error", str(exc))
+            self._set_state(
+                provider,
+                "Degraded",
+                "The WebView2 request failed, but the saved login session was preserved: " + str(exc),
+            )
             raise
         self._set_state(provider, "Ready", "WebView2 session idle")
         return result
