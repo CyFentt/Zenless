@@ -528,8 +528,8 @@ class SQLiteStore:
                 connection.execute(
                     """
                     UPDATE prompt_queue
-                    SET state = 'blocked',
-                        last_error = 'Delivery outcome became uncertain during shutdown. Verify task history, then retry manually.',
+                    SET state = 'sent_unconfirmed',
+                        last_error = 'Delivery outcome became uncertain during shutdown. Verify Recent Tasks before retrying or mark it sent; automatic resend is blocked.',
                         next_attempt_at = '',
                         updated_at = ?
                     WHERE state = 'preparing'
@@ -552,10 +552,24 @@ class SQLiteStore:
                 status = str(row["status"] or "").casefold()
                 stage = str(row["stage"] or "")
                 if not job_id or not status:
-                    message = (
-                        "The dispatched task cannot be confirmed after restart; automatic resend is blocked "
-                        "to prevent duplicate work."
+                    connection.execute(
+                        """
+                        UPDATE prompt_queue
+                        SET state = 'sent_unconfirmed',
+                            last_error = ?,
+                            next_attempt_at = '',
+                            updated_at = ?
+                        WHERE id = ?
+                        """,
+                        (
+                            "The dispatched task cannot be confirmed after restart. Verify Recent Tasks before "
+                            "retrying or mark it sent; automatic resend is blocked to prevent duplicate work.",
+                            now_iso(),
+                            queue_id,
+                        ),
                     )
+                    recovered.append(queue_id)
+                    continue
                 elif status == "complete":
                     connection.execute(
                         "UPDATE prompt_queue SET state = 'completed', last_error = '', updated_at = ? WHERE id = ?",
