@@ -1630,8 +1630,24 @@ class ZenlessOrchestrator:
         cancel_event: threading.Event,
         studio_id: str,
     ) -> tuple[AgentProposal, list[dict[str, Any]], str]:
+        if not options.independent_review:
+            self._emit(
+                task_id,
+                Stage.FINAL_REVIEW,
+                "Independent Reviewer disabled; final release relies on deterministic policy, mutation read-back, and QA evidence.",
+                "warning",
+            )
+            self.store.update_task(
+                task_id,
+                final_review_json={
+                    "verdict": "skipped",
+                    "summary": "Independent Reviewer disabled for this task.",
+                    "warnings": ["No independent AI final review was requested."],
+                },
+            )
+            return proposal, mutation_evidence, console_output
         if not self._provider_ready("deepseek", timeout=2, options=options):
-            raise BridgeError("Reviewer requires login for the mandatory independent final review.")
+            raise BridgeError("Reviewer requires login because Independent Review is enabled.")
         revisions = 0
         while True:
             self._check_control(task_id, cancel_event)
