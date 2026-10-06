@@ -195,6 +195,9 @@ export class RealZenlessAPI implements ZenlessAPI {
   retryPromptQueueItem(id: string): Promise<PromptQueueItem> {
     return request(`/api/prompt-queue/${encodeURIComponent(id)}/retry`, { method: 'POST' });
   }
+  confirmPromptQueueItem(id: string): Promise<PromptQueueItem> {
+    return request(`/api/prompt-queue/${encodeURIComponent(id)}/confirm`, { method: 'POST' });
+  }
   movePromptQueueItem(id: string, direction: -1 | 1): Promise<PromptQueueSnapshot> {
     return request(`/api/prompt-queue/${encodeURIComponent(id)}/move`, { method: 'POST', body: { direction } });
   }
