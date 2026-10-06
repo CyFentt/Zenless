@@ -29,6 +29,9 @@ export class ApplicationRuntime {
     this.unsubscribeDiagnostics = frontendDiagnostics.on((diagnostic) => {
       useStore.getState().addDiagnostic(diagnostic);
       if (diagnostic.severity === 'error' || diagnostic.severity === 'critical') notify(diagnostic.message, 'error');
+      void this.api.reportFrontendDiagnostic(diagnostic).catch(() => {
+        // Never recursively diagnose a failure of the diagnostic transport itself.
+      });
     });
     try {
       const result = await this.api.bootstrap();
