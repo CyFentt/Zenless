@@ -202,5 +202,8 @@ export function handleEvent(event: ZenlessEvent) {
       if (event.data.diagnostic.severity === 'error' || event.data.diagnostic.severity === 'critical') notify(event.data.diagnostic.message, 'error');
       store.addDiagnostic(event.data.diagnostic);
       break;
+    case 'PROMPT_QUEUE_CHANGED':
+      store.setPromptQueue(event.data);
+      break;
   }
 }
