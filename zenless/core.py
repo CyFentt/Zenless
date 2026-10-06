@@ -484,6 +484,12 @@ class ZenlessCore:
         options: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         objective = content.strip()
+        if len(objective) > 32_000:
+            raise CoreError(
+                "PROMPT_TOO_LARGE",
+                "A single Rubra prompt is limited to 32,000 characters. Split the work into the prompt queue instead.",
+                status=413,
+            )
         if not objective:
             objective = "Analyze the submitted attachments and implement the compatible Studio request."
         if job_id:
