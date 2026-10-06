@@ -493,6 +493,22 @@ export class MockZenlessAPI implements ZenlessAPI {
     await delay(50);
     return clone(this.diagnostics);
   }
+  async reportFrontendDiagnostic(diagnostic: Diagnostic) {
+    const existing = this.diagnostics.find((item) =>
+      item.source === diagnostic.source &&
+      item.component === diagnostic.component &&
+      item.message === diagnostic.message &&
+      item.file === diagnostic.file &&
+      item.line === diagnostic.line
+    );
+    if (existing) {
+      existing.occurrenceCount = Math.max(existing.occurrenceCount ?? 1, diagnostic.occurrenceCount ?? 1);
+      existing.timestamp = Math.max(existing.timestamp, diagnostic.timestamp);
+    } else {
+      this.diagnostics.push(clone(diagnostic));
+    }
+    return { ok: true };
+  }
 
   getMockMessages() {
     return this.messages;
