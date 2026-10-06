@@ -6,7 +6,7 @@ import { Tabs, Toggle, Select } from '@/components/Tabs';
 import { Tooltip } from '@/components/Tooltip';
 import { StatusDot, StatusBadge } from '@/components/StatusDot';
 import { Modal } from '@/components/Modal';
-import type { ConnectionInfo, Diagnostic, LocalAIState, ModelCatalog, ProviderId, Settings } from '@/types';
+import type { AgentInfo, ConnectionInfo, Diagnostic, LocalAIState, ModelCatalog, ProviderId, Settings } from '@/types';
 
 type SettingsTab = 'general' | 'models' | 'links' | 'library' | 'logs';
 
@@ -15,6 +15,7 @@ export function SettingsPage() {
   const settings = useStore((s) => s.settings);
   const setSettings = useStore((s) => s.setSettings);
   const connections = useStore((s) => s.connections);
+  const agents = useStore((s) => s.agents);
   const [catalog, setCatalog] = useState<ModelCatalog | null>(null);
 
   useEffect(() => {
@@ -45,7 +46,7 @@ export function SettingsPage() {
       <div className="flex-1 overflow-y-auto scrollbar-zen">
         {tab === 'general' && <GeneralTab settings={settings} onChange={setSettings} />}
         {tab === 'models' && <ModelsTab settings={settings} catalog={catalog} onChange={setSettings} />}
-        {tab === 'links' && <LinksTab connections={connections} />}
+        {tab === 'links' && <LinksTab connections={connections} agents={agents} />}
         {tab === 'library' && <LibraryTab />}
         {tab === 'logs' && <LogsTab />}
       </div>
@@ -280,7 +281,7 @@ function LocalModelsPanel() {
   </Section>;
 }
 
-function LinksTab({ connections }: { connections: ConnectionInfo }) {
+function LinksTab({ connections, agents }: { connections: ConnectionInfo; agents: AgentInfo[] }) {
   const [loginModal, setLoginModal] = useState<ProviderId | null>(null);
   const [loggingIn, setLoggingIn] = useState(false);
   const setConnections = useStore((s) => s.setConnections);
@@ -334,11 +335,25 @@ function LinksTab({ connections }: { connections: ConnectionInfo }) {
       <Section title="CONNECTIONS">
         {labels.map(({ key, name, provider }) => {
           const status = connections[key];
+          const agent = provider ? agents.find((item) => item.id === provider) : undefined;
           return (
-            <div key={key} className="flex items-center justify-between py-1.5 border-b border-ink-700">
-              <span className="text-xs text-ink-100">{name}</span>
-              <div className="flex items-center gap-2">
-                <StatusBadge status={status} />
+            <div key={key} className="py-2 border-b border-ink-700">
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <span className="text-xs text-ink-100">{name}</span>
+                  {agent?.detail && (
+                    <p className="mt-0.5 text-[10px] leading-4 text-ink-400 break-words">
+                      {agent.detail}{agent.transport ? ` · ${agent.transport}` : ''}
+                    </p>
+                  )}
+                  {provider === 'deepseek' && status !== 'READY' && (
+                    <p className="mt-0.5 text-[10px] leading-4 text-ink-500">
+                      Optional with Smart Routing; local Reviewer can be used instead.
+                    </p>
+                  )}
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <StatusBadge status={status} />
                 {key === 'studio' && <button onClick={() => void getApi().refreshStudio().catch((error) => frontendDiagnostics.capture(error, 'studio', 'Studio reconnection failed'))} className="px-2 h-7 text-xs border border-ink-500 text-ink-50 hover:border-zen-red">Reconnect</button>}
                 {provider && (
                   <button onClick={() => setLoginModal(provider)} className="px-2 h-6 text-2xs uppercase tracking-wider text-ink-50 border border-ink-500 hover:bg-ink-800 transition-colors">LOGIN</button>
@@ -358,6 +373,7 @@ function LinksTab({ connections }: { connections: ConnectionInfo }) {
                     </button>
                   </Tooltip>
                 )}
+                </div>
               </div>
             </div>
           );
