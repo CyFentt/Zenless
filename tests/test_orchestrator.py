@@ -445,6 +445,81 @@ class OrchestratorTests(unittest.TestCase):
 
             self.assertFalse(bridge.preferred)
 
+    def test_builder_rate_limit_hands_off_to_local_before_any_stream_output(self) -> None:
+        class Bridge(FakeBridge):
+            def __init__(self) -> None:
+                super().__init__({})
+                self.local = False
+
+            def prefer_local(self, provider: str) -> bool:
+                self.selected = provider
+                self.local = True
+                return True
+
+            def send_prompt(
+                self,
+                provider: str,
+                prompt: str,
+                *,
+                task_id: str,
+                timeout: float = 360.0,
+                stream_callback=None,
+            ) -> str:
+                del prompt, task_id, timeout
+                if provider == "chatgpt" and not self.local:
+                    raise BridgeError("PROVIDER_RATE_LIMIT: quota reached")
+                result = proposal()
+                if stream_callback is not None:
+                    stream_callback(result)
+                return result
+
+        with tempfile.TemporaryDirectory() as folder:
+            bridge = Bridge()
+            orchestrator, store = self.make_system(folder, bridge, FakeStudio())
+            store.create_task("builder-failover", "Build", TaskOptions(smart_routing=True))
+            store.update_task("builder-failover", stage=Stage.PLANNING, status="running")
+
+            result = orchestrator._send_agent_prompt("chatgpt", "build", task_id="builder-failover")
+
+            self.assertEqual(result, proposal())
+            self.assertTrue(bridge.local)
+            self.assertEqual(bridge.selected, "chatgpt")
+
+    def test_builder_does_not_auto_resend_after_partial_stream(self) -> None:
+        class Bridge(FakeBridge):
+            def __init__(self) -> None:
+                super().__init__({})
+                self.preferred = False
+
+            def prefer_local(self, _provider: str) -> bool:
+                self.preferred = True
+                return True
+
+            def send_prompt(
+                self,
+                provider: str,
+                prompt: str,
+                *,
+                task_id: str,
+                timeout: float = 360.0,
+                stream_callback=None,
+            ) -> str:
+                del provider, prompt, task_id, timeout
+                if stream_callback is not None:
+                    stream_callback('{"summary":"partial"')
+                raise BridgeError("PROVIDER_RATE_LIMIT: quota reached")
+
+        with tempfile.TemporaryDirectory() as folder:
+            bridge = Bridge()
+            orchestrator, store = self.make_system(folder, bridge, FakeStudio())
+            store.create_task("builder-partial", "Build", TaskOptions(smart_routing=True))
+            store.update_task("builder-partial", stage=Stage.PLANNING, status="running")
+
+            with self.assertRaisesRegex(BridgeError, "PROVIDER_RATE_LIMIT"):
+                orchestrator._send_agent_prompt("chatgpt", "build", task_id="builder-partial")
+
+            self.assertFalse(bridge.preferred)
+
     def make_system(
         self,
         folder: str,
