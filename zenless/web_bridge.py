@@ -278,6 +278,7 @@ class LocalWebBridge:
         app.router.add_put("/api/settings/models", self._set_model)
         app.router.add_put("/api/settings/smart-routing", self._set_smart_routing)
         app.router.add_get("/api/diagnostics", self._sync_handler(self.core.diagnostics_payload))
+        app.router.add_post("/api/diagnostics/frontend", self._report_frontend_diagnostic)
 
         app.router.add_get("/ws", self._websocket)
         app.router.add_get("/{tail:.*}", self._static)
@@ -556,6 +557,10 @@ class LocalWebBridge:
     async def _set_smart_routing(self, request: web.Request) -> web.Response:
         body = await self._json_body(request)
         return self._json({"ok": self.core.set_smart_routing(body.get("enabled"))})
+
+    async def _report_frontend_diagnostic(self, request: web.Request) -> web.Response:
+        body = await self._json_body(request)
+        return self._json({"ok": await asyncio.to_thread(self.core.report_frontend_diagnostic, body)})
 
     async def _websocket(self, request: web.Request) -> web.WebSocketResponse:
         if not secrets.compare_digest(request.query.get("token", ""), self.token):
