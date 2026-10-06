@@ -120,6 +120,22 @@ class AgentGateway:
             self._task_routes = {key: value for key, value in self._task_routes.items() if key[0] != provider}
         return result
 
+    def prefer_local(self, provider: str) -> bool:
+        if not self._can_use_local(provider):
+            return False
+        with self._route_lock:
+            self._routes[provider] = "local"
+            self._task_routes = {
+                key: value for key, value in self._task_routes.items() if key[0] != provider
+            }
+        if self.status_callback is not None:
+            self.status_callback(
+                provider,
+                "Ready",
+                "Smart Routing moved this text role to the local model after the web route became unavailable.",
+            )
+        return True
+
     def release_task_route(self, task_id: str) -> None:
         with self._route_lock:
             self._task_routes = {key: value for key, value in self._task_routes.items() if key[1] != task_id}
