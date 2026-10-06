@@ -12,6 +12,9 @@ import type {
   ModelCatalog,
   ModelInfo,
   ProviderId,
+  PromptQueueConfig,
+  PromptQueueItem,
+  PromptQueueSnapshot,
   ProjectIndexStatus,
   ProjectSearchResult,
   Review,
@@ -43,6 +46,13 @@ export interface ZenlessAPI {
 
   sendMessage(content: string, jobId?: string, attachments?: File[], options?: TaskOptions): Promise<{ messageId: string; jobId?: string }>;
   cancelGeneration(jobId: string): Promise<{ ok: boolean }>;
+  getPromptQueue(): Promise<PromptQueueSnapshot>;
+  enqueuePrompt(content: string, jobId?: string, options?: TaskOptions): Promise<PromptQueueItem>;
+  updatePromptQueueItem(id: string, patch: { content?: string; options?: TaskOptions }): Promise<PromptQueueItem>;
+  retryPromptQueueItem(id: string): Promise<PromptQueueItem>;
+  movePromptQueueItem(id: string, direction: -1 | 1): Promise<PromptQueueSnapshot>;
+  deletePromptQueueItem(id: string): Promise<{ ok: boolean }>;
+  updatePromptQueueConfig(patch: Partial<PromptQueueConfig>): Promise<PromptQueueConfig>;
 
   getContext(jobId: string): Promise<ContextItem[]>;
   refreshContext(jobId: string): Promise<ContextItem[]>;
