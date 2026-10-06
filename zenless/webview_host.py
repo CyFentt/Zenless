@@ -477,6 +477,18 @@ class WebViewHost:
             if not isinstance(state, dict):
                 continue
             text = str(state.get("text") or "").strip()
+            if len(text) > 512_000:
+                try:
+                    window.evaluate_js(
+                        "(() => { const selectors = " + json.dumps(list(spec.stops)) + "; "
+                        "for (const selector of selectors) { const node = document.querySelector(selector); "
+                        "if (node) { node.click(); return true; } } return false; })()"
+                    )
+                except Exception:
+                    pass
+                raise RuntimeError(
+                    "PROVIDER_RESPONSE_LIMIT: Provider response exceeded Rubra's 512,000-character safety cap."
+                )
             count = int(state.get("count") or 0)
             is_new = count > before_count or bool(text and text != before_text)
             if is_new and text:
