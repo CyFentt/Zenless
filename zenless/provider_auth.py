@@ -36,12 +36,15 @@ def authentication_script(provider: str, inputs: tuple[str, ...], origin_url: st
       const challengeFrame = [...document.querySelectorAll('iframe')].some(frame =>
         /challenges\\.cloudflare\\.com|captcha|turnstile|recaptcha|hcaptcha/i.test(frame.src || '')
       );
+      const bodyText = (document.body?.innerText || document.body?.textContent || '').slice(0, 120000);
       const challengeText = [...document.querySelectorAll('body *')].some(node => {{
         if (!visible(node)) return false;
         const text = (node.innerText || node.textContent || '').trim();
-        return text.length <= 180 && /(verify (you are|that you are) human|checking your browser|security verification|captcha|try again|验证|人机验证)/i.test(text);
+        return text.length <= 240 && /(verify (you are|that you are) human|checking your browser|security verification|captcha|turnstile|人机验证|安全验证)/i.test(text);
       }});
-      const challenge = challengeFrame || challengeText;
+      const retryChallenge = /try again/i.test(bodyText) &&
+        /(verify|verification|human|security|captcha|turnstile|cloudflare|人机|验证)/i.test(bodyText);
+      const challenge = challengeFrame || challengeText || retryChallenge;
       const providerAllowsComposerAuth = {json.dumps(provider == "hunyuan")};
       const authenticated = (account || (providerAllowsComposerAuth && composer)) && !authPage && !guest && sameProvider && !challenge;
       return {{ready: composer && authenticated, composer, authenticated, challenge, authPage, guest, sameProvider}};
