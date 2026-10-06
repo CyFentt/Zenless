@@ -89,6 +89,36 @@ class CoreTests(unittest.TestCase):
         self.assertTrue(model.visual_first)
         self.assertFalse(plain.visual_first)
 
+    def test_prompt_queue_is_durable_ordered_and_fail_closed_on_recovery(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "queue.db"
+            store = SQLiteStore(path)
+            first = store.enqueue_prompt("q1", "First", options={"review": False}, max_attempts=3)
+            second = store.enqueue_prompt("q2", "Second", parent_job_id="job-parent", max_attempts=4)
+            self.assertLess(first["position"], second["position"])
+            store.update_prompt_queue_item("q1", state="preparing", attempts=1)
+            recovered = store.recover_prompt_queue()
+            self.assertEqual(recovered, ["q1"])
+
+            reopened = SQLiteStore(path)
+            items = reopened.prompt_queue_items()
+            self.assertEqual([item["id"] for item in items], ["q1", "q2"])
+            self.assertEqual(items[0]["state"], "blocked")
+            self.assertIn("uncertain", items[0]["last_error"].casefold())
+            self.assertEqual(items[0]["options"]["review"], False)
+            self.assertEqual(items[1]["max_attempts"], 4)
+
+    def test_prompt_queue_reorder_preserves_every_item_once(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            store = SQLiteStore(Path(folder) / "queue.db")
+            for queue_id in ("one", "two", "three"):
+                store.enqueue_prompt(queue_id, queue_id)
+            store.reorder_prompt_queue(["three", "one", "two"])
+            self.assertEqual(
+                [item["id"] for item in store.prompt_queue_items()],
+                ["three", "one", "two"],
+            )
+
     def test_protocol_round_trip_and_rejects_unknown_source(self) -> None:
         original = make_envelope(
             "agent.command",
