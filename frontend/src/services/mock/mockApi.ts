@@ -459,6 +459,7 @@ export class MockZenlessAPI implements ZenlessAPI {
     return { enabled: true, available: true, running: false, model: 'Qwen3 4B Q4_K_M', setup: { state: 'READY', detail: 'Tools and skills prepared' } };
   }
   async prepareLocalAI() { return { ok: true }; }
+  async prepareLocalAIItem(_id: string) { return { ok: true }; }
 
   async getSettings() {
     await delay(50);
