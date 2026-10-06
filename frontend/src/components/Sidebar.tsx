@@ -44,9 +44,12 @@ export function Sidebar() {
 
   return (
     <nav aria-label="Main navigation" className={`${collapsed ? "w-[72px]" : "w-52"} shrink-0 bg-ink-900 border-r border-ink-600 flex flex-col items-center py-3 gap-1`}>
-      <div className="mb-4 flex items-center gap-2">
-        <img src="/rubra.png" alt="Rubra" className="w-9 h-9 object-contain" />
-        {!collapsed && <span className="text-sm tracking-[0.2em] font-semibold text-ink-0">RUBRA</span>}
+      <div className="mb-4 flex items-center justify-center min-h-9">
+        {!collapsed ? (
+          <span className="rubra-wordmark text-sm tracking-[0.28em] font-semibold">RUBRA</span>
+        ) : (
+          <span className="rubra-mark" aria-label="Rubra">R</span>
+        )}
       </div>
       <button aria-label={collapsed ? "Expand navigation" : "Collapse navigation"} onClick={() => setCollapsed(!collapsed)} className="mb-3 p-2 text-ink-100 hover:text-zen-redBright">
         {collapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
@@ -83,10 +86,14 @@ export function Sidebar() {
           {jobs.length === 0 && <p className="text-xs text-ink-150">No tasks yet</p>}
         </>}
       </div>
-      <div className="pt-2 border-t border-ink-700 w-full flex justify-center">
-        <Tooltip content={allReady ? "READY" : anyError ? "ERROR" : "CONNECTING"}>
-          <span className="flex items-center justify-center py-2">
-            <StatusDot status={allReady ? "READY" : anyError ? "ERR" : "CONNECTING"} size="md" />
+      <div className="pt-2 border-t border-ink-700 w-full px-3">
+        <Tooltip content={allReady ? "Core bridge ready" : anyError ? "One or more connections need attention" : "Connections are still initializing"}>
+          <span className={`flex items-center ${collapsed ? 'justify-center' : 'justify-between'} py-2`}>
+            {!collapsed && <span className="text-2xs uppercase tracking-widest text-ink-400">System</span>}
+            <span className="flex items-center gap-2">
+              <StatusDot status={allReady ? "READY" : anyError ? "ERR" : "CONNECTING"} size="md" />
+              {!collapsed && <span className="text-2xs uppercase tracking-wider text-ink-300">{allReady ? "READY" : anyError ? "ATTENTION" : "CONNECTING"}</span>}
+            </span>
           </span>
         </Tooltip>
       </div>
