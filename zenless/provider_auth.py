@@ -33,7 +33,18 @@ def authentication_script(provider: str, inputs: tuple[str, ...], origin_url: st
       const account = any({json.dumps(account_selectors.get(provider, []))});
       const authPage = /(?:^|\\/)(?:login|signin|sign-in|auth)(?:\\/|$)/i.test(location.pathname) ||
         /^(?:accounts\\.google\\.com|auth\\.openai\\.com|auth0\\.openai\\.com)$/.test(location.hostname);
-      return {{ready: composer && account && !authPage && !guest && sameProvider, composer, authenticated: account && !authPage && !guest && sameProvider}};
+      const challengeFrame = [...document.querySelectorAll('iframe')].some(frame =>
+        /challenges\\.cloudflare\\.com|captcha|turnstile|recaptcha|hcaptcha/i.test(frame.src || '')
+      );
+      const challengeText = [...document.querySelectorAll('body *')].some(node => {{
+        if (!visible(node)) return false;
+        const text = (node.innerText || node.textContent || '').trim();
+        return text.length <= 180 && /(verify (you are|that you are) human|checking your browser|security verification|captcha|try again|验证|人机验证)/i.test(text);
+      }});
+      const challenge = challengeFrame || challengeText;
+      const providerAllowsComposerAuth = {json.dumps(provider == "hunyuan")};
+      const authenticated = (account || (providerAllowsComposerAuth && composer)) && !authPage && !guest && sameProvider && !challenge;
+      return {{ready: composer && authenticated, composer, authenticated, challenge, authPage, guest, sameProvider}};
     }})()"""
 
 
