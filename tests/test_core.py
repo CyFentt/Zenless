@@ -247,6 +247,18 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(len(core.store.assets("job-a")), 1)
             self.assertEqual(core.store.assets("job-b"), [])
 
+    def test_stop_test_reconciles_provider_state_without_cancelling_login_sessions(self) -> None:
+        core = object.__new__(ZenlessCore)
+        core.qa = Mock()
+        core.qa.stop.return_value = True
+        core.orchestrator = Mock()
+        core._refresh_provider_states = Mock()
+
+        self.assertTrue(core.stop_test("job-test"))
+
+        core._refresh_provider_states.assert_called_once_with()
+        core.orchestrator.cancel.assert_not_called()
+
     def test_chat_returns_prepared_message_identity_without_post_start_message_read(self) -> None:
         core = object.__new__(ZenlessCore)
         core.settings = lambda: json.loads(json.dumps(ZenlessCore.DEFAULT_SETTINGS))
