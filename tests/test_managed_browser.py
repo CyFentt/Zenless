@@ -185,6 +185,29 @@ class _CapabilityTransport:
 
 
 class ManagedLoginStateTests(unittest.TestCase):
+    def test_provider_failure_classifies_rate_limit_without_retrying(self) -> None:
+        class Node:
+            def is_visible(self) -> bool:
+                return True
+
+            def inner_text(self, timeout: int = 0) -> str:
+                del timeout
+                return "You have reached your limit. Try again later."
+
+        class Locator:
+            def count(self) -> int:
+                return 1
+
+            def nth(self, _index: int) -> Node:
+                return Node()
+
+        class Page:
+            def locator(self, _selector: str) -> Locator:
+                return Locator()
+
+        failure = ManagedBrowserController._provider_failure(Page())
+        self.assertEqual(failure, ("PROVIDER_RATE_LIMIT", "You have reached your limit. Try again later."))
+
     def test_poll_login_keeps_challenge_recoverable(self) -> None:
         class Page:
             def is_closed(self) -> bool:
