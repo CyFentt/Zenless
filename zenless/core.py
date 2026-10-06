@@ -740,6 +740,7 @@ class ZenlessCore:
 
     def _prompt_queue_loop(self) -> None:
         while not self._closing.is_set():
+            self._queue_wake.clear()
             try:
                 self._prompt_queue_tick()
             except Exception as exc:
@@ -756,7 +757,6 @@ class ZenlessCore:
                     config["paused"] = True
                     self.store.set_setting("prompt_queue.config", config)
                     self._publish_prompt_queue()
-            self._queue_wake.clear()
             self._queue_wake.wait(30.0)
 
     def _prompt_queue_tick(self) -> None:
@@ -776,6 +776,9 @@ class ZenlessCore:
                     last_error="The dispatched task cannot be found; automatic resend is blocked to prevent duplication.",
                 )
                 changed = True
+                if not config["continueOnFailure"]:
+                    config["paused"] = True
+                    self.store.set_setting("prompt_queue.config", config)
                 continue
             status = str(task.get("status") or "").casefold()
             if status == "complete":
@@ -813,6 +816,22 @@ class ZenlessCore:
             break
         if candidate is None:
             return
+
+        if config["delaySeconds"]:
+            previous = None
+            for item in items:
+                if item["id"] == candidate["id"]:
+                    break
+                previous = item
+            if previous is not None and previous["state"] == "completed":
+                try:
+                    not_before = datetime.fromisoformat(str(previous["updated_at"])) + timedelta(
+                        seconds=int(config["delaySeconds"])
+                    )
+                    if now < not_before:
+                        return
+                except ValueError:
+                    pass
 
         previous_job_id = ""
         if config["chainConversation"]:
@@ -861,7 +880,7 @@ class ZenlessCore:
                 last_error=f"{exc.code}: {exc}"[:4000],
                 next_attempt_at=next_attempt_at,
             )
-            if state == "failed" and not config["continueOnFailure"]:
+            if state in {"blocked", "failed"} and not config["continueOnFailure"]:
                 config["paused"] = True
                 self.store.set_setting("prompt_queue.config", config)
             self._publish_prompt_queue()
