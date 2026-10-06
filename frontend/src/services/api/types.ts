@@ -50,6 +50,7 @@ export interface ZenlessAPI {
   enqueuePrompt(content: string, jobId?: string, options?: TaskOptions): Promise<PromptQueueItem>;
   updatePromptQueueItem(id: string, patch: { content?: string; options?: TaskOptions }): Promise<PromptQueueItem>;
   retryPromptQueueItem(id: string): Promise<PromptQueueItem>;
+  confirmPromptQueueItem(id: string): Promise<PromptQueueItem>;
   movePromptQueueItem(id: string, direction: -1 | 1): Promise<PromptQueueSnapshot>;
   deletePromptQueueItem(id: string): Promise<{ ok: boolean }>;
   updatePromptQueueConfig(patch: Partial<PromptQueueConfig>): Promise<PromptQueueConfig>;
