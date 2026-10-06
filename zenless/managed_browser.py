@@ -235,12 +235,24 @@ class ManagedBrowserController:
             timeout=timeout,
         )
         deadline = time.monotonic() + timeout
+        challenge_seen = False
         while not self._stop.wait(0.5) and time.monotonic() < deadline:
             status = self.provider_status().get(provider, {})
             if status.get("state") == "Ready":
                 return {**result, "state": "ready", "authenticated": True}
-            if "window was closed" in str(status.get("detail") or ""):
+            detail = str(status.get("detail") or "")
+            challenge_seen = challenge_seen or "challenge" in detail.casefold()
+            if "window was closed" in detail:
+                if challenge_seen:
+                    raise BridgeError(
+                        "LOGIN_CHALLENGE: Provider anti-bot verification did not complete. "
+                        "The saved browser session was preserved."
+                    )
                 raise BridgeError("LOGIN_CANCELLED: Login window was closed. Click Login to reopen it.")
+        if challenge_seen:
+            raise BridgeError(
+                "LOGIN_CHALLENGE: Managed browser anti-bot verification did not complete before timeout."
+            )
         raise BridgeError("LOGIN_CANCELLED: Managed login was not confirmed before timeout.")
 
     def send_prompt(
@@ -725,6 +737,14 @@ class ManagedBrowserController:
             authenticated = page.evaluate(authentication_script(provider, self.provider_specs[provider].inputs, self.provider_specs[provider].url)).get("authenticated")
         except Exception:
             self._login_ready_at = 0.0
+            return
+        if state.get("challenge"):
+            self._login_ready_at = 0.0
+            self._set_state(
+                provider,
+                "Login Required",
+                "Anti-bot challenge is active; complete it manually. If it loops, this provider can remain optional.",
+            )
             return
         if not authenticated:
             self._login_ready_at = 0.0
