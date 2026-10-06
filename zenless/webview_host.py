@@ -186,6 +186,7 @@ class WebViewHost:
             window.restore()
             deadline = time.monotonic() + max(30.0, min(900.0, float(payload.get("timeout", 600))))
             ready_since = 0.0
+            challenge_seen = False
             while time.monotonic() < deadline and not self._stop.wait(0.75):
                 if self._windows.get(provider) is not window:
                     raise RuntimeError("LOGIN_CANCELLED: Login window was closed. Click Login to reopen it.")
@@ -196,6 +197,7 @@ class WebViewHost:
                         raise RuntimeError("LOGIN_CANCELLED: Session could not be verified. Click Login to reopen it.")
                     ready_since = 0.0
                     continue
+                challenge_seen = challenge_seen or bool(state.get("challenge"))
                 if state.get("authenticated"):
                     ready_since = ready_since or time.monotonic()
                     if dismissed.is_set() or time.monotonic() - ready_since >= 3.0:
@@ -208,9 +210,21 @@ class WebViewHost:
                 else:
                     ready_since = 0.0
                     if dismissed.is_set():
-                        raise RuntimeError("LOGIN_CANCELLED: Login was not confirmed. Your session was kept; click Login to reopen it.")
+                        if challenge_seen:
+                            raise RuntimeError(
+                                "LOGIN_CHALLENGE: Provider anti-bot verification did not complete. "
+                                "The saved browser session was preserved."
+                            )
+                        raise RuntimeError(
+                            "LOGIN_CANCELLED: Login was not confirmed. Your session was kept; click Login to reopen it."
+                        )
             if self._stop.is_set():
                 raise RuntimeError("Login cancelled because Rubra is closing")
+            if challenge_seen:
+                raise TimeoutError(
+                    f"LOGIN_CHALLENGE: Anti-bot verification did not complete for {provider}. "
+                    "The provider may reject embedded browsers; no challenge was bypassed."
+                )
             raise TimeoutError(f"LOGIN_CANCELLED: Login timeout for {provider}")
         if action == "request":
             provider_action = str(payload.get("provider_action") or "send_prompt")
