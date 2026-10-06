@@ -762,7 +762,14 @@ class ManagedBrowserController:
             self._set_state(provider, "Login Required", "Managed login window was closed")
             return
         try:
-            authenticated = page.evaluate(authentication_script(provider, self.provider_specs[provider].inputs, self.provider_specs[provider].url)).get("authenticated")
+            state = page.evaluate(
+                authentication_script(
+                    provider,
+                    self.provider_specs[provider].inputs,
+                    self.provider_specs[provider].url,
+                )
+            )
+            authenticated = bool(state.get("authenticated"))
         except Exception:
             self._login_ready_at = 0.0
             return
