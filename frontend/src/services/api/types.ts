@@ -110,4 +110,5 @@ export interface ZenlessAPI {
   setSmartRouting(enabled: boolean): Promise<{ ok: boolean }>;
 
   getDiagnostics(): Promise<Diagnostic[]>;
+  reportFrontendDiagnostic(diagnostic: Diagnostic): Promise<{ ok: boolean }>;
 }
