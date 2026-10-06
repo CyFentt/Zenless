@@ -14,6 +14,9 @@ import type {
   ModelCatalog,
   ModelInfo,
   ProviderId,
+  PromptQueueConfig,
+  PromptQueueItem,
+  PromptQueueSnapshot,
   ProjectIndexStatus,
   ProjectSearchResult,
   Review,
@@ -178,6 +181,29 @@ export class RealZenlessAPI implements ZenlessAPI {
     return request('/api/chat', { method: 'POST', rawBody: form, timeout: 60000, idempotencyKey });
   }
   cancelGeneration(jobId: string): Promise<{ ok: boolean }> { return request(`/api/chat/${encodeURIComponent(jobId)}/cancel`, { method: 'POST' }); }
+  getPromptQueue(): Promise<PromptQueueSnapshot> { return request('/api/prompt-queue'); }
+  enqueuePrompt(content: string, jobId?: string, options?: TaskOptions): Promise<PromptQueueItem> {
+    return request('/api/prompt-queue', {
+      method: 'POST',
+      body: { content, jobId, options },
+      idempotencyKey: operationKey('prompt-queue'),
+    });
+  }
+  updatePromptQueueItem(id: string, patch: { content?: string; options?: TaskOptions }): Promise<PromptQueueItem> {
+    return request(`/api/prompt-queue/${encodeURIComponent(id)}`, { method: 'PATCH', body: patch });
+  }
+  retryPromptQueueItem(id: string): Promise<PromptQueueItem> {
+    return request(`/api/prompt-queue/${encodeURIComponent(id)}/retry`, { method: 'POST' });
+  }
+  movePromptQueueItem(id: string, direction: -1 | 1): Promise<PromptQueueSnapshot> {
+    return request(`/api/prompt-queue/${encodeURIComponent(id)}/move`, { method: 'POST', body: { direction } });
+  }
+  deletePromptQueueItem(id: string): Promise<{ ok: boolean }> {
+    return request(`/api/prompt-queue/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  }
+  updatePromptQueueConfig(patch: Partial<PromptQueueConfig>): Promise<PromptQueueConfig> {
+    return request('/api/prompt-queue/config', { method: 'PATCH', body: patch });
+  }
 
   getContext(jobId: string): Promise<ContextItem[]> { return request(`/api/jobs/${encodeURIComponent(jobId)}/context`); }
   refreshContext(jobId: string): Promise<ContextItem[]> { return request(`/api/jobs/${encodeURIComponent(jobId)}/context/refresh`, { method: 'POST' }); }
