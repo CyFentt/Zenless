@@ -2042,8 +2042,8 @@ class ZenlessCore:
                 self.bridge.wait_for_provider(provider, timeout=2)
 
     def _login_worker(self, provider: str) -> None:
-        self._set_connection(provider, "LOGIN")
-        self.events.publish("AGENT_STATUS_CHANGED", {"agent": provider, "status": "LOGIN"})
+        self._set_connection(provider, "CONNECTING")
+        self.events.publish("AGENT_STATUS_CHANGED", {"agent": provider, "status": "CONNECTING"})
         try:
             result = self.bridge.login(provider, timeout=600)
             if result.get("state") != "ready":
