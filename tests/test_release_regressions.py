@@ -106,6 +106,20 @@ def test_tool_setup_continues_after_failed_critical_and_prioritizes_sources(tmp_
     assert failed['status'] == 'FAILED'
 
 
+def test_targeted_tool_install_persists_failure_for_ui(tmp_path):
+    (tmp_path / 'assets').mkdir()
+    (tmp_path / 'assets/toolchain.json').write_text(json.dumps({'artifacts': [
+        {'id': 'qwen3-4b', 'target': 'runtime/models/model.gguf'},
+    ]}))
+    manager = ToolchainManager(resource_root=tmp_path, portable_root=tmp_path)
+    with patch.object(manager, '_ensure_artifact', side_effect=RuntimeError('download interrupted')):
+        with pytest.raises(RuntimeError, match='download interrupted'):
+            manager.install('qwen3-4b')
+    result = json.loads((tmp_path / 'runtime/toolchain-results.json').read_text())['qwen3-4b']
+    assert result['state'] == 'failed'
+    assert 'download interrupted' in result['detail']
+
+
 def test_toolchain_rejects_archive_links(tmp_path):
     target = tmp_path / 'extract'
     target.mkdir()
