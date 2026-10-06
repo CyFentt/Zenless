@@ -692,12 +692,21 @@ class ZenlessCore:
                 config["delaySeconds"] = max(0, min(300, int(patch["delaySeconds"])))
             except TypeError, ValueError:
                 pass
+        max_attempts_changed = False
         if "maxAttempts" in patch:
             try:
                 config["maxAttempts"] = max(1, min(8, int(patch["maxAttempts"])))
+                max_attempts_changed = True
             except TypeError, ValueError:
                 pass
         self.store.set_setting("prompt_queue.config", config)
+        if max_attempts_changed:
+            for item in self.store.prompt_queue_items(128):
+                if item["state"] in {"queued", "blocked", "failed"}:
+                    self.store.update_prompt_queue_item(
+                        item["id"],
+                        max_attempts=max(int(item.get("attempts") or 0) + 1, int(config["maxAttempts"])),
+                    )
         self._publish_prompt_queue()
         self._queue_wake.set()
         return config
