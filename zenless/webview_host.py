@@ -476,6 +476,10 @@ class WebViewHost:
             state = window.evaluate_js(self._response_script(spec))
             if not isinstance(state, dict):
                 continue
+            failure = str(state.get("failure") or "").strip()
+            failure_code = str(state.get("failureCode") or "").strip()
+            if failure and failure_code:
+                raise RuntimeError(f"{failure_code}: {failure}")
             text = str(state.get("text") or "").strip()
             if len(text) > 512_000:
                 try:
@@ -677,10 +681,31 @@ class WebViewHost:
             }}
           }}
           const last = nodes.at(-1);
+          let failure = '';
+          let failureCode = '';
+          const alerts = [...document.querySelectorAll(
+            '[role="alert"], [aria-live="assertive"], [class*="error"], [class*="toast"], [class*="notice"]'
+          )].filter(visible).slice(-40);
+          for (const node of alerts.reverse()) {{
+            const candidate = (node.innerText || node.textContent || '').trim();
+            if (!candidate || candidate.length > 700) continue;
+            const lowered = candidate.toLowerCase();
+            if (/(rate limit|too many requests|reached your limit|usage limit|quota exceeded)/i.test(lowered)) {{
+              failure = candidate; failureCode = 'PROVIDER_RATE_LIMIT'; break;
+            }}
+            if (/(server is busy|servers are busy|high traffic|overloaded|capacity)/i.test(lowered)) {{
+              failure = candidate; failureCode = 'PROVIDER_CAPACITY'; break;
+            }}
+            if (/(network error|connection error|failed to fetch|try again later)/i.test(lowered)) {{
+              failure = candidate; failureCode = 'PROVIDER_TRANSIENT_ERROR'; break;
+            }}
+          }}
           return {{
             count: nodes.length,
             text: (last?.innerText || last?.textContent || '').trim(),
-            streaming: stopSelectors.some(selector => [...document.querySelectorAll(selector)].some(visible))
+            streaming: stopSelectors.some(selector => [...document.querySelectorAll(selector)].some(visible)),
+            failure,
+            failureCode
           }};
         }})()
         """
