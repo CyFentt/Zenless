@@ -12,6 +12,8 @@ export interface AgentInfo {
   status: ConnectionStatus;
   model?: string;
   version?: string;
+  detail?: string;
+  transport?: string;
 }
 
 export const PROVIDER_NAMES: Record<ProviderId, string> = {
