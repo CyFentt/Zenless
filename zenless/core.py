@@ -591,7 +591,7 @@ class ZenlessCore:
         if len(text) > 32_000:
             raise CoreError("QUEUE_PROMPT_TOO_LARGE", "Queued prompts are limited to 32,000 characters.")
         items = self.store.prompt_queue_items(128)
-        pending = [item for item in items if item["state"] not in {"completed", "cancelled"}]
+        pending = [item for item in items if item["state"] in {"queued", "preparing", "inflight", "blocked"}]
         if len(pending) >= 64:
             raise CoreError("QUEUE_FULL", "The prompt queue already contains 64 pending items.", status=409)
         if parent_job_id and self.store.load_task(parent_job_id) is None:
@@ -709,7 +709,7 @@ class ZenlessCore:
                 if item["state"] in {"queued", "blocked", "failed"}:
                     self.store.update_prompt_queue_item(
                         item["id"],
-                        max_attempts=max(int(item.get("attempts") or 0) + 1, int(config["maxAttempts"])),
+                        max_attempts=min(8, max(int(item.get("attempts") or 0) + 1, int(config["maxAttempts"]))),
                     )
         self._publish_prompt_queue()
         self._queue_wake.set()
