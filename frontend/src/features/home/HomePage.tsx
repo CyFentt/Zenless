@@ -35,7 +35,10 @@ export function HomePage() {
   const currentJob = jobs.find(
     (j) => j.status === "NEW" || j.status === "RUNNING" || j.status === "PAUSED",
   );
-  const errors = diagnostics.filter((d) => d.severity === "error");
+  const alerts = diagnostics
+    .filter((d) => d.severity === "critical" || d.severity === "error" || d.severity === "warning")
+    .slice(-8)
+    .reverse();
   const recentJobs = jobs.slice(0, 5);
 
   return (
@@ -129,19 +132,29 @@ export function HomePage() {
           </div>
         </section>
 
-        {errors.length > 0 && (
+        {alerts.length > 0 && (
           <section>
-            <h2 className="text-2xs uppercase tracking-widest text-zen-errBright mb-3">ERRORS</h2>
+            <h2 className="text-2xs uppercase tracking-widest text-zen-errBright mb-3">DIAGNOSTICS</h2>
             <div className="space-y-0">
-              {errors.map((err) => (
-                <Tooltip key={err.id} content={`${err.file ?? "Unknown"}:${err.line ?? "?"}`}>
-                  <div className="flex items-center gap-3 px-3 h-8 border-b border-ink-700 hover:bg-ink-850 transition-colors cursor-pointer">
-                    <StatusDot status="ERR" />
-                    <span className="text-2xs text-ink-300 font-mono">{displaySource(err.source)}</span>
-                    <span className="text-xs text-ink-100 truncate">{err.message}</span>
-                  </div>
-                </Tooltip>
-              ))}
+              {alerts.map((diagnostic) => {
+                const severe = diagnostic.severity === "critical" || diagnostic.severity === "error";
+                const detail = [
+                  diagnostic.probableCause ? `Cause: ${diagnostic.probableCause}` : "",
+                  diagnostic.impact ? `Impact: ${diagnostic.impact}` : "",
+                  diagnostic.recovery ? `Recovery: ${diagnostic.recovery}` : "",
+                  diagnostic.file ? `${diagnostic.file}:${diagnostic.line ?? "?"}` : "",
+                ].filter(Boolean).join("\n");
+                return (
+                  <Tooltip key={diagnostic.id} content={detail || diagnostic.message}>
+                    <div className="flex items-center gap-3 px-3 min-h-8 py-1 border-b border-ink-700 hover:bg-ink-850 transition-colors cursor-pointer">
+                      <StatusDot status={severe ? "ERR" : "LOGIN"} />
+                      <span className="text-2xs text-ink-300 font-mono">{displaySource(diagnostic.source)}</span>
+                      <span className="text-xs text-ink-100 truncate flex-1">{diagnostic.message}</span>
+                      {(diagnostic.occurrenceCount ?? 1) > 1 && <span className="text-2xs text-ink-400">×{diagnostic.occurrenceCount}</span>}
+                    </div>
+                  </Tooltip>
+                );
+              })}
             </div>
           </section>
         )}
