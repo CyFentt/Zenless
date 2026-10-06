@@ -514,6 +514,34 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(raised.exception.details, {"provider": "chatgpt"})
         self.assertEqual(core.connections()["chatgpt"], "LOGIN")
 
+    def test_preflight_research_on_with_smart_routing_does_not_require_gemini(self) -> None:
+        core = object.__new__(ZenlessCore)
+        bridge = Mock()
+        bridge.wait_for_provider.side_effect = lambda provider, timeout=0.0: provider == "chatgpt"
+        core.bridge = bridge
+        core.events = EventBus()
+        core._connections_lock = threading.RLock()
+        core._connections = {
+            "bridge": "READY",
+            "browser": "READY",
+            "chatgpt": "READY",
+            "deepseek": "OFF",
+            "gemini": "OFF",
+            "hunyuan": "OFF",
+            "studio": "OFF",
+        }
+
+        core._preflight_providers(
+            TaskOptions(
+                create_3d_asset=False,
+                independent_review=False,
+                smart_routing=True,
+                research_mode="on",
+            )
+        )
+
+        self.assertFalse(any(call.args and call.args[0] == "gemini" for call in bridge.wait_for_provider.call_args_list))
+
     def test_preflight_smart_routing_off_requires_web_even_if_local_is_ready(self) -> None:
         core = object.__new__(ZenlessCore)
         bridge = Mock()
