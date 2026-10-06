@@ -54,6 +54,42 @@ function uniqueMessages(messages: ChatMessage[]): ChatMessage[] {
   return [...result.values()].sort((left, right) => left.timestamp - right.timestamp);
 }
 
+function diagnosticKey(diagnostic: Diagnostic): string {
+  return [
+    diagnostic.source,
+    diagnostic.component ?? '',
+    diagnostic.message,
+    diagnostic.file ?? '',
+    diagnostic.line ?? '',
+    diagnostic.function ?? '',
+  ].join('|');
+}
+
+function uniqueDiagnostics(diagnostics: Diagnostic[]): Diagnostic[] {
+  const result = new Map<string, Diagnostic>();
+  for (const diagnostic of diagnostics) {
+    const key = diagnosticKey(diagnostic);
+    const current = result.get(key);
+    if (!current) {
+      result.set(key, diagnostic);
+      continue;
+    }
+    result.set(key, {
+      ...current,
+      ...diagnostic,
+      id: current.id,
+      timestamp: Math.max(current.timestamp, diagnostic.timestamp),
+      occurrenceCount: Math.max(current.occurrenceCount ?? 1, diagnostic.occurrenceCount ?? 1),
+      stack: diagnostic.stack ?? current.stack,
+      requestId: diagnostic.requestId ?? current.requestId,
+      operationId: diagnostic.operationId ?? current.operationId,
+    });
+  }
+  return [...result.values()]
+    .sort((left, right) => left.timestamp - right.timestamp)
+    .slice(-200);
+}
+
 interface AppState {
   booted: boolean;
   backendReady: boolean;
@@ -334,13 +370,7 @@ export const useStore = create<AppState>((set) => ({
   addTestFailure: (failure) => set((state) => ({ testFailures: [...state.testFailures, failure] })),
   resetTestDetails: () => set({ testCases: [], testFailures: [], testCaptures: [] }),
   setSettings: (s) => set({ settings: s }),
-  addDiagnostic: (d) => set((state) => {
-    const exists = state.diagnostics.some((item) => item.id === d.id);
-    const diagnostics = exists
-      ? state.diagnostics.map((item) => (item.id === d.id ? { ...item, ...d } : item))
-      : [...state.diagnostics, d];
-    return { diagnostics: diagnostics.slice(-200) };
-  }),
-  setDiagnostics: (d) => set({ diagnostics: d }),
+  addDiagnostic: (d) => set((state) => ({ diagnostics: uniqueDiagnostics([...state.diagnostics, d]) })),
+  setDiagnostics: (d) => set({ diagnostics: uniqueDiagnostics(d) }),
   setPromptQueue: (promptQueue) => set({ promptQueue }),
 }));
