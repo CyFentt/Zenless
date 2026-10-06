@@ -370,7 +370,12 @@ class ManagedBrowserController:
                 elif command.action == "request" and command.provider:
                     current = self.provider_status().get(command.provider, {}).get("state")
                     if current == "Working":
-                        self._set_state(command.provider, "Error", str(exc))
+                        self._set_state(
+                            command.provider,
+                            "Degraded",
+                            "The provider request failed, but the authenticated browser session was preserved: "
+                            + str(exc),
+                        )
                 command.error = exc
                 self._report(
                     exc,
