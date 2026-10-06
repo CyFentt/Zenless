@@ -144,7 +144,7 @@ export const DEFAULT_TASK_OPTIONS: TaskOptions = {
   research: "AUTO",
 };
 
-export type PromptQueueState = "QUEUED" | "PREPARING" | "INFLIGHT" | "BLOCKED" | "FAILED" | "COMPLETED" | "CANCELLED";
+export type PromptQueueState = "QUEUED" | "PREPARING" | "INFLIGHT" | "SENT_UNCONFIRMED" | "BLOCKED" | "FAILED" | "COMPLETED" | "CANCELLED";
 
 export interface PromptQueueItem {
   id: string;
