@@ -39,8 +39,9 @@ export function Sidebar() {
   const setActivePage = useStore((s) => s.setActivePage);
   const connections = useStore((s) => s.connections);
 
-  const allReady = connections.bridge === "READY";
+  const coreReady = connections.bridge === "READY";
   const anyError = Object.values(connections).some((v) => v === "ERR");
+  const systemStatus = anyError ? "ERR" : coreReady ? "READY" : "CONNECTING";
 
   return (
     <nav aria-label="Main navigation" className={`${collapsed ? "w-[72px]" : "w-52"} shrink-0 bg-ink-900 border-r border-ink-600 flex flex-col items-center py-3 gap-1`}>
@@ -87,12 +88,12 @@ export function Sidebar() {
         </>}
       </div>
       <div className="pt-2 border-t border-ink-700 w-full px-3">
-        <Tooltip content={allReady ? "Core bridge ready" : anyError ? "One or more connections need attention" : "Connections are still initializing"}>
+        <Tooltip content={systemStatus === "ERR" ? "One or more connections need attention" : systemStatus === "READY" ? "Core bridge ready" : "Connections are still initializing"}>
           <span className={`flex items-center ${collapsed ? 'justify-center' : 'justify-between'} py-2`}>
             {!collapsed && <span className="text-2xs uppercase tracking-widest text-ink-400">System</span>}
             <span className="flex items-center gap-2">
-              <StatusDot status={allReady ? "READY" : anyError ? "ERR" : "CONNECTING"} size="md" />
-              {!collapsed && <span className="text-2xs uppercase tracking-wider text-ink-300">{allReady ? "READY" : anyError ? "ATTENTION" : "CONNECTING"}</span>}
+              <StatusDot status={systemStatus} size="md" />
+              {!collapsed && <span className="text-2xs uppercase tracking-wider text-ink-300">{systemStatus === "ERR" ? "ATTENTION" : systemStatus}</span>}
             </span>
           </span>
         </Tooltip>
