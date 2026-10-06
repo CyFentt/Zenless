@@ -257,7 +257,17 @@ function LocalModelsPanel() {
     <Row label={state?.model || 'Local model'} hint="Runs one inference at a time. Uses Qwen Coder 7B for building and Qwen3 4B for review when both are installed. Models are unloaded before switching. Vulkan is tried first, then CPU. Web research and 3D generation require their own providers.">
       <span className="text-xs text-ink-50">{state?.available ? state.running ? 'Running' : 'Ready' : 'Setup needed'}</span>
     </Row>
-    {state?.models?.map((model) => <div key={model.name} className="flex justify-between py-2 text-xs"><span className="text-ink-100">{model.name}</span><span className="text-ink-300">{model.installed ? 'Installed' : 'Setup needed'}</span></div>)}
+    {state?.models?.map((model) => (
+      <div key={model.name} className="py-2 border-b border-ink-700 text-xs">
+        <div className="flex justify-between gap-4">
+          <span className="text-ink-100">{model.name}</span>
+          <span className={model.installed ? 'text-zen-okBright' : model.state === 'failed' ? 'text-zen-errBright' : 'text-ink-300'}>
+            {model.installed ? 'Installed' : model.state === 'failed' ? 'Failed' : model.state === 'skipped' ? 'Skipped' : 'Setup needed'}
+          </span>
+        </div>
+        {!model.installed && model.detail && <p className="mt-1 text-2xs text-ink-400 break-words">{model.detail}</p>}
+      </div>
+    ))}
     <div className="flex items-center justify-between gap-4 pt-3">
       <p className="text-xs text-ink-300" role="status">{state?.setup.detail || 'Checking local tools'}</p>
       <button disabled={busy || state?.setup.state === 'INSTALLING'} onClick={async () => {
@@ -352,6 +362,9 @@ function LinksTab({ connections }: { connections: ConnectionInfo }) {
             </div>
           );
         })}
+        <p className="pt-3 text-2xs leading-relaxed text-ink-400">
+          Reviewer is optional when Independent Review is disabled. CAPTCHA or login failure on one provider does not disable the other providers or local routing.
+        </p>
       </Section>
       <Modal open={!!loginModal} onClose={() => { setLoginModal(null); setLoggingIn(false); }} title="LOGIN REQUIRED" width="w-80">
         <div className="space-y-4">
