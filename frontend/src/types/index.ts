@@ -142,6 +142,37 @@ export const DEFAULT_TASK_OPTIONS: TaskOptions = {
   research: "AUTO",
 };
 
+export type PromptQueueState = "QUEUED" | "PREPARING" | "INFLIGHT" | "BLOCKED" | "FAILED" | "COMPLETED" | "CANCELLED";
+
+export interface PromptQueueItem {
+  id: string;
+  position: number;
+  state: PromptQueueState;
+  content: string;
+  parentJobId?: string | null;
+  jobId?: string | null;
+  attempts: number;
+  maxAttempts: number;
+  lastError: string;
+  nextAttemptAt: string;
+  createdAt: number;
+  updatedAt: number;
+  options: Partial<TaskOptions>;
+}
+
+export interface PromptQueueConfig {
+  paused: boolean;
+  continueOnFailure: boolean;
+  chainConversation: boolean;
+  delaySeconds: number;
+  maxAttempts: number;
+}
+
+export interface PromptQueueSnapshot {
+  items: PromptQueueItem[];
+  config: PromptQueueConfig;
+}
+
 export type ChatRole = "user" | "zenless" | "system";
 
 export interface ChatAction {
@@ -538,6 +569,7 @@ export interface ZenlessEventMap {
   TEST_FINISHED: { passed: boolean; cancelled?: boolean; jobId?: string };
   SETTINGS_CHANGED: { settings: Partial<Settings> };
   DIAGNOSTIC_EVENT: { diagnostic: Diagnostic };
+  PROMPT_QUEUE_CHANGED: PromptQueueSnapshot;
 }
 
 export type ZenlessEvent = {
