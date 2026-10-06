@@ -312,31 +312,29 @@ class ZenlessCore:
     def agents(self) -> list[dict[str, Any]]:
         connections = self.connections()
         models = self.settings()["models"]
+        try:
+            provider_states = self.bridge.provider_status()
+        except Exception:
+            provider_states = {}
+
+        def provider_payload(provider: str, **extra: Any) -> dict[str, Any]:
+            live = provider_states.get(provider)
+            detail = str(live.get("detail") or "") if isinstance(live, dict) else ""
+            transport = str(live.get("transport") or "") if isinstance(live, dict) else ""
+            return {
+                "id": provider,
+                "name": PROVIDER_LABELS[provider],
+                "status": connections[provider],
+                **extra,
+                **({"detail": detail} if detail else {}),
+                **({"transport": transport} if transport else {}),
+            }
+
         return [
-            {
-                "id": "chatgpt",
-                "name": PROVIDER_LABELS["chatgpt"],
-                "status": connections["chatgpt"],
-                "model": models["chatgpt"]["model"],
-            },
-            {
-                "id": "deepseek",
-                "name": PROVIDER_LABELS["deepseek"],
-                "status": connections["deepseek"],
-                "model": models["deepseek"]["model"],
-            },
-            {
-                "id": "gemini",
-                "name": PROVIDER_LABELS["gemini"],
-                "status": connections["gemini"],
-                "model": models["gemini"]["model"],
-            },
-            {
-                "id": "hunyuan",
-                "name": PROVIDER_LABELS["hunyuan"],
-                "status": connections["hunyuan"],
-                "version": models["hunyuan"]["version"],
-            },
+            provider_payload("chatgpt", model=models["chatgpt"]["model"]),
+            provider_payload("deepseek", model=models["deepseek"]["model"]),
+            provider_payload("gemini", model=models["gemini"]["model"]),
+            provider_payload("hunyuan", version=models["hunyuan"]["version"]),
             {"id": "studio", "name": "Studio", "status": connections["studio"]},
         ]
 
