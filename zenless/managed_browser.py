@@ -411,13 +411,7 @@ class ManagedBrowserController:
                 return {"ready": False, "runtime": "missing"}
             self._ensure_context(headed=False)
             page = self._ensure_page(command.provider)
-            auth_state = page.evaluate(
-                authentication_script(
-                    command.provider,
-                    self.provider_specs[command.provider].inputs,
-                    self.provider_specs[command.provider].url,
-                )
-            )
+            auth_state = self._authentication_state(page, self.provider_specs[command.provider])
             ready = bool(auth_state.get("authenticated"))
             challenge = bool(auth_state.get("challenge"))
             self._set_state(
@@ -659,6 +653,30 @@ class ManagedBrowserController:
             page.wait_for_timeout(350)
         raise BridgeError(f"Timed out waiting for a complete response from {spec.code}.")
 
+    def _authentication_state(self, page: Any, spec: ProviderSpec) -> dict[str, Any]:
+        raw = page.evaluate(authentication_script(spec.code, spec.inputs, spec.url))
+        state = dict(raw) if isinstance(raw, dict) else {"authenticated": False}
+        if state.get("authenticated") or spec.code != "hunyuan":
+            return state
+        if (
+            state.get("challenge")
+            or state.get("guest")
+            or state.get("authPage")
+            or state.get("sameProvider") is False
+        ):
+            return state
+        capabilities = self._capabilities(page, spec)
+        state["capabilities"] = capabilities
+        if (
+            bool(capabilities.get("upload_files"))
+            and bool(capabilities.get("geometry"))
+            and bool(capabilities.get("texture"))
+        ):
+            state["authenticated"] = True
+            state["ready"] = True
+            state["capabilityAuthenticated"] = True
+        return state
+
     def _capabilities(self, page: Any, spec: ProviderSpec) -> dict[str, Any]:
         raw = page.evaluate(
             r"""
@@ -766,13 +784,7 @@ class ManagedBrowserController:
             self._set_state(provider, "Login Required", "Managed login window was closed")
             return
         try:
-            state = page.evaluate(
-                authentication_script(
-                    provider,
-                    self.provider_specs[provider].inputs,
-                    self.provider_specs[provider].url,
-                )
-            )
+            state = self._authentication_state(page, self.provider_specs[provider])
             authenticated = bool(state.get("authenticated"))
         except Exception:
             self._login_ready_at = 0.0
