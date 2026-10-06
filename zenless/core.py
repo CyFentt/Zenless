@@ -278,6 +278,23 @@ class ZenlessCore:
         return {"ready": not self._closing.is_set()}
 
     def connections(self) -> dict[str, str]:
+        bridge = getattr(self, "bridge", None)
+        if bridge is not None and not self._closing.is_set():
+            try:
+                statuses = bridge.provider_status()
+            except Exception:
+                statuses = {}
+            if statuses:
+                with self._connections_lock:
+                    for provider in ("chatgpt", "deepseek", "gemini", "hunyuan"):
+                        raw = str(statuses.get(provider, {}).get("state") or "")
+                        if not raw:
+                            continue
+                        normalized = "LOGIN" if raw.casefold() == "standby" else self._normalize_connection(raw)
+                        thread = self._provider_threads.get(provider)
+                        if thread is not None and thread.is_alive() and normalized not in {"READY", "LOGIN"}:
+                            continue
+                        self._connections[provider] = normalized
         with self._connections_lock:
             return dict(self._connections)
 
@@ -1175,12 +1192,29 @@ class ZenlessCore:
             return result
 
     def local_ai_state(self) -> dict[str, Any]:
+        results_path = self.portable_root / "runtime" / "toolchain-results.json"
+        tool_results: dict[str, Any] = {}
+        try:
+            raw = json.loads(results_path.read_text(encoding="utf-8")) if results_path.is_file() else {}
+            if isinstance(raw, dict):
+                tool_results = raw
+        except (OSError, json.JSONDecodeError):
+            tool_results = {}
+        model_results = {"qwen-coder-7b": tool_results.get("qwen-coder-7b"), "qwen3-4b": tool_results.get("qwen3-4b")}
+        models = []
+        for item in self.local_ai.model_status():
+            model = dict(item)
+            result = model_results.get(str(model.get("id") or ""))
+            if isinstance(result, dict):
+                model["state"] = str(result.get("state") or "")
+                model["detail"] = str(result.get("detail") or "")
+            models.append(model)
         return {
             "enabled": bool(self.settings()["localAI"]),
             "available": self.local_ai.available,
             "running": self.local_ai.running,
             "model": "Qwen Coder 7B + Qwen3 4B",
-            "models": self.local_ai.model_status(),
+            "models": models,
             "setup": dict(self._tools_state),
         }
 
