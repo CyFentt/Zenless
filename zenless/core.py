@@ -1577,9 +1577,21 @@ class ZenlessCore:
         return {"ok": True, "jobId": job_id}
 
     def stop_test(self, job_id: str) -> bool:
-        if self.qa.stop(job_id):
-            return True
-        if self.orchestrator.cancel(job_id):
+        stopped = self.qa.stop(job_id)
+        cancelled = False if stopped else self.orchestrator.cancel(job_id)
+        if stopped or cancelled:
+            try:
+                self._refresh_provider_states()
+            except Exception as exc:
+                self._report(
+                    "browser",
+                    "post-test-reconcile",
+                    exc,
+                    "Provider sessions were preserved. Refresh Links or retry the provider health check.",
+                    severity="WARNING",
+                    probable_cause="A provider health snapshot failed immediately after Play Test shutdown.",
+                    impact="Only the displayed provider status may be stale; the saved login session is not cleared.",
+                )
             return True
         raise CoreError("TEST_NOT_RUNNING", "No test is running.", status=409)
 
