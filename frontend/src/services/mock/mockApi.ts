@@ -208,6 +208,15 @@ export class MockZenlessAPI implements ZenlessAPI {
     item.updatedAt = Date.now();
     return clone(item);
   }
+  async confirmPromptQueueItem(id: string): Promise<PromptQueueItem> {
+    const item = this.promptQueue.find((value) => value.id === id);
+    if (!item) throw new Error("Queue item not found");
+    if (item.state !== "SENT_UNCONFIRMED") throw new Error("Queue item is not awaiting delivery confirmation");
+    item.state = "COMPLETED";
+    item.lastError = "Marked sent after manual verification.";
+    item.updatedAt = Date.now();
+    return clone(item);
+  }
   async movePromptQueueItem(id: string, direction: -1 | 1): Promise<PromptQueueSnapshot> {
     const index = this.promptQueue.findIndex((value) => value.id === id);
     const target = Math.max(0, Math.min(this.promptQueue.length - 1, index + direction));
