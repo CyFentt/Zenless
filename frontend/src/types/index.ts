@@ -539,7 +539,7 @@ export interface ZenlessEventMap {
   BOOT_STAGE_CHANGED: { stage: BootStage; state: BootState };
   BOOT_COMPLETE: Record<string, never>;
   CONNECTION_CHANGED: Partial<ConnectionInfo>;
-  AGENT_STATUS_CHANGED: { agent: AgentId; status: ConnectionStatus };
+  AGENT_STATUS_CHANGED: { agent: AgentId; status: ConnectionStatus; detail?: string };
   PIPELINE_STATE_CHANGED: { jobId: string; stage: PipelineStage };
   JOB_CREATED: { job: Job };
   JOB_UPDATED: { job: Partial<Job> & { id: string } };
