@@ -2106,12 +2106,41 @@ class ZenlessCore:
         if provider in {"chatgpt", "deepseek", "gemini", "hunyuan"}:
             normalized = self._normalize_connection(state)
             self._set_connection(provider, normalized)
+            detail_text = str(detail or "")[:2000]
             self.events.publish(
                 "AGENT_STATUS_CHANGED",
-                {"agent": provider, "status": normalized, "detail": str(detail or "")[:1000]},
+                {"agent": provider, "status": normalized, "detail": detail_text},
             )
+            lowered = state.casefold()
+            if lowered in {"degraded", "error", "failed", "unavailable", "runtime required"} and detail_text:
+                severe = lowered in {"error", "failed", "unavailable", "runtime required"}
+                self.diagnostics.report(
+                    severity="ERROR" if severe else "WARNING",
+                    source=provider,
+                    component="provider-runtime",
+                    message=detail_text,
+                    probable_cause=(
+                        "The provider transport reported a degraded or failed browser/API operation. "
+                        "Saved authentication is preserved unless login is explicitly required."
+                    ),
+                    impact="Smart Routing may use another provider or the local model; only this provider route is affected.",
+                    recovery_action=(
+                        "Let the provider cooldown finish, retry the action, or use Links only when a fresh login is required."
+                    ),
+                )
         elif provider == "browser":
-            self._set_connection("browser", self._normalize_connection(state))
+            normalized = self._normalize_connection(state)
+            self._set_connection("browser", normalized)
+            detail_text = str(detail or "")[:2000]
+            if state.casefold() in {"degraded", "error", "failed", "unavailable"} and detail_text:
+                self.diagnostics.report(
+                    severity="WARNING" if state.casefold() == "degraded" else "ERROR",
+                    source="browser",
+                    component="provider-runtime",
+                    message=detail_text,
+                    impact="Managed browser routing may be unavailable; embedded or local routes can remain usable.",
+                    recovery_action="Retry the affected provider. Reinstall the browser runtime only if the error persists.",
+                )
 
     def _on_pipeline_event(self, event: PipelineEvent) -> None:
         self._queue_wake.set()
