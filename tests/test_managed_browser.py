@@ -9,8 +9,9 @@ from pathlib import Path
 from typing import Any
 
 from zenless.agent_gateway import AgentGateway
+from zenless.browser_bridge import BridgeError
 from zenless.diagnostics import ErrorBus
-from zenless.managed_browser import ProviderSpec
+from zenless.managed_browser import ManagedBrowserController, ProviderSpec
 from zenless.webview2_browser import WebView2BrowserController
 
 
@@ -183,7 +184,40 @@ class _CapabilityTransport:
         return prompt
 
 
+class ManagedLoginStateTests(unittest.TestCase):
+    def test_poll_login_keeps_challenge_recoverable(self) -> None:
+        class Page:
+            def is_closed(self) -> bool:
+                return False
+
+            def evaluate(self, _script: str) -> dict[str, bool]:
+                return {"authenticated": False, "challenge": True}
+
+        with tempfile.TemporaryDirectory() as folder:
+            controller = ManagedBrowserController(data_root=Path(folder))
+            controller._login_provider = "deepseek"
+            controller._context = object()
+            controller._headed = True
+            controller._pages["deepseek"] = Page()
+            controller._poll_login()
+            status = controller.provider_status()["deepseek"]
+            self.assertEqual(status["state"], "Login Required")
+            self.assertIn("challenge", status["detail"].casefold())
+
+
 class AgentGatewayCapabilityTests(unittest.TestCase):
+    def test_login_challenge_does_not_fallback_to_automated_browser(self) -> None:
+        embedded = _CapabilityTransport({})
+        managed = _CapabilityTransport({})
+        embedded.login = lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            BridgeError("LOGIN_CHALLENGE: anti-bot verification did not complete")
+        )
+        managed.login = lambda *_args, **_kwargs: self.fail("Playwright fallback must not run for CAPTCHA")
+        gateway = AgentGateway(managed=managed, embedded=embedded)
+
+        with self.assertRaisesRegex(BridgeError, "LOGIN_CHALLENGE"):
+            gateway.login("deepseek", timeout=1)
+
     def test_status_follows_the_selected_playwright_route(self) -> None:
         embedded = _CapabilityTransport({})
         managed = _CapabilityTransport({})
