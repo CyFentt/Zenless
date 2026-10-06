@@ -11,6 +11,9 @@ import type {
   ModelCatalog,
   ModelInfo,
   ProviderId,
+  PromptQueueConfig,
+  PromptQueueItem,
+  PromptQueueSnapshot,
   ProjectIndexStatus,
   ProjectSearchResult,
   Review,
@@ -62,6 +65,14 @@ export class MockZenlessAPI implements ZenlessAPI {
   private testState: TestState = { status: "IDLE", elapsedMs: 0, fixAttempt: 0, maxFixAttempts: 3 };
   private studioState: StudioState = "ONLINE";
   private conceptPrompt = "Industrial bomb device, dark metal, sci-fi";
+  private promptQueue: PromptQueueItem[] = [];
+  private promptQueueConfig: PromptQueueConfig = {
+    paused: false,
+    continueOnFailure: false,
+    chainConversation: true,
+    delaySeconds: 2,
+    maxAttempts: 3,
+  };
 
   async bootstrap() {
     await delay(400);
@@ -157,6 +168,64 @@ export class MockZenlessAPI implements ZenlessAPI {
   async cancelGeneration(_jobId: string) {
     await delay(80);
     return { ok: true };
+  }
+  async getPromptQueue(): Promise<PromptQueueSnapshot> {
+    return { items: clone(this.promptQueue), config: clone(this.promptQueueConfig) };
+  }
+  async enqueuePrompt(content: string, jobId?: string, options?: TaskOptions): Promise<PromptQueueItem> {
+    const now = Date.now();
+    const item: PromptQueueItem = {
+      id: uid("queue"),
+      position: (this.promptQueue.length + 1) * 10,
+      state: "QUEUED",
+      content,
+      parentJobId: jobId,
+      attempts: 0,
+      maxAttempts: this.promptQueueConfig.maxAttempts,
+      lastError: "",
+      nextAttemptAt: "",
+      createdAt: now,
+      updatedAt: now,
+      options: options ?? {},
+    };
+    this.promptQueue.push(item);
+    return clone(item);
+  }
+  async updatePromptQueueItem(id: string, patch: { content?: string; options?: TaskOptions }): Promise<PromptQueueItem> {
+    const item = this.promptQueue.find((value) => value.id === id);
+    if (!item) throw new Error("Queue item not found");
+    if (patch.content !== undefined) item.content = patch.content;
+    if (patch.options !== undefined) item.options = patch.options;
+    item.updatedAt = Date.now();
+    return clone(item);
+  }
+  async retryPromptQueueItem(id: string): Promise<PromptQueueItem> {
+    const item = this.promptQueue.find((value) => value.id === id);
+    if (!item) throw new Error("Queue item not found");
+    item.state = "QUEUED";
+    item.attempts = 0;
+    item.lastError = "";
+    item.updatedAt = Date.now();
+    return clone(item);
+  }
+  async movePromptQueueItem(id: string, direction: -1 | 1): Promise<PromptQueueSnapshot> {
+    const index = this.promptQueue.findIndex((value) => value.id === id);
+    const target = Math.max(0, Math.min(this.promptQueue.length - 1, index + direction));
+    if (index >= 0 && target !== index) {
+      const [item] = this.promptQueue.splice(index, 1);
+      this.promptQueue.splice(target, 0, item);
+      this.promptQueue.forEach((value, position) => { value.position = (position + 1) * 10; });
+    }
+    return this.getPromptQueue();
+  }
+  async deletePromptQueueItem(id: string): Promise<{ ok: boolean }> {
+    const before = this.promptQueue.length;
+    this.promptQueue = this.promptQueue.filter((value) => value.id !== id);
+    return { ok: this.promptQueue.length !== before };
+  }
+  async updatePromptQueueConfig(patch: Partial<PromptQueueConfig>): Promise<PromptQueueConfig> {
+    this.promptQueueConfig = { ...this.promptQueueConfig, ...patch };
+    return clone(this.promptQueueConfig);
   }
   async getContext(_jobId: string) {
     await delay(80);
