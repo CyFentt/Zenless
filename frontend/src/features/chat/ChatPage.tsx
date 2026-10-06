@@ -288,6 +288,113 @@ export function ChatPage() {
   );
 }
 
+function PromptQueuePanel({ snapshot, onChange }: { snapshot: PromptQueueSnapshot; onChange: (snapshot: PromptQueueSnapshot) => void }) {
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [draft, setDraft] = useState('');
+  const visible = snapshot.items.filter((item) => item.state !== 'CANCELLED').slice(-32);
+
+  const refresh = async () => onChange(await getApi().getPromptQueue());
+  const mutate = async (id: string, action: () => Promise<unknown>) => {
+    if (busyId) return;
+    setBusyId(id);
+    try {
+      await action();
+      await refresh();
+    } catch (error) {
+      frontendDiagnostics.capture(error, 'queue', 'Prompt queue action failed');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const updateConfig = async (patch: Partial<PromptQueueSnapshot['config']>) => {
+    try {
+      const config = await getApi().updatePromptQueueConfig(patch);
+      onChange({ ...snapshot, config });
+    } catch (error) {
+      frontendDiagnostics.capture(error, 'queue', 'Prompt queue configuration failed');
+    }
+  };
+
+  return (
+    <div className="mb-3 rounded-xl border border-ink-600 bg-ink-900/95 shadow-[0_0_24px_rgba(197,31,44,.08)] overflow-hidden animate-fade-in">
+      <div className="flex items-center justify-between gap-3 px-3 py-2 border-b border-ink-700">
+        <div>
+          <div className="text-2xs uppercase tracking-[0.18em] text-ink-50">PROMPT QUEUE</div>
+          <div className="text-[10px] text-ink-400">Persistent · fail-closed · sequential</div>
+        </div>
+        <div className="flex items-center gap-2">
+          <label className="flex items-center gap-1.5 text-[10px] text-ink-300">
+            <input type="checkbox" checked={snapshot.config.chainConversation} onChange={(e) => void updateConfig({ chainConversation: e.target.checked })} />
+            Chain
+          </label>
+          <label className="flex items-center gap-1.5 text-[10px] text-ink-300">
+            <input type="checkbox" checked={snapshot.config.continueOnFailure} onChange={(e) => void updateConfig({ continueOnFailure: e.target.checked })} />
+            Continue on failure
+          </label>
+          <button onClick={() => void updateConfig({ paused: !snapshot.config.paused })} className="h-7 px-2 inline-flex items-center gap-1 text-2xs uppercase border border-ink-600 hover:border-zen-red text-ink-100">
+            {snapshot.config.paused ? <Play size={10} /> : <Pause size={10} />}
+            {snapshot.config.paused ? 'Resume' : 'Pause'}
+          </button>
+        </div>
+      </div>
+      <div className="flex gap-4 px-3 py-2 border-b border-ink-700 text-[10px] text-ink-400">
+        <label className="flex items-center gap-2">Delay
+          <input type="number" min={0} max={300} value={snapshot.config.delaySeconds} onChange={(e) => void updateConfig({ delaySeconds: Number(e.target.value) })} className="w-14 h-6 px-1 bg-ink-950 border border-ink-600 text-ink-100" />
+          s
+        </label>
+        <label className="flex items-center gap-2">Retries
+          <input type="number" min={1} max={8} value={snapshot.config.maxAttempts} onChange={(e) => void updateConfig({ maxAttempts: Number(e.target.value) })} className="w-12 h-6 px-1 bg-ink-950 border border-ink-600 text-ink-100" />
+        </label>
+      </div>
+      <div className="max-h-64 overflow-y-auto scrollbar-zen">
+        {visible.length === 0 ? (
+          <p className="px-3 py-5 text-center text-2xs uppercase tracking-wider text-ink-400">Queue empty</p>
+        ) : visible.map((item, index) => {
+          const active = item.state === 'PREPARING' || item.state === 'INFLIGHT';
+          const failed = item.state === 'FAILED' || item.state === 'BLOCKED';
+          const stateClass = failed ? 'text-zen-errBright' : active ? 'text-zen-warnBright' : item.state === 'COMPLETED' ? 'text-zen-okBright' : 'text-ink-400';
+          return (
+            <div key={item.id} className="px-3 py-2 border-b border-ink-800 last:border-0">
+              <div className="flex items-start gap-2">
+                <span className={'mt-0.5 text-[10px] font-mono ' + stateClass}>{item.state}</span>
+                <div className="flex-1 min-w-0">
+                  {editingId === item.id ? (
+                    <textarea value={draft} onChange={(e) => setDraft(e.target.value)} className="w-full min-h-16 p-2 bg-ink-950 border border-ink-600 text-xs text-ink-50 resize-y" />
+                  ) : (
+                    <p className="text-xs text-ink-100 line-clamp-2 break-words">{item.content}</p>
+                  )}
+                  {item.lastError && <p className="mt-1 text-[10px] text-zen-errBright break-words">{item.lastError}</p>}
+                  <p className="mt-1 text-[10px] text-ink-500">
+                    attempt {item.attempts}/{item.maxAttempts}{item.jobId ? ' · job ' + item.jobId.slice(0, 8) : ''}
+                  </p>
+                </div>
+                <div className="flex items-center gap-1">
+                  {editingId === item.id ? (
+                    <>
+                      <button className="h-6 px-2 text-[10px] border border-ink-600" onClick={() => void mutate(item.id, async () => { await getApi().updatePromptQueueItem(item.id, { content: draft }); setEditingId(null); })}>SAVE</button>
+                      <button className="h-6 px-2 text-[10px] border border-ink-700" onClick={() => setEditingId(null)}>CANCEL</button>
+                    </>
+                  ) : (
+                    <>
+                      {!active && item.state !== 'COMPLETED' && <button title="Edit" onClick={() => { setEditingId(item.id); setDraft(item.content); }} className="w-6 h-6 grid place-items-center text-ink-300 hover:text-ink-0"><Pencil size={10}/></button>}
+                      {!active && item.state !== 'COMPLETED' && <button title="Move up" disabled={index === 0 || busyId === item.id} onClick={() => void mutate(item.id, () => getApi().movePromptQueueItem(item.id, -1))} className="w-6 h-6 grid place-items-center text-ink-300 disabled:opacity-25"><ChevronUp size={10}/></button>}
+                      {!active && item.state !== 'COMPLETED' && <button title="Move down" disabled={index === visible.length - 1 || busyId === item.id} onClick={() => void mutate(item.id, () => getApi().movePromptQueueItem(item.id, 1))} className="w-6 h-6 grid place-items-center text-ink-300 disabled:opacity-25"><ChevronDown size={10}/></button>}
+                      {failed && <button title="Retry" disabled={busyId === item.id} onClick={() => void mutate(item.id, () => getApi().retryPromptQueueItem(item.id))} className="w-6 h-6 grid place-items-center text-zen-warnBright"><RotateCcw size={10}/></button>}
+                      {!active && <button title="Remove" disabled={busyId === item.id} onClick={() => void mutate(item.id, () => getApi().deletePromptQueueItem(item.id))} className="w-6 h-6 grid place-items-center text-ink-400 hover:text-zen-errBright"><Trash2 size={10}/></button>}
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function ChatMessageRow({ message, streaming, logging, onLogin }: { message: ChatMessage; streaming?: boolean; logging?: boolean; onLogin: (provider: ProviderId) => Promise<void> }) {
   const isUser = message.role === 'user';
   const time = new Date(message.timestamp).toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' });
