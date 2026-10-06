@@ -302,6 +302,8 @@ class CoreTests(unittest.TestCase):
         core = object.__new__(ZenlessCore)
         core._connections = {"chatgpt": "READY"}
         core._connections_lock = threading.RLock()
+        core._provider_lock = threading.Lock()
+        core._provider_threads = {}
         core.events = Mock()
         core.diagnostics = Mock()
 
@@ -317,6 +319,28 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(kwargs["severity"], "WARNING")
         self.assertEqual(kwargs["source"], "chatgpt")
         self.assertIn("cooling down", kwargs["message"])
+
+    def test_provider_status_event_does_not_end_active_login_early(self) -> None:
+        core = object.__new__(ZenlessCore)
+        core._connections = {"deepseek": "CONNECTING"}
+        core._connections_lock = threading.RLock()
+        core._provider_lock = threading.Lock()
+        login_thread = Mock()
+        login_thread.is_alive.return_value = True
+        core._provider_threads = {"deepseek": login_thread}
+        core.events = Mock()
+        core.diagnostics = Mock()
+
+        core._on_provider_status(
+            "deepseek",
+            "Login Required",
+            "Anti-bot challenge is active; complete it manually.",
+        )
+
+        self.assertEqual(core._connections["deepseek"], "CONNECTING")
+        event = core.events.publish.call_args
+        self.assertEqual(event.args[0], "AGENT_STATUS_CHANGED")
+        self.assertEqual(event.args[1]["status"], "CONNECTING")
 
     def test_login_challenge_returns_provider_to_login_attention_state(self) -> None:
         core = object.__new__(ZenlessCore)
