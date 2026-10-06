@@ -1580,6 +1580,8 @@ class ZenlessCore:
         stopped = self.qa.stop(job_id)
         cancelled = False if stopped else self.orchestrator.cancel(job_id)
         if stopped or cancelled:
+            if stopped:
+                self.qa.wait_for_manual_tests(3.0)
             try:
                 self._refresh_provider_states()
             except Exception as exc:
