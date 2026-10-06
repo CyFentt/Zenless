@@ -103,10 +103,45 @@ class CoreTests(unittest.TestCase):
             reopened = SQLiteStore(path)
             items = reopened.prompt_queue_items()
             self.assertEqual([item["id"] for item in items], ["q1", "q2"])
-            self.assertEqual(items[0]["state"], "blocked")
+            self.assertEqual(items[0]["state"], "sent_unconfirmed")
             self.assertIn("uncertain", items[0]["last_error"].casefold())
             self.assertEqual(items[0]["options"]["review"], False)
             self.assertEqual(items[1]["max_attempts"], 4)
+
+    def test_prompt_queue_unconfirmed_delivery_requires_explicit_resolution(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            core = object.__new__(ZenlessCore)
+            core.store = SQLiteStore(Path(folder) / "queue.db")
+            core.events = EventBus()
+            core._queue_wake = threading.Event()
+            core._prompt_queue_config = lambda: {
+                "paused": True,
+                "continueOnFailure": False,
+                "chainConversation": True,
+                "delaySeconds": 2,
+                "maxAttempts": 3,
+            }
+            core.store.enqueue_prompt("queue-uncertain", "Potentially sent")
+            core.store.update_prompt_queue_item(
+                "queue-uncertain",
+                state="sent_unconfirmed",
+                attempts=1,
+                last_error="Delivery outcome is uncertain.",
+            )
+
+            confirmed = core.confirm_prompt_queue_item("queue-uncertain")
+            self.assertEqual(confirmed["state"], "COMPLETED")
+
+            core.store.update_prompt_queue_item(
+                "queue-uncertain",
+                state="sent_unconfirmed",
+                attempts=1,
+                last_error="Delivery outcome is uncertain.",
+            )
+            retried = core.retry_prompt_queue_item("queue-uncertain")
+            self.assertEqual(retried["state"], "QUEUED")
+            self.assertEqual(retried["attempts"], 0)
+            self.assertEqual(retried["lastError"], "")
 
     def test_prompt_queue_recovery_blocks_inflight_paused_checkpoint(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
