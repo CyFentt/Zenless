@@ -57,6 +57,56 @@ def test_login_closing_guest_does_not_report_authenticated(tmp_path):
     assert host._windows['chatgpt'] is window
 
 
+def test_hunyuan_webview_closes_login_when_generation_capabilities_prove_session(tmp_path):
+    host = WebViewHost(profile_root=tmp_path, provider_specs=PROVIDERS, source=io.BytesIO(), target=io.BytesIO())
+    window = Mock()
+    with (
+        patch.object(
+            host,
+            "_composer_state",
+            return_value={
+                "authenticated": False,
+                "challenge": False,
+                "guest": False,
+                "authPage": False,
+                "sameProvider": True,
+            },
+        ),
+        patch.object(
+            host,
+            "_capabilities",
+            return_value={"upload_files": True, "geometry": True, "texture": True},
+        ),
+    ):
+        state = host._authentication_state(window, PROVIDERS["hunyuan"])
+    assert state["authenticated"] is True
+    assert state["capabilityAuthenticated"] is True
+
+
+def test_hunyuan_capabilities_never_override_challenge_or_guest_state(tmp_path):
+    host = WebViewHost(profile_root=tmp_path, provider_specs=PROVIDERS, source=io.BytesIO(), target=io.BytesIO())
+    for blocked in ("challenge", "guest", "authPage"):
+        state = {
+            "authenticated": False,
+            "challenge": False,
+            "guest": False,
+            "authPage": False,
+            "sameProvider": True,
+        }
+        state[blocked] = True
+        with (
+            patch.object(host, "_composer_state", return_value=state),
+            patch.object(
+                host,
+                "_capabilities",
+                return_value={"upload_files": True, "geometry": True, "texture": True},
+            ) as capabilities,
+        ):
+            result = host._authentication_state(Mock(), PROVIDERS["hunyuan"])
+        assert result["authenticated"] is False
+        capabilities.assert_not_called()
+
+
 def test_navigation_does_not_discard_existing_provider_window(tmp_path):
     host = WebViewHost(profile_root=tmp_path, provider_specs=PROVIDERS, source=io.BytesIO(), target=io.BytesIO())
     window = Mock()
