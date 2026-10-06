@@ -639,14 +639,38 @@ class ZenlessCore:
         item = self.store.prompt_queue_item(queue_id)
         if item is None:
             raise CoreError("QUEUE_ITEM_NOT_FOUND", "Prompt queue item not found.", status=404)
-        if item["state"] not in {"blocked", "failed"}:
-            raise CoreError("QUEUE_ITEM_NOT_RETRYABLE", "Only blocked or failed queue items can be retried.", status=409)
+        if item["state"] not in {"blocked", "failed", "sent_unconfirmed"}:
+            raise CoreError(
+                "QUEUE_ITEM_NOT_RETRYABLE",
+                "Only blocked, failed, or unconfirmed queue items can be retried.",
+                status=409,
+            )
         self.store.update_prompt_queue_item(
             queue_id,
             state="queued",
             attempts=0,
             dispatched_job_id="",
             last_error="",
+            next_attempt_at="",
+        )
+        self._publish_prompt_queue()
+        self._queue_wake.set()
+        return self._queue_item_payload(self.store.prompt_queue_item(queue_id) or item)
+
+    def confirm_prompt_queue_item(self, queue_id: str) -> dict[str, Any]:
+        item = self.store.prompt_queue_item(queue_id)
+        if item is None:
+            raise CoreError("QUEUE_ITEM_NOT_FOUND", "Prompt queue item not found.", status=404)
+        if item["state"] != "sent_unconfirmed":
+            raise CoreError(
+                "QUEUE_ITEM_NOT_CONFIRMABLE",
+                "Only an unconfirmed delivery can be marked as sent.",
+                status=409,
+            )
+        self.store.update_prompt_queue_item(
+            queue_id,
+            state="completed",
+            last_error="Marked sent after manual verification.",
             next_attempt_at="",
         )
         self._publish_prompt_queue()
@@ -706,7 +730,7 @@ class ZenlessCore:
         self.store.set_setting("prompt_queue.config", config)
         if max_attempts_changed:
             for item in self.store.prompt_queue_items(128):
-                if item["state"] in {"queued", "blocked", "failed"}:
+                if item["state"] in {"queued", "blocked", "failed", "sent_unconfirmed"}:
                     self.store.update_prompt_queue_item(
                         item["id"],
                         max_attempts=min(8, max(int(item.get("attempts") or 0) + 1, int(config["maxAttempts"]))),
@@ -901,13 +925,16 @@ class ZenlessCore:
         except Exception as exc:
             self.store.update_prompt_queue_item(
                 candidate["id"],
-                state="blocked",
+                state="sent_unconfirmed",
                 last_error=(
                     "Delivery outcome is uncertain; automatic resend was blocked to prevent duplication. "
+                    "Verify Recent Tasks, then mark it sent or retry explicitly. "
                     + str(exc)
                 )[:4000],
                 next_attempt_at="",
             )
+            config["paused"] = True
+            self.store.set_setting("prompt_queue.config", config)
             self._publish_prompt_queue()
             raise
 
@@ -915,9 +942,14 @@ class ZenlessCore:
         if not job_id:
             self.store.update_prompt_queue_item(
                 candidate["id"],
-                state="blocked",
-                last_error="Dispatch returned no job identity; automatic resend was blocked.",
+                state="sent_unconfirmed",
+                last_error=(
+                    "Dispatch returned no job identity. Verify Recent Tasks, then mark it sent or retry explicitly; "
+                    "automatic resend is blocked."
+                ),
             )
+            config["paused"] = True
+            self.store.set_setting("prompt_queue.config", config)
         else:
             self.store.update_prompt_queue_item(
                 candidate["id"],
@@ -1873,9 +1905,12 @@ class ZenlessCore:
                     impact=f"Interrupted task {item['id']} moved to {item['stage']}.",
                     recovery_action="Resume only pre-mutation checkpoints; inspect blocked mutation evidence manually.",
                 )
+            recovered_queue_requires_pause = False
             for queue_id in recovered_queue:
                 queue_item = self.store.prompt_queue_item(queue_id) or {}
                 state = str(queue_item.get("state") or "blocked")
+                if state in {"blocked", "sent_unconfirmed"}:
+                    recovered_queue_requires_pause = True
                 reason = str(queue_item.get("last_error") or "Queue recovery requires explicit review.")
                 self.diagnostics.report(
                     severity="WARNING",
@@ -1883,8 +1918,12 @@ class ZenlessCore:
                     component="recovery",
                     message=f"Recovered queue item is {state}: {reason}",
                     impact=f"Queue item {queue_id} will not be automatically resent after an uncertain restart state.",
-                    recovery_action="Check Recent Tasks and the linked job before using Retry, Resume, or Remove.",
+                    recovery_action="Check Recent Tasks and the linked job before using Mark Sent, Retry, Resume, or Remove.",
                 )
+            if recovered_queue_requires_pause:
+                config = self._prompt_queue_config()
+                config["paused"] = True
+                self.store.set_setting("prompt_queue.config", config)
         except Exception as exc:
             self._set_boot("STATE", "OFF")
             self._report("state", "recovery", exc, "Inspect the local SQLite state before running another mutation.")
