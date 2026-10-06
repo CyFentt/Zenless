@@ -37,8 +37,8 @@ export function TaskOptionsPanel({ options, onChange, onClose }: Props) {
             label="Create 3D"
           />
         </OptionRow>
-        <OptionRow label="Review" hint="Code review before applying">
-          <Toggle hideLabel checked={options.review} onChange={(v) => set('review', v)} label="Review" />
+        <OptionRow label="Independent Review" hint="Use the Reviewer for an independent plan and final-state pass. DeepSeek is optional: with Smart Routing Rubra can use the local reviewer; turn this off to remove the Reviewer requirement entirely.">
+          <Toggle hideLabel checked={options.review} onChange={(v) => set('review', v)} label="Independent Review" />
         </OptionRow>
         <OptionRow label="Auto Test" hint="Run Play Test after build">
           <Toggle hideLabel checked={options.autoTest} onChange={(v) => set('autoTest', v)} label="Auto Test" />
