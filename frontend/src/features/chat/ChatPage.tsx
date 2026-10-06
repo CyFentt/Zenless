@@ -1,11 +1,11 @@
 import { useState, useRef, useEffect, lazy, Suspense } from 'react';
-import { Paperclip, ArrowUp, Settings2, X, Square, ScanSearch, Wrench, Code2 } from 'lucide-react';
+import { Paperclip, ArrowUp, Settings2, X, Square, ScanSearch, Wrench, Code2, ListPlus, ChevronUp, ChevronDown, RotateCcw, Trash2, Pause, Play, Pencil } from 'lucide-react';
 import { useStore } from '@/store';
 import { getApi } from '@/services';
 import { ApiError } from '@/services/api/realApi';
 import { frontendDiagnostics } from '@/services/diagnostics';
 import { Tooltip } from '@/components/Tooltip';
-import { DEFAULT_TASK_OPTIONS, type ChatMessage, type ProviderId, type TaskOptions } from '@/types';
+import { DEFAULT_TASK_OPTIONS, type ChatMessage, type PromptQueueSnapshot, type ProviderId, type TaskOptions } from '@/types';
 const TaskOptionsPanel = lazy(() => import('./TaskOptionsPanel').then((m) => ({ default: m.TaskOptionsPanel })));
 
 export function ChatPage() {
@@ -24,11 +24,14 @@ export function ChatPage() {
   const connections = useStore((s) => s.connections);
   const setConnections = useStore((s) => s.setConnections);
   const setAgents = useStore((s) => s.setAgents);
+  const promptQueue = useStore((s) => s.promptQueue);
+  const setPromptQueue = useStore((s) => s.setPromptQueue);
 
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [loggingProvider, setLoggingProvider] = useState<ProviderId | null>(null);
   const [showOptions, setShowOptions] = useState(false);
+  const [showQueue, setShowQueue] = useState(false);
   const settings = useStore((s) => s.settings);
   const [optionOverrides, setOptionOverrides] = useState<Partial<TaskOptions>>({});
   const options: TaskOptions = { ...DEFAULT_TASK_OPTIONS,
@@ -103,6 +106,26 @@ export function ChatPage() {
         timestamp: Date.now(),
         action: chatErrorAction(error),
       });
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const handleQueue = async () => {
+    const content = input.trim();
+    if (!content || sending) return;
+    if (attachments.length > 0) {
+      frontendDiagnostics.report('warning', 'queue', 'Queued prompts currently accept text only; send attachments directly.');
+      return;
+    }
+    setSending(true);
+    try {
+      await getApi().enqueuePrompt(content, currentJobId ?? undefined, options);
+      setInput('');
+      setPromptQueue(await getApi().getPromptQueue());
+      setShowQueue(true);
+    } catch (error) {
+      frontendDiagnostics.capture(error, 'queue', 'Failed to queue prompt', { jobId: currentJobId ?? undefined });
     } finally {
       setSending(false);
     }
@@ -184,6 +207,7 @@ export function ChatPage() {
         </div>
         <div className="shrink-0 px-6 pb-5 pt-3">
           <div className="max-w-3xl mx-auto">
+            {showQueue && <PromptQueuePanel snapshot={promptQueue} onChange={setPromptQueue} />}
             {attachments.length > 0 && (
               <div className="flex flex-wrap gap-1.5 mb-2">
                 {attachments.map((att) => (
