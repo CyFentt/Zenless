@@ -61,7 +61,8 @@ class ToolchainManager:
                 if item.get("auto", True) is False:
                     result = InstallResult(item_id, "optional", "Available on demand")
                 elif not self._eligible(item):
-                    result = InstallResult(item_id, "skipped", "Hardware threshold not met")
+                    _ok, reason = self._eligibility(item)
+                    result = InstallResult(item_id, "skipped", f"Hardware threshold not met: {reason}")
                 else:
                     try:
                         path = self._ensure_source(item) if source else self._ensure_artifact(item)
@@ -110,7 +111,8 @@ class ToolchainManager:
                     if str(item.get("id") or "") != target_id:
                         continue
                     if not self._eligible(item):
-                        raise ToolchainError(f"Hardware threshold not met for {target_id}.")
+                        _ok, reason = self._eligibility(item)
+                        raise ToolchainError(f"Hardware threshold not met for {target_id}: {reason}.")
                     path = self._ensure_artifact(item)
                     self._save_state()
                     result = InstallResult(target_id, "ready", "Verified and ready", str(path))
@@ -304,11 +306,23 @@ class ToolchainManager:
             marker.write_text(package, encoding="utf-8")
             results.append(InstallResult(item_id, "ready", "Portable npm package ready", str(prefix)))
 
-    def _eligible(self, item: dict[str, Any]) -> bool:
+    def _eligibility(self, item: dict[str, Any]) -> tuple[bool, str]:
         rule = item.get("hardware_auto")
         if not isinstance(rule, dict):
-            return True
-        return self._ram_gb() >= float(rule.get("min_ram_gb") or 0) and shutil.disk_usage(self.portable_root).free / (1024 ** 3) >= float(rule.get("min_free_gb") or 0)
+            return True, ""
+        ram = self._ram_gb()
+        free = shutil.disk_usage(self.portable_root).free / (1024 ** 3)
+        min_ram = float(rule.get("min_ram_gb") or 0)
+        min_free = float(rule.get("min_free_gb") or 0)
+        reasons: list[str] = []
+        if ram < min_ram:
+            reasons.append(f"RAM {ram:.1f} GB < required {min_ram:.1f} GB")
+        if free < min_free:
+            reasons.append(f"free disk {free:.1f} GB < required {min_free:.1f} GB")
+        return not reasons, "; ".join(reasons)
+
+    def _eligible(self, item: dict[str, Any]) -> bool:
+        return self._eligibility(item)[0]
 
     def _status(self, stage: str, detail: str) -> None:
         if self.status_callback is not None:
