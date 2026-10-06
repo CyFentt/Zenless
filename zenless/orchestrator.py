@@ -395,7 +395,7 @@ class ZenlessOrchestrator:
     ) -> None:
         self._check_control(task_id, cancel_event)
         required = [("chatgpt", "Builder")]
-        if options.independent_review:
+        if options.independent_review and not options.smart_routing:
             required.append(("deepseek", "Reviewer"))
         if options.create_3d_asset:
             required.append(("hunyuan", "3D Generator"))
@@ -837,8 +837,16 @@ class ZenlessOrchestrator:
     ) -> tuple[AgentProposal, ReviewResult | None]:
         if not options.independent_review:
             return proposal, None
-        if not self._provider_ready("deepseek", timeout=2, options=options):
-            raise BridgeError("Reviewer requires login for independent review.")
+        reviewer = self._review_provider(options)
+        if not reviewer:
+            self._emit(
+                task_id,
+                Stage.REVIEWING,
+                "Independent review skipped because no separate reviewer route is currently available.",
+                "warning",
+                "Smart Routing will continue with deterministic policy and QA instead of blocking on DeepSeek login.",
+            )
+            return proposal, None
 
         review: ReviewResult | None = None
         revisions = 0
@@ -846,7 +854,7 @@ class ZenlessOrchestrator:
             self._check_control(task_id, cancel_event)
             self._emit(task_id, Stage.REVIEWING, "Reviewer is independently reviewing the plan.")
             raw = self._send_agent_prompt(
-                "deepseek",
+                reviewer,
                 review_prompt(objective, context, proposal, evidence),
                 task_id=task_id,
             )
@@ -1646,8 +1654,24 @@ class ZenlessOrchestrator:
                 },
             )
             return proposal, mutation_evidence, console_output
-        if not self._provider_ready("deepseek", timeout=2, options=options):
-            raise BridgeError("Reviewer requires login because Independent Review is enabled.")
+        reviewer = self._review_provider(options)
+        if not reviewer:
+            self._emit(
+                task_id,
+                Stage.FINAL_REVIEW,
+                "No independent reviewer route is available; releasing only if deterministic QA evidence is clean.",
+                "warning",
+                "Smart Routing did not block on DeepSeek CAPTCHA or provider quota.",
+            )
+            self.store.update_task(
+                task_id,
+                final_review_json={
+                    "verdict": "skipped",
+                    "summary": "Independent reviewer unavailable; deterministic QA evidence used.",
+                    "warnings": ["No separate AI reviewer route was available."],
+                },
+            )
+            return proposal, mutation_evidence, console_output
         revisions = 0
         while True:
             self._check_control(task_id, cancel_event)
@@ -1669,7 +1693,7 @@ class ZenlessOrchestrator:
             if self._console_has_errors(console_output):
                 warnings.append("The latest Studio output still contains an error marker.")
             raw = self._send_agent_prompt(
-                "deepseek",
+                reviewer,
                 final_review_prompt(objective, final_state, mutation_evidence, qa_result, warnings),
                 task_id=task_id,
             )
@@ -1877,6 +1901,13 @@ class ZenlessOrchestrator:
         if not output.strip():
             return False
         return bool(re.search(r"(?im)(\bexception\b|\btraceback\b|stack begin|(^|\s)error[:\s])", output))
+
+    def _review_provider(self, options: TaskOptions) -> str:
+        if self._provider_ready("deepseek", timeout=1.0, options=options):
+            return "deepseek"
+        if options.smart_routing and self.bridge.wait_for_provider("gemini", timeout=0.75):
+            return "gemini"
+        return ""
 
     def _provider_ready(self, provider: str, *, timeout: float, options: TaskOptions) -> bool:
         if not options.smart_routing and provider in {"chatgpt", "deepseek"}:
