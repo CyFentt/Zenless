@@ -532,7 +532,7 @@ class ZenlessCore:
 
     def _preflight_providers(self, options: TaskOptions) -> None:
         required = ["chatgpt"]
-        if options.independent_review:
+        if options.independent_review and not options.smart_routing:
             required.append("deepseek")
         if options.create_3d_asset:
             required.append("hunyuan")
