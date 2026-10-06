@@ -210,6 +210,7 @@ class LocalWebBridge:
         app.router.add_patch("/api/prompt-queue/config", self._update_prompt_queue_config)
         app.router.add_patch("/api/prompt-queue/{queue_id}", self._update_prompt_queue_item)
         app.router.add_post("/api/prompt-queue/{queue_id}/retry", self._retry_prompt_queue_item)
+        app.router.add_post("/api/prompt-queue/{queue_id}/confirm", self._confirm_prompt_queue_item)
         app.router.add_post("/api/prompt-queue/{queue_id}/move", self._move_prompt_queue_item)
         app.router.add_delete("/api/prompt-queue/{queue_id}", self._delete_prompt_queue_item)
 
@@ -367,6 +368,11 @@ class LocalWebBridge:
     async def _retry_prompt_queue_item(self, request: web.Request) -> web.Response:
         return self._json(
             await asyncio.to_thread(self.core.retry_prompt_queue_item, request.match_info["queue_id"])
+        )
+
+    async def _confirm_prompt_queue_item(self, request: web.Request) -> web.Response:
+        return self._json(
+            await asyncio.to_thread(self.core.confirm_prompt_queue_item, request.match_info["queue_id"])
         )
 
     async def _move_prompt_queue_item(self, request: web.Request) -> web.Response:
