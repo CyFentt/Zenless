@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import struct
 import tempfile
+import threading
 import time
 import unittest
 import zlib
@@ -321,6 +322,53 @@ class OrchestratorTests(unittest.TestCase):
             self.assertEqual(orchestrator.current_task_id, "")
             self.assertNotIn(prepared[0], orchestrator._tasks)
             orchestrator.event_callback.assert_not_called()
+
+    def test_independent_review_off_skips_final_reviewer_entirely(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            bridge = FakeBridge({}, available={"chatgpt"})
+            orchestrator, store = self.make_system(folder, bridge, FakeStudio())
+            options = TaskOptions(independent_review=False)
+            store.create_task("no-review", "Build safely", options)
+            store.update_task("no-review", stage=Stage.APPLYING, status="running")
+            plan = orchestrator._parse_proposal(proposal())
+            result, evidence, output = orchestrator._final_review_and_repair(
+                "no-review",
+                "Build safely",
+                {},
+                plan,
+                [],
+                "",
+                options,
+                threading.Event(),
+                "studio-1",
+            )
+            self.assertIs(result, plan)
+            self.assertEqual(evidence, [])
+            self.assertEqual(output, "")
+            self.assertEqual(bridge.prompts, [])
+            saved = store.load_task("no-review") or {}
+            self.assertEqual((saved.get("final_review") or {}).get("verdict"), "skipped")
+
+    def test_smart_routing_uses_gemini_when_deepseek_is_unavailable(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            bridge = FakeBridge({"gemini": [review()]}, available={"chatgpt", "gemini"})
+            orchestrator, store = self.make_system(folder, bridge, FakeStudio())
+            options = TaskOptions(independent_review=True, smart_routing=True)
+            store.create_task("fallback-review", "Review independently", options)
+            store.update_task("fallback-review", stage=Stage.PLANNING, status="running")
+            plan = orchestrator._parse_proposal(proposal())
+            reviewed, result = orchestrator._review_and_revise(
+                "fallback-review",
+                "Review independently",
+                {},
+                plan,
+                [],
+                options,
+                threading.Event(),
+            )
+            self.assertIs(reviewed, plan)
+            self.assertIsNotNone(result)
+            self.assertEqual([provider for provider, _prompt in bridge.prompts], ["gemini"])
 
     def make_system(
         self,
