@@ -362,35 +362,36 @@ class ZenlessOrchestrator:
                 return send(provider)
             except BridgeError as primary_error:
                 if (
-                    provider != "deepseek"
+                    provider not in {"chatgpt", "deepseek"}
                     or not smart_routing
                     or streamed
                     or not self._recoverable_provider_error(primary_error)
                 ):
                     raise
 
+                role = "Builder" if provider == "chatgpt" else "Reviewer"
                 prefer_local = getattr(self.bridge, "prefer_local", None)
                 if callable(prefer_local):
                     try:
-                        local_selected = bool(prefer_local("deepseek"))
+                        local_selected = bool(prefer_local(provider))
                     except Exception:
                         local_selected = False
                     if local_selected:
                         self._emit(
                             task_id,
                             stage,
-                            "Reviewer web route is unavailable; Smart Routing handed review to the local model.",
+                            f"{role} web route is unavailable; Smart Routing handed the role to the local model.",
                             "warning",
                             str(primary_error)[:1000],
                         )
-                        publish("stream_start", "local-reviewer")
-                        return send("deepseek")
+                        publish("stream_start", f"local-{provider}")
+                        return send(provider)
 
                 if self.bridge.wait_for_provider("gemini", timeout=0.75):
                     self._emit(
                         task_id,
                         stage,
-                        "Reviewer web route is unavailable; Smart Routing handed review to Gemini.",
+                        f"{role} web route is unavailable; Smart Routing handed the role to Gemini.",
                         "warning",
                         str(primary_error)[:1000],
                     )
