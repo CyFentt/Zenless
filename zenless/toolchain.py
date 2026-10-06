@@ -85,26 +85,49 @@ class ToolchainManager:
         temporary.write_text(json.dumps({item.item_id: asdict(item) for item in results}, indent=2), encoding="utf-8")
         os.replace(temporary, target)
 
+    def _save_single_result(self, result: InstallResult) -> None:
+        target = self.runtime_root / "toolchain-results.json"
+        payload: dict[str, Any] = {}
+        if target.is_file():
+            try:
+                raw = json.loads(target.read_text(encoding="utf-8"))
+                if isinstance(raw, dict):
+                    payload = raw
+            except (OSError, json.JSONDecodeError):
+                payload = {}
+        payload[result.item_id] = asdict(result)
+        temporary = target.with_suffix(".tmp")
+        temporary.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        os.replace(temporary, target)
+
     def install(self, item_id: str) -> InstallResult:
         target_id = item_id.strip()
         if not target_id:
             raise ToolchainError("Tool ID is empty.")
         with self._lock:
-            for item in self.manifest.get("artifacts", []):
-                if str(item.get("id") or "") != target_id:
-                    continue
-                if not self._eligible(item):
-                    raise ToolchainError(f"Hardware threshold not met for {target_id}.")
-                path = self._ensure_artifact(item)
-                self._save_state()
-                return InstallResult(target_id, "ready", "Verified and ready", str(path))
-            for item in self.manifest.get("sources", []):
-                if str(item.get("id") or "") != target_id:
-                    continue
-                path = self._ensure_source(item)
-                self._save_state()
-                return InstallResult(target_id, "ready", "Pinned source ready", str(path))
-        raise ToolchainError(f"Unknown tool or source: {target_id}")
+            try:
+                for item in self.manifest.get("artifacts", []):
+                    if str(item.get("id") or "") != target_id:
+                        continue
+                    if not self._eligible(item):
+                        raise ToolchainError(f"Hardware threshold not met for {target_id}.")
+                    path = self._ensure_artifact(item)
+                    self._save_state()
+                    result = InstallResult(target_id, "ready", "Verified and ready", str(path))
+                    self._save_single_result(result)
+                    return result
+                for item in self.manifest.get("sources", []):
+                    if str(item.get("id") or "") != target_id:
+                        continue
+                    path = self._ensure_source(item)
+                    self._save_state()
+                    result = InstallResult(target_id, "ready", "Pinned source ready", str(path))
+                    self._save_single_result(result)
+                    return result
+                raise ToolchainError(f"Unknown tool or source: {target_id}")
+            except Exception as exc:
+                self._save_single_result(InstallResult(target_id, "failed", str(exc)))
+                raise
 
     def environment(self) -> dict[str, str]:
         env = dict(os.environ)
