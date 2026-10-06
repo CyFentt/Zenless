@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock
 
+from zenless.browser_bridge import BridgeError
 from zenless.core import CoreError, ZenlessCore
 from zenless.event_bus import EventBus
 from zenless.models import PipelineEvent, Stage, TaskOptions
@@ -246,6 +247,27 @@ class CoreTests(unittest.TestCase):
             self.assertTrue(core.store.delete_task("job-b"))
             self.assertEqual(len(core.store.assets("job-a")), 1)
             self.assertEqual(core.store.assets("job-b"), [])
+
+    def test_login_challenge_returns_provider_to_login_attention_state(self) -> None:
+        core = object.__new__(ZenlessCore)
+        core._connections = {"deepseek": "OFF"}
+        core._connections_lock = threading.RLock()
+        core._closing = threading.Event()
+        core.events = Mock()
+        core.bridge = Mock()
+        core.bridge.login.side_effect = BridgeError("LOGIN_CHALLENGE: verification loop")
+        core._report = Mock()
+
+        core._login_worker("deepseek")
+
+        self.assertEqual(core._connections["deepseek"], "LOGIN")
+        statuses = [
+            call.args[1]["status"]
+            for call in core.events.publish.call_args_list
+            if call.args and call.args[0] == "AGENT_STATUS_CHANGED"
+        ]
+        self.assertEqual(statuses, ["CONNECTING", "LOGIN"])
+        core._report.assert_called_once()
 
     def test_stop_test_reconciles_provider_state_without_cancelling_login_sessions(self) -> None:
         core = object.__new__(ZenlessCore)
