@@ -387,7 +387,9 @@ def test_managed_request_failure_clears_working_state(tmp_path):
         controller._event_loop()
 
     assert isinstance(command.error, BridgeError)
-    assert controller.provider_status()["chatgpt"]["state"] == "Error"
+    state = controller.provider_status()["chatgpt"]
+    assert state["state"] == "Degraded"
+    assert "saved login" in state["detail"]
 
 
 def test_webview2_shutdown_kills_helper_that_ignores_terminate(tmp_path):
@@ -419,6 +421,19 @@ def test_webview2_wait_for_provider_uses_monotonic_deadline(tmp_path):
     assert 0 < request.call_args.kwargs["timeout"] <= 1
 
 
+def test_webview2_busy_health_preserves_authenticated_working_state(tmp_path):
+    controller = WebView2BrowserController(data_root=tmp_path)
+    process = Mock()
+    process.poll.return_value = None
+    controller._process = process
+    controller._set_state("chatgpt", "Working", "Generating")
+    with patch.object(controller, "_request", return_value={"ready": False, "busy": True}):
+        assert controller.wait_for_provider("chatgpt", timeout=1)
+    state = controller.provider_status()["chatgpt"]
+    assert state["state"] == "Working"
+    assert state["detail"] == "Generating"
+
+
 def test_webview2_request_failure_clears_working_state(tmp_path):
     controller = WebView2BrowserController(data_root=tmp_path)
     process = Mock()
@@ -428,8 +443,9 @@ def test_webview2_request_failure_clears_working_state(tmp_path):
         with pytest.raises(BridgeError, match="selector changed"):
             controller.request("chatgpt", "send_prompt", {"prompt": "x"}, task_id="task", timeout=1)
     state = controller.provider_status()["chatgpt"]
-    assert state["state"] == "Error"
+    assert state["state"] == "Degraded"
     assert "selector changed" in state["detail"]
+    assert "saved login" in state["detail"]
 
 
 def test_compacted_messages_do_not_expose_legacy_branding():
