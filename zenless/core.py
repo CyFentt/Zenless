@@ -1992,11 +1992,14 @@ class ZenlessCore:
             any_ready = any_ready or normalized == "READY"
         self._set_boot("AI", "READY" if any_ready else "OFF")
 
-    def _on_provider_status(self, provider: str, state: str, _detail: str) -> None:
+    def _on_provider_status(self, provider: str, state: str, detail: str) -> None:
         if provider in {"chatgpt", "deepseek", "gemini", "hunyuan"}:
             normalized = self._normalize_connection(state)
             self._set_connection(provider, normalized)
-            self.events.publish("AGENT_STATUS_CHANGED", {"agent": provider, "status": normalized})
+            self.events.publish(
+                "AGENT_STATUS_CHANGED",
+                {"agent": provider, "status": normalized, "detail": str(detail or "")[:1000]},
+            )
         elif provider == "browser":
             self._set_connection("browser", self._normalize_connection(state))
 
