@@ -540,7 +540,7 @@ class ZenlessCore:
             required.append("deepseek")
         if options.create_3d_asset:
             required.append("hunyuan")
-        if options.research_mode == "on":
+        if options.research_mode == "on" and not options.smart_routing:
             required.append("gemini")
         for provider in required:
             web_only = not options.smart_routing and provider in {"chatgpt", "deepseek"}
@@ -591,7 +591,11 @@ class ZenlessCore:
         if len(text) > 32_000:
             raise CoreError("QUEUE_PROMPT_TOO_LARGE", "Queued prompts are limited to 32,000 characters.")
         items = self.store.prompt_queue_items(128)
-        pending = [item for item in items if item["state"] in {"queued", "preparing", "inflight", "blocked"}]
+        pending = [
+            item
+            for item in items
+            if item["state"] in {"queued", "preparing", "inflight", "sent_unconfirmed", "blocked"}
+        ]
         if len(pending) >= 64:
             raise CoreError("QUEUE_FULL", "The prompt queue already contains 64 pending items.", status=409)
         if parent_job_id and self.store.load_task(parent_job_id) is None:
