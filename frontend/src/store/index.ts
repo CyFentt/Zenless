@@ -15,6 +15,7 @@ import type {
   ModelInfo,
   ProviderDescriptor,
   ProviderId,
+  PromptQueueSnapshot,
   Settings,
   StudioNode,
   StudioState,
@@ -106,6 +107,7 @@ interface AppState {
   setLogFilter: (f: string) => void;
   settings: Settings | null;
   diagnostics: Diagnostic[];
+  promptQueue: PromptQueueSnapshot;
   effort: EffortLevel;
   setEffort: (e: EffortLevel) => void;
   tools: ToolDescriptor[];
@@ -147,6 +149,7 @@ interface AppState {
   setSettings: (s: Settings) => void;
   addDiagnostic: (d: Diagnostic) => void;
   setDiagnostics: (d: Diagnostic[]) => void;
+  setPromptQueue: (queue: PromptQueueSnapshot) => void;
 }
 
 export const useStore = create<AppState>((set) => ({
@@ -241,6 +244,16 @@ export const useStore = create<AppState>((set) => ({
   settings: null,
 
   diagnostics: [],
+  promptQueue: {
+    items: [],
+    config: {
+      paused: false,
+      continueOnFailure: false,
+      chainConversation: true,
+      delaySeconds: 2,
+      maxAttempts: 3,
+    },
+  },
 
   effort: 'AUTO',
   setEffort: (effort) => set({ effort }),
@@ -329,4 +342,5 @@ export const useStore = create<AppState>((set) => ({
     return { diagnostics: diagnostics.slice(-200) };
   }),
   setDiagnostics: (d) => set({ diagnostics: d }),
+  setPromptQueue: (promptQueue) => set({ promptQueue }),
 }));
