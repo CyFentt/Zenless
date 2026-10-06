@@ -173,14 +173,14 @@ class WebViewHost:
         window = self._ensure_window(provider, visible=action == "login")
         spec = self.provider_specs[provider]
         if action == "health":
-            state = self._composer_state(window, spec)
+            state = self._authentication_state(window, spec)
             return {
                 "ready": bool(state.get("authenticated")),
                 "authenticated": bool(state.get("authenticated")),
                 "challenge": bool(state.get("challenge")),
                 "guest": bool(state.get("guest")),
                 "url": str(window.get_current_url() or spec.url),
-                "capabilities": self._capabilities(window, spec),
+                "capabilities": state.get("capabilities") or self._capabilities(window, spec),
             }
         if action == "login":
             dismissed = self._dismissed.setdefault(provider, threading.Event())
@@ -194,7 +194,7 @@ class WebViewHost:
                 if self._windows.get(provider) is not window:
                     raise RuntimeError("LOGIN_CANCELLED: Login window was closed. Click Login to reopen it.")
                 try:
-                    state = self._composer_state(window, spec)
+                    state = self._authentication_state(window, spec)
                 except Exception:
                     if dismissed.is_set():
                         raise RuntimeError("LOGIN_CANCELLED: Session could not be verified. Click Login to reopen it.")
@@ -301,6 +301,29 @@ class WebViewHost:
     def _composer_state(self, window: Any, spec: ProviderSpec) -> dict[str, Any]:
         result = window.evaluate_js(authentication_script(spec.code, spec.inputs, spec.url))
         return result if isinstance(result, dict) else {"ready": False}
+
+    def _authentication_state(self, window: Any, spec: ProviderSpec) -> dict[str, Any]:
+        state = dict(self._composer_state(window, spec))
+        if state.get("authenticated") or spec.code != "hunyuan":
+            return state
+        if (
+            state.get("challenge")
+            or state.get("guest")
+            or state.get("authPage")
+            or state.get("sameProvider") is False
+        ):
+            return state
+        capabilities = self._capabilities(window, spec)
+        state["capabilities"] = capabilities
+        if (
+            bool(capabilities.get("upload_files"))
+            and bool(capabilities.get("geometry"))
+            and bool(capabilities.get("texture"))
+        ):
+            state["authenticated"] = True
+            state["ready"] = True
+            state["capabilityAuthenticated"] = True
+        return state
 
     def _capabilities(self, window: Any, spec: ProviderSpec) -> dict[str, Any]:
         script = f"""
