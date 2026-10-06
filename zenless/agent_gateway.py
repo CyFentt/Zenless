@@ -506,31 +506,40 @@ class AgentGateway:
         timeout: float,
         stream_callback: Callable[[str], None] | None,
     ) -> dict[str, Any]:
-        if route == "playwright":
-            if stream_callback is None:
-                return self.managed.request(provider, action, payload, task_id=task_id, timeout=timeout)
-            return self.managed.request(
-                provider,
-                action,
-                payload,
-                task_id=task_id,
-                timeout=timeout,
-                stream_callback=stream_callback,
-            )
-        if route == "webview2":
-            if stream_callback is None:
-                return self.embedded.request(provider, action, payload, task_id=task_id, timeout=timeout)
-            return self.embedded.request(
-                provider,
-                action,
-                payload,
-                task_id=task_id,
-                timeout=timeout,
-                stream_callback=stream_callback,
-            )
-        if route == "extension" and self.allow_extension_fallback and self.extension is not None:
-            return self.extension.request(provider, action, payload, task_id=task_id, timeout=timeout)
-        raise BridgeError(f"No authenticated internal route is available for {provider}.")
+        try:
+            if route == "playwright":
+                if stream_callback is None:
+                    result = self.managed.request(provider, action, payload, task_id=task_id, timeout=timeout)
+                else:
+                    result = self.managed.request(
+                        provider,
+                        action,
+                        payload,
+                        task_id=task_id,
+                        timeout=timeout,
+                        stream_callback=stream_callback,
+                    )
+            elif route == "webview2":
+                if stream_callback is None:
+                    result = self.embedded.request(provider, action, payload, task_id=task_id, timeout=timeout)
+                else:
+                    result = self.embedded.request(
+                        provider,
+                        action,
+                        payload,
+                        task_id=task_id,
+                        timeout=timeout,
+                        stream_callback=stream_callback,
+                    )
+            elif route == "extension" and self.allow_extension_fallback and self.extension is not None:
+                result = self.extension.request(provider, action, payload, task_id=task_id, timeout=timeout)
+            else:
+                raise BridgeError(f"No authenticated internal route is available for {provider}.")
+        except BridgeError as exc:
+            self._record_provider_failure(provider, exc)
+            raise
+        self._record_provider_success(provider)
+        return result
 
     def _hunyuan_transaction_route(
         self,
