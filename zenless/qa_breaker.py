@@ -671,8 +671,8 @@ class QABreaker:
                     result = [str(item).strip()[:300] for item in scenarios if str(item).strip()][:4]
                     if result:
                         return result
-            except Exception:
-                pass
+            except Exception as exc:
+                self._log(job_id, "WARN", f"Local QA planner unavailable; falling back to Builder: {exc}")
         if not self._provider_ready(job_id, "chatgpt", timeout=0.5):
             return []
         try:
