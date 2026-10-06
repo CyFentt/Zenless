@@ -7,7 +7,7 @@ import os
 import threading
 import time
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -116,6 +116,9 @@ class ZenlessCore:
         self._closing = threading.Event()
         self._tools_thread: threading.Thread | None = None
         self._tools_state = {"state": "IDLE", "detail": ""}
+        self._queue_wake = threading.Event()
+        self._queue_thread: threading.Thread | None = None
+        self._queue_lock = threading.RLock()
         self._startup_thread: threading.Thread | None = None
         self._provider_threads: dict[str, threading.Thread] = {}
         self._provider_lock = threading.Lock()
@@ -235,6 +238,7 @@ class ZenlessCore:
         if self._closing.is_set():
             return
         self._closing.set()
+        self._queue_wake.set()
         current = self.orchestrator.current_task_id
         if current:
             self.orchestrator.cancel(current)
@@ -253,6 +257,7 @@ class ZenlessCore:
         background = (
             self._startup_thread,
             self._tools_thread,
+            self._queue_thread,
             self._studio_thread,
             *threads,
         )
@@ -562,6 +567,358 @@ class ZenlessCore:
                 status=409,
                 details={"provider": provider},
             )
+
+    def prompt_queue(self) -> dict[str, Any]:
+        return {
+            "items": [self._queue_item_payload(item) for item in self.store.prompt_queue_items()],
+            "config": self._prompt_queue_config(),
+        }
+
+    def enqueue_prompt(
+        self,
+        content: str,
+        *,
+        parent_job_id: str = "",
+        options: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        text = content.strip()
+        if not text:
+            raise CoreError("EMPTY_QUEUE_PROMPT", "Queued prompt is empty.")
+        if len(text) > 32_000:
+            raise CoreError("QUEUE_PROMPT_TOO_LARGE", "Queued prompts are limited to 32,000 characters.")
+        items = self.store.prompt_queue_items(128)
+        pending = [item for item in items if item["state"] not in {"completed", "cancelled"}]
+        if len(pending) >= 64:
+            raise CoreError("QUEUE_FULL", "The prompt queue already contains 64 pending items.", status=409)
+        if parent_job_id and self.store.load_task(parent_job_id) is None:
+            raise CoreError("JOB_NOT_FOUND", "The queue parent task no longer exists.", status=404)
+        config = self._prompt_queue_config()
+        item = self.store.enqueue_prompt(
+            uuid.uuid4().hex,
+            text,
+            parent_job_id=parent_job_id,
+            options=dict(options or {}),
+            max_attempts=int(config["maxAttempts"]),
+        )
+        self._publish_prompt_queue()
+        self._queue_wake.set()
+        return self._queue_item_payload(item)
+
+    def update_prompt_queue_item(
+        self,
+        queue_id: str,
+        *,
+        content: str | None = None,
+        options: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        item = self.store.prompt_queue_item(queue_id)
+        if item is None:
+            raise CoreError("QUEUE_ITEM_NOT_FOUND", "Prompt queue item not found.", status=404)
+        if item["state"] in {"preparing", "inflight"}:
+            raise CoreError("QUEUE_ITEM_ACTIVE", "An active queue item cannot be edited.", status=409)
+        changes: dict[str, Any] = {}
+        if content is not None:
+            text = content.strip()
+            if not text:
+                raise CoreError("EMPTY_QUEUE_PROMPT", "Queued prompt is empty.")
+            if len(text) > 32_000:
+                raise CoreError("QUEUE_PROMPT_TOO_LARGE", "Queued prompts are limited to 32,000 characters.")
+            changes["content"] = text
+        if options is not None:
+            changes["options_json"] = dict(options)
+        if changes:
+            self.store.update_prompt_queue_item(queue_id, **changes)
+        self._publish_prompt_queue()
+        return self._queue_item_payload(self.store.prompt_queue_item(queue_id) or item)
+
+    def retry_prompt_queue_item(self, queue_id: str) -> dict[str, Any]:
+        item = self.store.prompt_queue_item(queue_id)
+        if item is None:
+            raise CoreError("QUEUE_ITEM_NOT_FOUND", "Prompt queue item not found.", status=404)
+        if item["state"] not in {"blocked", "failed"}:
+            raise CoreError("QUEUE_ITEM_NOT_RETRYABLE", "Only blocked or failed queue items can be retried.", status=409)
+        self.store.update_prompt_queue_item(
+            queue_id,
+            state="queued",
+            attempts=0,
+            dispatched_job_id="",
+            last_error="",
+            next_attempt_at="",
+        )
+        self._publish_prompt_queue()
+        self._queue_wake.set()
+        return self._queue_item_payload(self.store.prompt_queue_item(queue_id) or item)
+
+    def delete_prompt_queue_item(self, queue_id: str) -> bool:
+        item = self.store.prompt_queue_item(queue_id)
+        if item is None:
+            return False
+        if item["state"] in {"preparing", "inflight"}:
+            raise CoreError("QUEUE_ITEM_ACTIVE", "Pause or cancel the active job before removing its queue item.", status=409)
+        deleted = self.store.delete_prompt_queue_item(queue_id)
+        if deleted:
+            self._publish_prompt_queue()
+            self._queue_wake.set()
+        return deleted
+
+    def move_prompt_queue_item(self, queue_id: str, direction: int) -> dict[str, Any]:
+        items = self.store.prompt_queue_items(128)
+        movable = [item for item in items if item["state"] not in {"preparing", "inflight"}]
+        index = next((i for i, item in enumerate(movable) if item["id"] == queue_id), -1)
+        if index < 0:
+            raise CoreError("QUEUE_ITEM_NOT_MOVABLE", "Prompt queue item cannot be moved.", status=409)
+        target = max(0, min(len(movable) - 1, index + (-1 if direction < 0 else 1)))
+        if target != index:
+            movable[index], movable[target] = movable[target], movable[index]
+            active = [item for item in items if item["state"] in {"preparing", "inflight"}]
+            self.store.reorder_prompt_queue([*(item["id"] for item in active), *(item["id"] for item in movable)])
+        self._publish_prompt_queue()
+        return self.prompt_queue()
+
+    def update_prompt_queue_config(self, patch: dict[str, Any]) -> dict[str, Any]:
+        config = self._prompt_queue_config()
+        if "paused" in patch:
+            config["paused"] = TaskOptions._boolean(patch["paused"], bool(config["paused"]))
+        if "continueOnFailure" in patch:
+            config["continueOnFailure"] = TaskOptions._boolean(
+                patch["continueOnFailure"], bool(config["continueOnFailure"])
+            )
+        if "chainConversation" in patch:
+            config["chainConversation"] = TaskOptions._boolean(
+                patch["chainConversation"], bool(config["chainConversation"])
+            )
+        if "delaySeconds" in patch:
+            try:
+                config["delaySeconds"] = max(0, min(300, int(patch["delaySeconds"])))
+            except TypeError, ValueError:
+                pass
+        if "maxAttempts" in patch:
+            try:
+                config["maxAttempts"] = max(1, min(8, int(patch["maxAttempts"])))
+            except TypeError, ValueError:
+                pass
+        self.store.set_setting("prompt_queue.config", config)
+        self._publish_prompt_queue()
+        self._queue_wake.set()
+        return config
+
+    def _prompt_queue_config(self) -> dict[str, Any]:
+        defaults = {
+            "paused": False,
+            "continueOnFailure": False,
+            "chainConversation": True,
+            "delaySeconds": 2,
+            "maxAttempts": 3,
+        }
+        raw = self.store.get_setting("prompt_queue.config", {})
+        if isinstance(raw, dict):
+            defaults.update({key: raw[key] for key in defaults if key in raw})
+        defaults["paused"] = bool(defaults["paused"])
+        defaults["continueOnFailure"] = bool(defaults["continueOnFailure"])
+        defaults["chainConversation"] = bool(defaults["chainConversation"])
+        try:
+            defaults["delaySeconds"] = max(0, min(300, int(defaults["delaySeconds"])))
+        except TypeError, ValueError:
+            defaults["delaySeconds"] = 2
+        try:
+            defaults["maxAttempts"] = max(1, min(8, int(defaults["maxAttempts"])))
+        except TypeError, ValueError:
+            defaults["maxAttempts"] = 3
+        return defaults
+
+    def _start_prompt_queue(self) -> None:
+        with self._queue_lock:
+            if self._queue_thread is not None and self._queue_thread.is_alive():
+                return
+            self._queue_thread = threading.Thread(
+                target=self._prompt_queue_loop,
+                name="Rubra-Prompt-Queue",
+                daemon=True,
+            )
+            self._queue_thread.start()
+        self._queue_wake.set()
+
+    def _prompt_queue_loop(self) -> None:
+        while not self._closing.is_set():
+            try:
+                self._prompt_queue_tick()
+            except Exception as exc:
+                if not self._closing.is_set():
+                    self._report(
+                        "queue",
+                        "dispatcher",
+                        exc,
+                        "Prompt delivery was paused fail-closed. Inspect the queue item and retry it explicitly.",
+                        probable_cause="The durable queue dispatcher hit an unexpected internal failure.",
+                        impact="No ambiguous prompt is automatically resent.",
+                    )
+                    config = self._prompt_queue_config()
+                    config["paused"] = True
+                    self.store.set_setting("prompt_queue.config", config)
+                    self._publish_prompt_queue()
+            self._queue_wake.clear()
+            self._queue_wake.wait(30.0)
+
+    def _prompt_queue_tick(self) -> None:
+        items = self.store.prompt_queue_items(128)
+        changed = False
+        config = self._prompt_queue_config()
+
+        for item in items:
+            if item["state"] != "inflight":
+                continue
+            job_id = str(item.get("dispatched_job_id") or "")
+            task = self.store.load_task(job_id) if job_id else None
+            if task is None:
+                self.store.update_prompt_queue_item(
+                    item["id"],
+                    state="blocked",
+                    last_error="The dispatched task cannot be found; automatic resend is blocked to prevent duplication.",
+                )
+                changed = True
+                continue
+            status = str(task.get("status") or "").casefold()
+            if status == "complete":
+                self.store.update_prompt_queue_item(item["id"], state="completed", last_error="")
+                changed = True
+            elif status in {"failed", "blocked"}:
+                error = str(task.get("error") or task.get("final_text") or "Queued task failed.")
+                self.store.update_prompt_queue_item(item["id"], state="failed", last_error=error[:4000])
+                changed = True
+                if not config["continueOnFailure"]:
+                    config["paused"] = True
+                    self.store.set_setting("prompt_queue.config", config)
+
+        if changed:
+            items = self.store.prompt_queue_items(128)
+            self._publish_prompt_queue(items)
+        if config["paused"] or any(item["state"] in {"preparing", "inflight"} for item in items):
+            return
+        if self.orchestrator.current_task_id:
+            return
+
+        now = datetime.now(UTC)
+        candidate: dict[str, Any] | None = None
+        for item in items:
+            if item["state"] != "queued":
+                continue
+            next_attempt = str(item.get("next_attempt_at") or "")
+            if next_attempt:
+                try:
+                    if datetime.fromisoformat(next_attempt) > now:
+                        continue
+                except ValueError:
+                    pass
+            candidate = item
+            break
+        if candidate is None:
+            return
+
+        previous_job_id = ""
+        if config["chainConversation"]:
+            for item in items:
+                if item["id"] == candidate["id"]:
+                    break
+                if item["state"] == "completed" and item.get("dispatched_job_id"):
+                    previous_job_id = str(item["dispatched_job_id"])
+        parent_job_id = previous_job_id or str(candidate.get("parent_job_id") or "")
+        attempts = int(candidate.get("attempts") or 0) + 1
+        self.store.update_prompt_queue_item(
+            candidate["id"],
+            state="preparing",
+            attempts=attempts,
+            last_error="",
+            next_attempt_at="",
+        )
+        self._publish_prompt_queue()
+        try:
+            response = self.send_chat(
+                str(candidate["content"]),
+                parent_job_id or None,
+                (),
+                dict(candidate.get("options") or {}),
+            )
+        except CoreError as exc:
+            block_codes = {
+                "PROVIDER_LOGIN_REQUIRED",
+                "PROVIDER_UNAVAILABLE",
+                "JOB_NOT_FOUND",
+                "QUEUE_PROMPT_TOO_LARGE",
+            }
+            if exc.code in block_codes:
+                state = "blocked"
+                next_attempt_at = ""
+            elif attempts < int(candidate.get("max_attempts") or config["maxAttempts"]):
+                state = "queued"
+                delay = min(60, 5 * (2 ** max(0, attempts - 1)))
+                next_attempt_at = (datetime.now(UTC) + timedelta(seconds=delay)).isoformat(timespec="seconds")
+            else:
+                state = "failed"
+                next_attempt_at = ""
+            self.store.update_prompt_queue_item(
+                candidate["id"],
+                state=state,
+                last_error=f"{exc.code}: {exc}"[:4000],
+                next_attempt_at=next_attempt_at,
+            )
+            if state == "failed" and not config["continueOnFailure"]:
+                config["paused"] = True
+                self.store.set_setting("prompt_queue.config", config)
+            self._publish_prompt_queue()
+            return
+        except Exception as exc:
+            self.store.update_prompt_queue_item(
+                candidate["id"],
+                state="blocked",
+                last_error=(
+                    "Delivery outcome is uncertain; automatic resend was blocked to prevent duplication. "
+                    + str(exc)
+                )[:4000],
+                next_attempt_at="",
+            )
+            self._publish_prompt_queue()
+            raise
+
+        job_id = str(response.get("jobId") or "")
+        if not job_id:
+            self.store.update_prompt_queue_item(
+                candidate["id"],
+                state="blocked",
+                last_error="Dispatch returned no job identity; automatic resend was blocked.",
+            )
+        else:
+            self.store.update_prompt_queue_item(
+                candidate["id"],
+                state="inflight",
+                dispatched_job_id=job_id,
+                last_error="",
+            )
+        self._publish_prompt_queue()
+
+    def _publish_prompt_queue(self, items: list[dict[str, Any]] | None = None) -> None:
+        payload = {
+            "items": [self._queue_item_payload(item) for item in (items or self.store.prompt_queue_items())],
+            "config": self._prompt_queue_config(),
+        }
+        self.events.publish("PROMPT_QUEUE_CHANGED", payload)
+
+    @staticmethod
+    def _queue_item_payload(item: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "id": str(item["id"]),
+            "position": int(item.get("position") or 0),
+            "state": str(item.get("state") or "queued").upper(),
+            "content": str(item.get("content") or ""),
+            "parentJobId": str(item.get("parent_job_id") or "") or None,
+            "jobId": str(item.get("dispatched_job_id") or "") or None,
+            "attempts": int(item.get("attempts") or 0),
+            "maxAttempts": int(item.get("max_attempts") or 3),
+            "lastError": str(item.get("last_error") or ""),
+            "nextAttemptAt": str(item.get("next_attempt_at") or ""),
+            "createdAt": _milliseconds(str(item.get("created_at") or "")),
+            "updatedAt": _milliseconds(str(item.get("updated_at") or "")),
+            "options": dict(item.get("options") or {}),
+        }
 
     def messages(self, job_id: str) -> list[dict[str, Any]]:
         result = []
@@ -1472,6 +1829,7 @@ class ZenlessCore:
     def _start_services(self) -> None:
         try:
             recovered = self.store.recover_interrupted_tasks()
+            recovered_queue = self.store.recover_prompt_queue()
             self._set_boot("STATE", "READY")
             for item in recovered:
                 self.events.publish("JOB_UPDATED", {"job": self.job(str(item["id"]))})
@@ -1482,6 +1840,15 @@ class ZenlessCore:
                     message=str(item["reason"]),
                     impact=f"Interrupted task {item['id']} moved to {item['stage']}.",
                     recovery_action="Resume only pre-mutation checkpoints; inspect blocked mutation evidence manually.",
+                )
+            for queue_id in recovered_queue:
+                self.diagnostics.report(
+                    severity="WARNING",
+                    source="queue",
+                    component="recovery",
+                    message="A prompt was being prepared when Rubra stopped; automatic resend was blocked.",
+                    impact=f"Queue item {queue_id} requires an explicit retry so it cannot be submitted twice.",
+                    recovery_action="Check Recent Tasks, then use Retry on the queued prompt only if no matching job exists.",
                 )
         except Exception as exc:
             self._set_boot("STATE", "OFF")
@@ -1505,6 +1872,7 @@ class ZenlessCore:
             return
         self._set_boot("UI", "READY")
         self.events.publish("BOOT_COMPLETE", {})
+        self._start_prompt_queue()
         if os.environ.get("RUBRA_PREPARE_TOOLS") == "1" and not self._closing.is_set():
             self.prepare_tools()
         if self._closing.is_set():
@@ -1601,6 +1969,7 @@ class ZenlessCore:
             self._set_connection("browser", self._normalize_connection(state))
 
     def _on_pipeline_event(self, event: PipelineEvent) -> None:
+        self._queue_wake.set()
         if event.kind == "stream_start":
             self.events.publish(
                 "CHAT_STREAM_STARTED",
