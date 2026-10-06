@@ -523,6 +523,7 @@ class ZenlessOrchestrator:
                         }
             except Exception as exc:
                 context["semantic_project_index_unavailable"] = str(exc)
+        local_research_available = False
         if research_enabled and self.local_ai_callback is not None:
             local_prompt = (
                 "Analyze this Roblox Studio task as a local scout before the stronger web agents run. "
@@ -536,6 +537,7 @@ class ZenlessOrchestrator:
                 local_note = self.local_ai_callback(local_prompt)
                 if local_note:
                     context["local_scout"] = local_note[:16000]
+                    local_research_available = True
             except Exception as exc:
                 context["local_scout_unavailable"] = str(exc)
         if research_enabled:
@@ -552,8 +554,25 @@ class ZenlessOrchestrator:
                     self.store.append_message(task_id, "Gemini", "researcher", research)
                 except BridgeError as exc:
                     context["gemini_research_unavailable"] = str(exc)
+                    if local_research_available:
+                        self._emit(
+                            task_id,
+                            Stage.COLLECTING_CONTEXT,
+                            "Gemini research failed; continuing with the local research scout.",
+                            "warning",
+                            str(exc)[:1000],
+                        )
+                    elif options.research_mode == "on":
+                        raise
+            elif local_research_available:
+                self._emit(
+                    task_id,
+                    Stage.COLLECTING_CONTEXT,
+                    "Gemini is unavailable; Research is continuing with the local scout.",
+                    "warning",
+                )
             elif options.research_mode == "on":
-                raise BridgeError("Gemini requires login because Research is explicitly enabled.")
+                raise BridgeError("Research is enabled, but neither Gemini nor the local research scout is available.")
         self.store.update_task(task_id, context_json=context)
 
         if not self._provider_ready("chatgpt", timeout=2, options=options):
