@@ -538,7 +538,8 @@ class AgentGateway:
         except BridgeError as exc:
             self._record_provider_failure(provider, exc)
             raise
-        self._record_provider_success(provider)
+        if action in {"generate_image", "generate_3d", "generate_geometry", "generate_texture"}:
+            self._record_provider_success(provider)
         return result
 
     def _hunyuan_transaction_route(
