@@ -370,6 +370,81 @@ class OrchestratorTests(unittest.TestCase):
             self.assertIsNotNone(result)
             self.assertEqual([provider for provider, _prompt in bridge.prompts], ["gemini"])
 
+    def test_reviewer_rate_limit_hands_off_to_local_before_any_stream_output(self) -> None:
+        class Bridge(FakeBridge):
+            def __init__(self) -> None:
+                super().__init__({})
+                self.local = False
+
+            def prefer_local(self, provider: str) -> bool:
+                self.assert_provider = provider
+                self.local = True
+                return True
+
+            def send_prompt(
+                self,
+                provider: str,
+                prompt: str,
+                *,
+                task_id: str,
+                timeout: float = 360.0,
+                stream_callback=None,
+            ) -> str:
+                del prompt, task_id, timeout
+                if provider == "deepseek" and not self.local:
+                    raise BridgeError("PROVIDER_RATE_LIMIT: quota reached")
+                result = review()
+                if stream_callback is not None:
+                    stream_callback(result)
+                return result
+
+        with tempfile.TemporaryDirectory() as folder:
+            bridge = Bridge()
+            orchestrator, store = self.make_system(folder, bridge, FakeStudio())
+            store.create_task("review-failover", "Review", TaskOptions(independent_review=True, smart_routing=True))
+            store.update_task("review-failover", stage=Stage.REVIEWING, status="running")
+
+            result = orchestrator._send_agent_prompt("deepseek", "review", task_id="review-failover")
+
+            self.assertEqual(result, review())
+            self.assertTrue(bridge.local)
+            self.assertEqual(bridge.assert_provider, "deepseek")
+
+    def test_reviewer_does_not_auto_resend_after_partial_stream(self) -> None:
+        class Bridge(FakeBridge):
+            def __init__(self) -> None:
+                super().__init__({})
+                self.preferred = False
+
+            def prefer_local(self, _provider: str) -> bool:
+                self.preferred = True
+                return True
+
+            def send_prompt(
+                self,
+                provider: str,
+                prompt: str,
+                *,
+                task_id: str,
+                timeout: float = 360.0,
+                stream_callback=None,
+            ) -> str:
+                del provider, prompt, task_id, timeout
+                if stream_callback is not None:
+                    stream_callback('{"verdict":"approve"')
+                raise BridgeError("PROVIDER_RATE_LIMIT: quota reached")
+
+        with tempfile.TemporaryDirectory() as folder:
+            bridge = Bridge()
+            orchestrator, store = self.make_system(folder, bridge, FakeStudio())
+            store.create_task("review-partial", "Review", TaskOptions(independent_review=True, smart_routing=True))
+            store.update_task("review-partial", stage=Stage.REVIEWING, status="running")
+
+            with self.assertRaisesRegex(BridgeError, "PROVIDER_RATE_LIMIT"):
+                orchestrator._send_agent_prompt("deepseek", "review", task_id="review-partial")
+
+            self.assertFalse(bridge.preferred)
+
     def make_system(
         self,
         folder: str,
