@@ -303,6 +303,19 @@ class OrchestratorTests(unittest.TestCase):
             self.assertNotIn(prepared[0], orchestrator._cancel)
             self.assertNotIn(prepared[0], orchestrator._pause)
 
+    def test_submit_surfaces_rollback_failure_instead_of_leaving_it_silent(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            orchestrator, store = self.make_system(folder, FakeBridge({}), FakeStudio())
+
+            def fail_prepare(_task_id: str, _message_id: int) -> None:
+                raise RuntimeError("prepare failed")
+
+            with patch.object(store, "delete_task", side_effect=RuntimeError("delete failed")):
+                with self.assertRaisesRegex(RuntimeError, "rollback also failed"):
+                    orchestrator.submit("Prepare safely", TaskOptions(), prepare_callback=fail_prepare)
+
+            self.assertEqual(orchestrator.current_task_id, "")
+
     def test_submit_rolls_back_persisted_task_when_ready_snapshot_fails(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             orchestrator, store = self.make_system(folder, FakeBridge({}), FakeStudio())
