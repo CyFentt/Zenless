@@ -337,6 +337,10 @@ class ToolchainManager:
                                 )
                                 self._status(target.stem, detail)
                                 last_percent = percent
+                    if total and copied != total:
+                        raise OSError(
+                            f"Download ended early at {copied} of {total} bytes; the partial file will be resumed."
+                        )
                 os.replace(partial, target)
                 return
             except ToolchainError:
