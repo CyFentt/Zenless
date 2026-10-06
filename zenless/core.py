@@ -710,7 +710,21 @@ class ZenlessCore:
     def update_prompt_queue_config(self, patch: dict[str, Any]) -> dict[str, Any]:
         config = self._prompt_queue_config()
         if "paused" in patch:
-            config["paused"] = TaskOptions._boolean(patch["paused"], bool(config["paused"]))
+            requested_paused = TaskOptions._boolean(patch["paused"], bool(config["paused"]))
+            if not requested_paused:
+                unresolved = [
+                    item
+                    for item in self.store.prompt_queue_items(128)
+                    if item["state"] == "sent_unconfirmed"
+                ]
+                if unresolved:
+                    raise CoreError(
+                        "QUEUE_UNCONFIRMED_DELIVERY",
+                        "Resolve unconfirmed queued deliveries before resuming the queue.",
+                        status=409,
+                        details={"queueIds": [str(item["id"]) for item in unresolved[:16]]},
+                    )
+            config["paused"] = requested_paused
         if "continueOnFailure" in patch:
             config["continueOnFailure"] = TaskOptions._boolean(
                 patch["continueOnFailure"], bool(config["continueOnFailure"])
