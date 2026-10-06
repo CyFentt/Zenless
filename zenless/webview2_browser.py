@@ -152,11 +152,15 @@ class WebView2BrowserController:
             self._set_state(provider, "Unavailable", str(exc))
             return False
         ready = bool(result.get("ready"))
-        self._set_state(
-            provider,
-            "Ready" if ready else "Login Required",
-            "Authenticated WebView2 session" if ready else "Use Login to authenticate in the embedded window",
+        challenge = bool(result.get("challenge"))
+        detail = (
+            "Authenticated WebView2 session"
+            if ready
+            else "Provider anti-bot challenge is active; complete it manually or leave this provider optional."
+            if challenge
+            else "Use Login to authenticate in the embedded window"
         )
+        self._set_state(provider, "Ready" if ready else "Login Required", detail)
         return ready
 
     def login(self, provider: str, *, timeout: float = 600.0) -> dict[str, Any]:
