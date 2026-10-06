@@ -1958,6 +1958,37 @@ class ZenlessCore:
     def diagnostics_payload(self) -> list[dict[str, Any]]:
         return [self._diagnostic_payload(event) for event in self.diagnostics.recent(200)]
 
+    def report_frontend_diagnostic(self, payload: dict[str, Any]) -> bool:
+        severity = str(payload.get("severity") or "error").casefold()
+        if severity not in {"critical", "error", "warning", "info"}:
+            severity = "error"
+        source = str(payload.get("source") or "frontend")[:80]
+        component = str(payload.get("component") or "browser-ui")[:120]
+        message = str(payload.get("message") or "Frontend runtime error").strip()[:4000]
+        if not message:
+            message = "Frontend runtime error"
+        try:
+            line_number = max(0, int(payload.get("line") or 0))
+        except TypeError, ValueError:
+            line_number = 0
+        self.diagnostics.report(
+            severity=severity.upper(),
+            source=source,
+            component=component,
+            message=message,
+            job_id=str(payload.get("jobId") or "")[:128],
+            request_id=str(payload.get("requestId") or "")[:128],
+            operation_id=str(payload.get("operationId") or "")[:128],
+            probable_cause=str(payload.get("probableCause") or "")[:2000],
+            impact=str(payload.get("impact") or "")[:2000],
+            recovery_action=str(payload.get("recovery") or "")[:2000],
+            file_name=str(payload.get("file") or "")[:2000],
+            line_number=line_number,
+            function_name=str(payload.get("function") or "")[:500],
+            stack_trace=str(payload.get("stack") or "")[-20_000:],
+        )
+        return True
+
     def _start_services(self) -> None:
         try:
             recovered = self.store.recover_interrupted_tasks()
