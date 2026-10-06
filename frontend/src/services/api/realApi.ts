@@ -39,6 +39,7 @@ interface RequestOptions {
   signal?: AbortSignal;
   rawBody?: BodyInit;
   idempotencyKey?: string;
+  reportFailure?: boolean;
 }
 
 export class ApiError extends Error {
@@ -100,7 +101,12 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
     const timedOut = signal.aborted;
     const code = timedOut ? 'TIMEOUT' : controller.signal.aborted ? 'CANCELLED' : 'UNREACHABLE';
     const message = timedOut ? 'Request timeout' : controller.signal.aborted ? 'Request cancelled' : 'Bridge unreachable';
-    frontendDiagnostics.report('error', 'api', message, undefined, undefined, { requestId, stack: error instanceof Error ? error.stack : undefined });
+    if (opts.reportFailure !== false) {
+      frontendDiagnostics.report('error', 'api', message, undefined, undefined, {
+        requestId,
+        stack: error instanceof Error ? error.stack : undefined,
+      });
+    }
     throw new ApiError(0, message, requestId, code);
   } finally {
     cancel();
@@ -271,4 +277,12 @@ export class RealZenlessAPI implements ZenlessAPI {
   setSmartRouting(enabled: boolean): Promise<{ ok: boolean }> { return request('/api/settings/smart-routing', { method: 'PUT', body: { enabled } }); }
 
   getDiagnostics(): Promise<Diagnostic[]> { return request('/api/diagnostics'); }
+  reportFrontendDiagnostic(diagnostic: Diagnostic): Promise<{ ok: boolean }> {
+    return request('/api/diagnostics/frontend', {
+      method: 'POST',
+      body: diagnostic,
+      timeout: 4000,
+      reportFailure: false,
+    });
+  }
 }
