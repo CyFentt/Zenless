@@ -84,6 +84,7 @@ class LocalWebBridge:
         loop = asyncio.new_event_loop()
         self._loop = loop
         asyncio.set_event_loop(loop)
+        loop.set_exception_handler(self._loop_exception_handler)
         try:
             loop.run_until_complete(self._async_start())
             self._ready.set()
@@ -102,6 +103,20 @@ class LocalWebBridge:
             loop.close()
             self._loop = None
             self._stopped.set()
+
+    def _loop_exception_handler(self, _loop: asyncio.AbstractEventLoop, context: dict[str, Any]) -> None:
+        exception = context.get("exception")
+        message = str(context.get("message") or exception or "Unhandled web runtime exception")
+        self.core.diagnostics.report(
+            severity="ERROR",
+            source="web-runtime",
+            component="asyncio",
+            message=message,
+            exc=exception if isinstance(exception, BaseException) else None,
+            probable_cause="An asynchronous bridge or WebSocket task failed outside the request middleware.",
+            impact="The affected live UI operation may stop, but the desktop process remains isolated.",
+            recovery_action="Retry the action. If WebSocket state is stale, reopen the page; inspect Logs for the original stack.",
+        )
 
     async def _async_start(self) -> None:
         app = web.Application(
