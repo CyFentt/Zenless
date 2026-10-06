@@ -272,6 +272,26 @@ class CoreTests(unittest.TestCase):
 
         self.assertEqual(result["deepseek"], "CONNECTING")
 
+    def test_degraded_provider_status_is_visible_in_diagnostics_without_invalidating_login(self) -> None:
+        core = object.__new__(ZenlessCore)
+        core._connections = {"chatgpt": "READY"}
+        core._connections_lock = threading.RLock()
+        core.events = Mock()
+        core.diagnostics = Mock()
+
+        core._on_provider_status(
+            "chatgpt",
+            "Degraded",
+            "Provider cooling down for 30s after repeated transient failures.",
+        )
+
+        self.assertEqual(core._connections["chatgpt"], "CONNECTING")
+        core.diagnostics.report.assert_called_once()
+        kwargs = core.diagnostics.report.call_args.kwargs
+        self.assertEqual(kwargs["severity"], "WARNING")
+        self.assertEqual(kwargs["source"], "chatgpt")
+        self.assertIn("cooling down", kwargs["message"])
+
     def test_login_challenge_returns_provider_to_login_attention_state(self) -> None:
         core = object.__new__(ZenlessCore)
         core._connections = {"deepseek": "OFF"}
