@@ -117,11 +117,15 @@ class ErrorBus:
         probable_cause: str = "",
         impact: str = "",
         recovery_action: str = "",
+        file_name: str = "",
+        line_number: int = 0,
+        function_name: str = "",
+        stack_trace: str = "",
     ) -> DiagnosticEvent:
-        location_file = ""
-        location_line = 0
-        location_function = ""
-        stack_trace = ""
+        location_file = str(file_name or "")[:2000]
+        location_line = max(0, int(line_number or 0))
+        location_function = str(function_name or "")[:500]
+        stack_trace = str(stack_trace or "")
         error_type = type(exc).__name__ if exc is not None else ""
         if exc is not None:
             stack_trace = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
