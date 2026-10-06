@@ -208,17 +208,23 @@ class ZenlessOrchestrator:
                 self.current_task_id = task_id
                 self._emit(task_id, Stage.NEW, "Request received and queued.")
                 thread.start()
-            except Exception:
+            except Exception as exc:
                 self._tasks.pop(task_id, None)
                 self._cancel.pop(task_id, None)
                 self._pause.pop(task_id, None)
                 if self.current_task_id == task_id:
                     self.current_task_id = ""
+                rollback_error: Exception | None = None
                 if persisted:
                     try:
                         self.store.delete_task(task_id)
-                    except Exception:
-                        pass
+                    except Exception as cleanup_exc:
+                        rollback_error = cleanup_exc
+                if rollback_error is not None:
+                    raise RuntimeError(
+                        f"Job preparation failed ({exc}); rollback also failed ({rollback_error}). "
+                        f"Task {task_id} may require recovery on the next startup."
+                    ) from exc
                 raise
         return task_id
 
