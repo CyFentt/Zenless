@@ -321,6 +321,12 @@ export const useStore = create<AppState>((set) => ({
   addTestFailure: (failure) => set((state) => ({ testFailures: [...state.testFailures, failure] })),
   resetTestDetails: () => set({ testCases: [], testFailures: [], testCaptures: [] }),
   setSettings: (s) => set({ settings: s }),
-  addDiagnostic: (d) => set((state) => ({ diagnostics: [...state.diagnostics, d] })),
+  addDiagnostic: (d) => set((state) => {
+    const exists = state.diagnostics.some((item) => item.id === d.id);
+    const diagnostics = exists
+      ? state.diagnostics.map((item) => (item.id === d.id ? { ...item, ...d } : item))
+      : [...state.diagnostics, d];
+    return { diagnostics: diagnostics.slice(-200) };
+  }),
   setDiagnostics: (d) => set({ diagnostics: d }),
 }));
