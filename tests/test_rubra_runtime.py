@@ -96,6 +96,53 @@ class RubraRuntimeTests(unittest.TestCase):
                 manager._ensure_npm_packages([])
             self.assertTrue(process.terminated)
 
+    def test_large_download_resumes_after_short_success_response(self) -> None:
+        class Cancel:
+            def is_set(self) -> bool:
+                return False
+
+            def wait(self, _timeout: float) -> bool:
+                return False
+
+        class Response:
+            def __init__(self, status: int, headers: dict[str, str], chunks: list[bytes]) -> None:
+                self.status = status
+                self.headers = headers
+                self.chunks = list(chunks)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args) -> None:
+                return None
+
+            def read(self, _size: int) -> bytes:
+                return self.chunks.pop(0) if self.chunks else b""
+
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / "assets").mkdir()
+            (root / "assets/toolchain.json").write_text('{"artifacts":[]}', encoding="utf-8")
+            manager = ToolchainManager(resource_root=root, portable_root=root, cancel_event=Cancel())
+            target = root / "runtime" / "downloads" / "model.gguf"
+            responses = [
+                Response(200, {"Content-Length": "10"}, [b"abc"]),
+                Response(206, {"Content-Length": "7", "Content-Range": "bytes 3-9/10"}, [b"defghij"]),
+            ]
+            requests = []
+
+            def open_response(request, timeout=0):
+                del timeout
+                requests.append(request)
+                return responses.pop(0)
+
+            with patch("zenless.toolchain.urllib.request.urlopen", side_effect=open_response):
+                manager._download("https://example.invalid/model.gguf", target)
+
+            self.assertEqual(target.read_bytes(), b"abcdefghij")
+            self.assertEqual(requests[1].get_header("Range"), "bytes=3-")
+            self.assertFalse(target.with_suffix(target.suffix + ".partial").exists())
+
     def test_static_quality_process_is_terminated_on_cancel(self) -> None:
         class Process:
             returncode = -15
