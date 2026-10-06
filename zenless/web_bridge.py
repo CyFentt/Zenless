@@ -259,6 +259,7 @@ class LocalWebBridge:
         app.router.add_get("/api/settings/models", self._sync_handler(self.core.model_catalog))
         app.router.add_get("/api/local-ai", self._sync_handler(self.core.local_ai_state))
         app.router.add_post("/api/local-ai/prepare", self._sync_handler(lambda: {"ok": self.core.prepare_tools()}))
+        app.router.add_post("/api/local-ai/{item_id}/prepare", self._prepare_local_ai_item)
         app.router.add_put("/api/settings/models", self._set_model)
         app.router.add_put("/api/settings/smart-routing", self._set_smart_routing)
         app.router.add_get("/api/diagnostics", self._sync_handler(self.core.diagnostics_payload))
@@ -518,6 +519,11 @@ class LocalWebBridge:
         except ValueError:
             limit = 12
         return self._json(await asyncio.to_thread(self.core.search_project, query, semantic=semantic, limit=limit))
+
+    async def _prepare_local_ai_item(self, request: web.Request) -> web.Response:
+        return self._json(
+            {"ok": await asyncio.to_thread(self.core.prepare_local_ai_item, request.match_info["item_id"])}
+        )
 
     async def _update_settings(self, request: web.Request) -> web.Response:
         return self._json(await asyncio.to_thread(self.core.update_settings, await self._json_body(request)))
