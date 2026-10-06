@@ -320,6 +320,33 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(kwargs["source"], "chatgpt")
         self.assertIn("cooling down", kwargs["message"])
 
+    def test_provider_refresh_does_not_end_active_login_early(self) -> None:
+        core = object.__new__(ZenlessCore)
+        core._connections = {
+            "bridge": "READY",
+            "browser": "READY",
+            "chatgpt": "OFF",
+            "deepseek": "CONNECTING",
+            "gemini": "OFF",
+            "hunyuan": "OFF",
+            "studio": "OFF",
+        }
+        core._connections_lock = threading.RLock()
+        core._provider_lock = threading.Lock()
+        login_thread = Mock()
+        login_thread.is_alive.return_value = True
+        core._provider_threads = {"deepseek": login_thread}
+        core.bridge = Mock()
+        core.bridge.provider_status.return_value = {
+            "deepseek": {"state": "Login Required", "detail": "manual login"},
+        }
+        core._set_boot = Mock()
+
+        core._refresh_provider_states()
+
+        self.assertEqual(core._connections["deepseek"], "CONNECTING")
+        core._set_boot.assert_called_once_with("AI", "OFF")
+
     def test_provider_status_event_does_not_end_active_login_early(self) -> None:
         core = object.__new__(ZenlessCore)
         core._connections = {"deepseek": "CONNECTING"}
