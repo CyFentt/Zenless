@@ -1514,11 +1514,39 @@ class ZenlessCore:
             self.events.publish("AGENT_STATUS_CHANGED", {"agent": provider, "status": "READY"})
             self._set_boot("AI", "READY")
         except Exception as exc:
-            self._set_connection(provider, "ERR")
-            self.events.publish("AGENT_STATUS_CHANGED", {"agent": provider, "status": "ERR"})
-            self._report(
-                "browser", f"login:{provider}", exc, "Retry login. Password, MFA, and CAPTCHA steps remain manual."
+            message = str(exc)
+            attention = any(
+                marker in message
+                for marker in ("LOGIN_CANCELLED", "LOGIN_CHALLENGE", "requires login", "Login was not confirmed")
             )
+            status = "LOGIN" if attention else "ERR"
+            self._set_connection(provider, status)
+            self.events.publish("AGENT_STATUS_CHANGED", {"agent": provider, "status": status})
+            if attention:
+                probable = (
+                    "The provider login was closed or the provider's anti-bot challenge could not be confirmed. "
+                    "Embedded browsers can be rejected by CAPTCHA systems even when the saved session remains valid."
+                )
+                recovery = (
+                    "Retry Login in a stable network/browser session. DeepSeek review is optional when Independent Review "
+                    "is disabled or Smart Routing can use the local reviewer."
+                )
+                self._report(
+                    "browser",
+                    f"login:{provider}",
+                    exc,
+                    recovery,
+                    severity="WARNING",
+                    probable_cause=probable,
+                    impact="Only this provider remains unauthenticated; other providers and local routing stay available.",
+                )
+            else:
+                self._report(
+                    "browser",
+                    f"login:{provider}",
+                    exc,
+                    "Retry login. Password, MFA, and CAPTCHA steps remain manual.",
+                )
 
     def _refresh_provider_states(self) -> None:
         statuses = self.bridge.provider_status()
@@ -1706,13 +1734,25 @@ class ZenlessCore:
                     break
         self.events.publish("BOOT_STAGE_CHANGED", {"stage": stage, "state": state})
 
-    def _report(self, source: str, component: str, exc: BaseException, recovery: str) -> None:
+    def _report(
+        self,
+        source: str,
+        component: str,
+        exc: BaseException,
+        recovery: str,
+        *,
+        severity: str = "ERROR",
+        probable_cause: str = "",
+        impact: str = "",
+    ) -> None:
         self.diagnostics.report(
-            severity="ERROR",
+            severity=severity,
             source=source,
             component=component,
             message=str(exc),
             exc=exc,
+            probable_cause=probable_cause,
+            impact=impact,
             recovery_action=recovery,
         )
 
