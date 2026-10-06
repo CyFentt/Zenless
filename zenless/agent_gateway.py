@@ -50,10 +50,78 @@ class AgentGateway:
         self.selected_model = selected_model
         self.local_cancel = local_cancel
         self._local_attachments: dict[tuple[str, str], str] = {}
+        self._health_lock = threading.Lock()
+        self._failure_times: dict[str, list[float]] = {}
+        self._open_until: dict[str, float] = {}
+        self._open_reason: dict[str, str] = {}
 
     def _can_use_local(self, provider: str) -> bool:
         return (provider in {"chatgpt", "deepseek"} and self.local_available is not None
                 and self.local_available() and (self.selected_model is None or self.selected_model(provider) == "auto"))
+
+    @staticmethod
+    def _recoverable_failure(error: BaseException) -> bool:
+        message = str(error).casefold()
+        return any(
+            marker in message
+            for marker in (
+                "provider_rate_limit",
+                "provider_capacity",
+                "provider_transient_error",
+                "provider_circuit_open",
+                "rate limit",
+                "too many requests",
+                "reached your limit",
+                "usage limit",
+                "quota exceeded",
+                "server is busy",
+                "servers are busy",
+                "high traffic",
+                "overloaded",
+                "response timeout",
+                "timed out waiting for a complete response",
+                "webview2 timeout",
+            )
+        )
+
+    def _record_provider_failure(self, provider: str, error: BaseException) -> None:
+        if not self._recoverable_failure(error):
+            return
+        now = time.monotonic()
+        with self._health_lock:
+            recent = [stamp for stamp in self._failure_times.get(provider, []) if now - stamp <= 120.0]
+            recent.append(now)
+            self._failure_times[provider] = recent[-8:]
+            if len(recent) < 3:
+                return
+            cooldown = min(600.0, 30.0 * (2 ** min(4, len(recent) - 3)))
+            self._open_until[provider] = max(self._open_until.get(provider, 0.0), now + cooldown)
+            self._open_reason[provider] = str(error)[:1000]
+        if self.status_callback is not None:
+            self.status_callback(
+                provider,
+                "Degraded",
+                f"Provider circuit open for {int(cooldown)}s after repeated transient failures; Smart Routing will use a fallback when available.",
+            )
+
+    def _record_provider_success(self, provider: str) -> None:
+        with self._health_lock:
+            self._failure_times.pop(provider, None)
+            self._open_until.pop(provider, None)
+            self._open_reason.pop(provider, None)
+
+    def _reset_provider_guard(self, provider: str) -> None:
+        self._record_provider_success(provider)
+
+    def _circuit_status(self, provider: str) -> tuple[float, str]:
+        now = time.monotonic()
+        with self._health_lock:
+            until = self._open_until.get(provider, 0.0)
+            if until <= now:
+                self._open_until.pop(provider, None)
+                self._open_reason.pop(provider, None)
+                return 0.0, ""
+            return until - now, self._open_reason.get(provider, "")
 
     def _apply_selected_model(self, route: str, provider: str, task_id: str) -> None:
         model = self.selected_model(provider) if self.selected_model is not None else "auto"
@@ -101,6 +169,7 @@ class AgentGateway:
     def login(self, provider: str, *, timeout: float = 180.0) -> dict[str, Any]:
         if self._stopping.is_set():
             raise BridgeError("Rubra is closing; provider login was cancelled.")
+        self._reset_provider_guard(provider)
         try:
             result = self.embedded.login(provider, timeout=timeout)
             route = "webview2"
@@ -151,6 +220,19 @@ class AgentGateway:
 
     def _wait_for_provider(self, provider: str, timeout: float, *, allow_local: bool) -> bool:
         if self._stopping.is_set():
+            return False
+
+        cooldown, reason = self._circuit_status(provider)
+        if cooldown > 0:
+            if allow_local and self._can_use_local(provider):
+                return self.prefer_local(provider)
+            if self.status_callback is not None:
+                self.status_callback(
+                    provider,
+                    "Degraded",
+                    f"Provider cooling down for {max(1, int(cooldown))}s after repeated transient failures."
+                    + (f" Last failure: {reason}" if reason else ""),
+                )
             return False
 
         embedded_status = self.embedded.provider_status().get(provider, {})
@@ -221,8 +303,19 @@ class AgentGateway:
         with self._route_lock:
             routes = dict(self._routes)
         result: dict[str, dict[str, str]] = {}
-        for provider in set(managed) | set(embedded) | set(extension) | set(routes):
+        providers = set(managed) | set(embedded) | set(extension) | set(routes)
+        providers.update(self._open_until)
+        for provider in providers:
             route = routes.get(provider)
+            cooldown, reason = self._circuit_status(provider)
+            if cooldown > 0 and route != "local":
+                result[provider] = {
+                    "state": "Degraded",
+                    "detail": f"Provider cooling down for {max(1, int(cooldown))}s after repeated transient failures."
+                    + (f" Last failure: {reason}" if reason else ""),
+                    "transport": route or "",
+                }
+                continue
             if route == "local" and self._can_use_local(provider):
                 result[provider] = {
                     "state": "Ready",
@@ -284,29 +377,38 @@ class AgentGateway:
             if stream_callback is not None:
                 stream_callback(text)
             return text
-        if route == "playwright":
-            if stream_callback is None:
-                return self.managed.send_prompt(provider, prompt, task_id=task_id, timeout=timeout)
-            return self.managed.send_prompt(
-                provider,
-                prompt,
-                task_id=task_id,
-                timeout=timeout,
-                stream_callback=stream_callback,
-            )
-        if route == "webview2":
-            if stream_callback is None:
-                return self.embedded.send_prompt(provider, prompt, task_id=task_id, timeout=timeout)
-            return self.embedded.send_prompt(
-                provider,
-                prompt,
-                task_id=task_id,
-                timeout=timeout,
-                stream_callback=stream_callback,
-            )
-        if route == "extension" and self.allow_extension_fallback and self.extension is not None:
-            return self.extension.send_prompt(provider, prompt, task_id=task_id, timeout=timeout)
-        raise BridgeError(f"No authenticated internal route is available for {provider}.")
+        try:
+            if route == "playwright":
+                if stream_callback is None:
+                    result = self.managed.send_prompt(provider, prompt, task_id=task_id, timeout=timeout)
+                else:
+                    result = self.managed.send_prompt(
+                        provider,
+                        prompt,
+                        task_id=task_id,
+                        timeout=timeout,
+                        stream_callback=stream_callback,
+                    )
+            elif route == "webview2":
+                if stream_callback is None:
+                    result = self.embedded.send_prompt(provider, prompt, task_id=task_id, timeout=timeout)
+                else:
+                    result = self.embedded.send_prompt(
+                        provider,
+                        prompt,
+                        task_id=task_id,
+                        timeout=timeout,
+                        stream_callback=stream_callback,
+                    )
+            elif route == "extension" and self.allow_extension_fallback and self.extension is not None:
+                result = self.extension.send_prompt(provider, prompt, task_id=task_id, timeout=timeout)
+            else:
+                raise BridgeError(f"No authenticated internal route is available for {provider}.")
+        except BridgeError as exc:
+            self._record_provider_failure(provider, exc)
+            raise
+        self._record_provider_success(provider)
+        return result
 
     def request(
         self,
@@ -574,6 +676,15 @@ class AgentGateway:
                 self._routes.pop(provider, None)
                 route = None
         if route:
+            cooldown, reason = self._circuit_status(provider)
+            if route != "local" and cooldown > 0:
+                if self._can_use_local(provider):
+                    self.prefer_local(provider)
+                    return "local"
+                raise BridgeError(
+                    f"PROVIDER_CIRCUIT_OPEN: {provider} is cooling down for {max(1, int(cooldown))}s"
+                    + (f" after: {reason}" if reason else "")
+                )
             return route
         if not self.wait_for_provider(provider, 5.0):
             raise BridgeError(f"{provider} is not authenticated through an internal route.")
