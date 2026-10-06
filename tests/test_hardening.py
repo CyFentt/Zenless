@@ -12,6 +12,7 @@ from hypothesis import strategies as st
 
 from zenless.agent_gateway import AgentGateway
 from zenless.brain import ZenlessBrain
+from zenless.browser_bridge import BridgeError
 from zenless.components import WEBVIEW2_BOOTSTRAPPER_SHA256, WebView2Runtime
 from zenless.diagnostics import ErrorBus
 from zenless.discord_integration import DiscordIntegration
@@ -236,6 +237,59 @@ class HardeningTests(unittest.TestCase):
         self.assertTrue(gateway.wait_for_provider("chatgpt", 0))
         self.assertEqual(gateway._routes["chatgpt"], "local")
         self.assertEqual(gateway.provider_status()["chatgpt"]["transport"], "local")
+
+    def test_gateway_circuit_breaker_moves_repeated_rate_limits_to_local(self) -> None:
+        class RateLimited(FakeEmbedded):
+            def __init__(self) -> None:
+                super().__init__({"chatgpt"})
+                self.calls = 0
+
+            def send_prompt(self, provider: str, prompt: str, *, task_id: str, timeout: float = 360.0, **_kwargs: Any) -> str:
+                del provider, prompt, task_id, timeout
+                self.calls += 1
+                raise BridgeError("PROVIDER_RATE_LIMIT: quota reached")
+
+        embedded = RateLimited()
+        gateway = AgentGateway(
+            managed=FakeManaged(set()),
+            embedded=embedded,
+            local_available=lambda: True,
+            local_complete=lambda prompt: "local:" + prompt,
+            selected_model=lambda _provider: "auto",
+        )
+        gateway._routes["chatgpt"] = "webview2"
+
+        for _ in range(3):
+            with self.assertRaisesRegex(BridgeError, "PROVIDER_RATE_LIMIT"):
+                gateway.send_prompt("chatgpt", "build", task_id="job")
+
+        result = gateway.send_prompt("chatgpt", "build", task_id="job")
+        self.assertTrue(result.startswith("local:Role: Builder."))
+        self.assertEqual(embedded.calls, 3)
+        self.assertEqual(gateway.provider_status()["chatgpt"]["transport"], "local")
+
+    def test_gateway_circuit_breaker_fails_fast_without_fallback(self) -> None:
+        class RateLimited(FakeEmbedded):
+            def __init__(self) -> None:
+                super().__init__({"gemini"})
+                self.calls = 0
+
+            def send_prompt(self, provider: str, prompt: str, *, task_id: str, timeout: float = 360.0, **_kwargs: Any) -> str:
+                del provider, prompt, task_id, timeout
+                self.calls += 1
+                raise BridgeError("PROVIDER_CAPACITY: overloaded")
+
+        embedded = RateLimited()
+        gateway = AgentGateway(managed=FakeManaged(set()), embedded=embedded)
+        gateway._routes["gemini"] = "webview2"
+
+        for _ in range(3):
+            with self.assertRaisesRegex(BridgeError, "PROVIDER_CAPACITY"):
+                gateway.send_prompt("gemini", "research", task_id="job")
+
+        with self.assertRaisesRegex(BridgeError, "PROVIDER_CIRCUIT_OPEN"):
+            gateway.send_prompt("gemini", "research", task_id="job")
+        self.assertEqual(embedded.calls, 3)
 
     def test_gateway_does_not_require_extension_by_default(self) -> None:
         gateway = AgentGateway(
