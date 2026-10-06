@@ -410,6 +410,7 @@ class ZenlessOrchestrator:
                 "provider_rate_limit",
                 "provider_capacity",
                 "provider_transient_error",
+                "provider_circuit_open",
                 "rate limit",
                 "too many requests",
                 "reached your limit",
