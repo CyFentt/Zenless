@@ -2136,6 +2136,11 @@ class ZenlessCore:
     def _on_provider_status(self, provider: str, state: str, detail: str) -> None:
         if provider in {"chatgpt", "deepseek", "gemini", "hunyuan"}:
             normalized = self._normalize_connection(state)
+            with self._provider_lock:
+                login_thread = self._provider_threads.get(provider)
+                login_active = login_thread is not None and login_thread.is_alive()
+            if login_active and normalized != "READY":
+                normalized = "CONNECTING"
             self._set_connection(provider, normalized)
             detail_text = str(detail or "")[:2000]
             self.events.publish(
