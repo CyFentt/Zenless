@@ -108,6 +108,28 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(items[0]["options"]["review"], False)
             self.assertEqual(items[1]["max_attempts"], 4)
 
+    def test_prompt_queue_recovery_blocks_inflight_paused_checkpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            store = SQLiteStore(Path(folder) / "queue.db")
+            store.create_task("job-1", "Queued child", TaskOptions())
+            store.update_task("job-1", stage=Stage.PAUSED, status="waiting")
+            store.enqueue_prompt("queue-1", "Continue")
+            store.update_prompt_queue_item(
+                "queue-1",
+                state="inflight",
+                dispatched_job_id="job-1",
+                attempts=1,
+            )
+
+            recovered = store.recover_prompt_queue()
+            item = store.prompt_queue_item("queue-1")
+
+            self.assertEqual(recovered, ["queue-1"])
+            self.assertIsNotNone(item)
+            self.assertEqual(item["state"], "blocked")
+            self.assertIn("paused checkpoint", item["last_error"].casefold())
+            self.assertEqual(item["dispatched_job_id"], "job-1")
+
     def test_prompt_queue_reorder_preserves_every_item_once(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             store = SQLiteStore(Path(folder) / "queue.db")
