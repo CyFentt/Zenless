@@ -1651,6 +1651,62 @@ class ZenlessCore:
             "setup": dict(self._tools_state),
         }
 
+    def prepare_local_ai_item(self, item_id: str) -> bool:
+        target = item_id.strip()
+        allowed = {"qwen3-4b", "qwen-coder-7b", "llama-vulkan", "llama-cpu"}
+        if target not in allowed:
+            raise CoreError("UNKNOWN_LOCAL_AI_ITEM", "Unknown local AI component.", status=404)
+        with self._provider_lock:
+            if self._tools_thread is not None and self._tools_thread.is_alive():
+                raise CoreError(
+                    "TOOLS_BUSY",
+                    "Another local tool or model installation is already running.",
+                    status=409,
+                )
+            self._tools_thread = threading.Thread(
+                target=self._prepare_tool_item,
+                args=(target,),
+                name=f"Rubra-Tool-{target}",
+                daemon=True,
+            )
+            self._tools_thread.start()
+        return True
+
+    def _prepare_tool_item(self, item_id: str) -> None:
+        def progress(stage: str, detail: str) -> None:
+            self._tools_state = {"state": "INSTALLING", "detail": f"{stage}: {detail}"}
+
+        self._tools_state = {"state": "INSTALLING", "detail": f"Preparing {item_id}"}
+        try:
+            manager = ToolchainManager(
+                resource_root=self.resource_root,
+                portable_root=self.portable_root,
+                status_callback=progress,
+                cancel_event=self._closing,
+            )
+            result = manager.install(item_id)
+            os.environ.update(manager.environment())
+            self._tools_state = {
+                "state": "READY",
+                "detail": f"{result.item_id}: {result.detail}",
+            }
+            self._model_cache = None
+            if self.local_ai.available and self.settings()["localAI"]:
+                for provider in ("chatgpt", "deepseek"):
+                    if self.connections()[provider] != "READY":
+                        self.bridge.wait_for_provider(provider, timeout=0.5)
+        except Exception as exc:
+            self._tools_state = {"state": "ERROR", "detail": f"{item_id}: {exc}"}
+            if not self._closing.is_set():
+                self._report(
+                    "tools",
+                    f"prepare:{item_id}",
+                    exc,
+                    "Retry only this failed local AI component from Settings > Models.",
+                    probable_cause="The component download, integrity verification, extraction, or hardware gate failed.",
+                    impact="Other installed tools and providers remain available.",
+                )
+
     def prepare_tools(self) -> bool:
         with self._provider_lock:
             if self._tools_thread is not None and self._tools_thread.is_alive():
