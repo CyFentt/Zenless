@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import tarfile
@@ -306,6 +307,12 @@ class ToolchainManager:
                 with urllib.request.urlopen(request, timeout=120) as response:
                     status = int(getattr(response, "status", 200) or 200)
                     resumed = resume_from > 0 and status == 206
+                    if resumed:
+                        content_range = str(response.headers.get("Content-Range") or "")
+                        match = re.match(r"bytes\s+(\d+)-\d+/(?:\d+|\*)", content_range, re.I)
+                        if match is None or int(match.group(1)) != resume_from:
+                            partial.unlink(missing_ok=True)
+                            raise OSError("Server returned an invalid resume range.")
                     if resume_from and not resumed:
                         resume_from = 0
                     total_remaining = int(response.headers.get("Content-Length") or 0)
