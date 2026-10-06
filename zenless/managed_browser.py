@@ -406,14 +406,27 @@ class ManagedBrowserController:
                 return {"ready": False, "runtime": "missing"}
             self._ensure_context(headed=False)
             page = self._ensure_page(command.provider)
-            ready = bool(page.evaluate(authentication_script(command.provider, self.provider_specs[command.provider].inputs, self.provider_specs[command.provider].url)).get("authenticated"))
+            auth_state = page.evaluate(
+                authentication_script(
+                    command.provider,
+                    self.provider_specs[command.provider].inputs,
+                    self.provider_specs[command.provider].url,
+                )
+            )
+            ready = bool(auth_state.get("authenticated"))
+            challenge = bool(auth_state.get("challenge"))
             self._set_state(
                 command.provider,
                 "Ready" if ready else "Login Required",
-                "Authenticated managed session" if ready else "Use Login for the normal provider page",
+                "Authenticated managed session"
+                if ready
+                else "Provider anti-bot challenge is active; complete it manually or leave this provider optional."
+                if challenge
+                else "Use Login for the normal provider page",
             )
             return {
                 "ready": ready,
+                "challenge": challenge,
                 "runtime": "ready",
                 "capabilities": self._capabilities(page, self.provider_specs[command.provider]),
             }
