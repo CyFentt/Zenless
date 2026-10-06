@@ -2131,6 +2131,11 @@ class ZenlessCore:
         for provider in ("chatgpt", "deepseek", "gemini", "hunyuan"):
             state = str(statuses.get(provider, {}).get("state", "OFF"))
             normalized = "LOGIN" if state.casefold() == "standby" else self._normalize_connection(state)
+            with self._provider_lock:
+                login_thread = self._provider_threads.get(provider)
+                login_active = login_thread is not None and login_thread.is_alive()
+            if login_active and normalized != "READY":
+                normalized = "CONNECTING"
             self._set_connection(provider, normalized)
             any_ready = any_ready or normalized == "READY"
         self._set_boot("AI", "READY" if any_ready else "OFF")
