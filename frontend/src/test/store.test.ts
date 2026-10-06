@@ -94,6 +94,41 @@ describe('Store', () => {
     expect(useStore.getState().activeTestJobId).toBe('manual-test');
   });
 
+  it('deduplicates diagnostics semantically across frontend and backend IDs', () => {
+    useStore.getState().setDiagnostics([]);
+    useStore.getState().addDiagnostic({
+      id: 'frontend-id',
+      severity: 'error',
+      source: 'window',
+      component: 'react',
+      message: 'Render failed',
+      file: 'app.tsx',
+      line: 42,
+      occurrenceCount: 1,
+      timestamp: 100,
+    });
+    useStore.getState().addDiagnostic({
+      id: 'backend-id',
+      severity: 'error',
+      source: 'window',
+      component: 'react',
+      message: 'Render failed',
+      file: 'app.tsx',
+      line: 42,
+      occurrenceCount: 3,
+      timestamp: 200,
+      recovery: 'Reload the view',
+    });
+
+    expect(useStore.getState().diagnostics).toHaveLength(1);
+    expect(useStore.getState().diagnostics[0]).toMatchObject({
+      id: 'frontend-id',
+      occurrenceCount: 3,
+      timestamp: 200,
+      recovery: 'Reload the view',
+    });
+  });
+
   it('addTestLog appends', () => {
     const initial = useStore.getState().testLogs.length;
     useStore.getState().addTestLog({ id: 'log_test', timestamp: Date.now(), level: 'ERR', message: 'test' });
