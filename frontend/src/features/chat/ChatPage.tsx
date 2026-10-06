@@ -237,7 +237,13 @@ export function ChatPage() {
                 ref={composerRef}
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); handleSend(); } }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+                    e.preventDefault();
+                    if (working) void handleQueue();
+                    else void handleSend();
+                  }
+                }}
                 placeholder="Message Rubra"
                 rows={1}
                 className="flex-1 min-w-0 bg-transparent text-sm text-ink-0 px-2 py-3 resize-none placeholder:text-ink-300 outline-none scrollbar-zen"
