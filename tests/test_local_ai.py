@@ -50,6 +50,28 @@ def test_cpu_fallback_explicitly_disables_gpu_and_uses_file_output(tmp_path: Pat
     assert output.closed
 
 
+def test_local_context_is_32k_and_large_prompt_compaction_preserves_contract_and_tail(tmp_path: Path):
+    service = LocalAIService(tmp_path)
+    with patch("zenless.local_ai.subprocess.Popen") as start:
+        service._start_candidate(tmp_path / "llama-server.exe", False)
+    command = start.call_args.args[0]
+    assert command[command.index("--ctx-size") + 1] == "32768"
+
+    prompt = "ROLE-CONTRACT\n" + ("middle-evidence\n" * 7000) + "LATEST-EVIDENCE"
+    compacted = service._compact_prompt(prompt)
+    assert len(compacted) <= service.MAX_PROMPT_CHARS
+    assert compacted.startswith("ROLE-CONTRACT")
+    assert compacted.endswith("LATEST-EVIDENCE")
+    assert "RUBRA LOCAL CONTEXT COMPACTED" in compacted
+    assert "sha256=" in compacted
+
+
+def test_local_prompt_under_budget_is_not_modified(tmp_path: Path):
+    service = LocalAIService(tmp_path)
+    prompt = "Role: Reviewer.\nsmall evidence"
+    assert service._compact_prompt(prompt) == prompt
+
+
 def test_vulkan_failure_is_stopped_before_cpu_retry(tmp_path: Path):
     service = LocalAIService(tmp_path)
     service.model_path.parent.mkdir(parents=True)
