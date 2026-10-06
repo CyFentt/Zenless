@@ -297,7 +297,7 @@ class ZenlessCore:
                             continue
                         normalized = "LOGIN" if raw.casefold() == "standby" else self._normalize_connection(raw)
                         thread = self._provider_threads.get(provider)
-                        if thread is not None and thread.is_alive() and normalized not in {"READY", "LOGIN"}:
+                        if thread is not None and thread.is_alive() and normalized != "READY":
                             continue
                         self._connections[provider] = normalized
         with self._connections_lock:
