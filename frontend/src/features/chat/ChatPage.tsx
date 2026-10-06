@@ -248,6 +248,29 @@ export function ChatPage() {
                   <Settings2 size={14} strokeWidth={1.5} />
                 </button>
               </Tooltip>
+              <Tooltip content={attachments.length > 0 ? "Queue accepts text prompts only; send attachments directly" : "Prompt queue"}>
+                <button
+                  onClick={() => setShowQueue(!showQueue)}
+                  className={showQueue ? "relative w-8 h-8 shrink-0 flex items-center justify-center border transition-colors text-ink-0 bg-ink-700 border-zen-red" : "relative w-8 h-8 shrink-0 flex items-center justify-center border transition-colors text-ink-300 border-ink-600 hover:border-ink-500 hover:text-ink-0"}
+                  aria-label="Prompt queue"
+                >
+                  <ListPlus size={14} strokeWidth={1.5} />
+                  {promptQueue.items.filter((item) => !['COMPLETED', 'CANCELLED'].includes(item.state)).length > 0 && (
+                    <span className="absolute -top-1 -right-1 min-w-4 h-4 px-1 rounded-full bg-zen-red text-[9px] leading-4 text-white">
+                      {promptQueue.items.filter((item) => !['COMPLETED', 'CANCELLED'].includes(item.state)).length}
+                    </span>
+                  )}
+                </button>
+              </Tooltip>
+              <Tooltip content={attachments.length > 0 ? "Queued prompts cannot include attachments yet" : "Add this prompt to the durable queue"}>
+                <button
+                  onClick={() => void handleQueue()}
+                  disabled={sending || !input.trim() || attachments.length > 0}
+                  className="h-8 px-2 shrink-0 text-2xs uppercase tracking-wider text-ink-100 border border-ink-600 hover:border-zen-red hover:text-ink-0 disabled:opacity-30"
+                >
+                  QUEUE
+                </button>
+              </Tooltip>
               {working && currentJobId && <Tooltip content="Stop the active task"><button aria-label="Stop task" onClick={() => void getApi().cancelGeneration(currentJobId).catch((error) => frontendDiagnostics.capture(error, 'chat', 'Failed to stop task'))} className="w-8 h-8 rounded-lg flex items-center justify-center text-zen-redBright border border-zen-red"><Square size={13} /></button></Tooltip>}
               <button onClick={handleSend} disabled={sending || working || (!input.trim() && attachments.length === 0)} className="w-8 h-8 shrink-0 flex items-center justify-center text-white bg-zen-red rounded-lg disabled:opacity-30 hover:bg-zen-redBright transition-colors" aria-label="Send">
                 <ArrowUp size={14} strokeWidth={1.5} />
