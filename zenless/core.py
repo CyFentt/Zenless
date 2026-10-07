@@ -2046,6 +2046,7 @@ class ZenlessCore:
             recovered_tests = self.store.recover_running_test_runs()
             recovered_queue = self.store.recover_prompt_queue()
             recovered_operations = self.store.recover_pending_operations()
+            self.store.prune_operations()
             self._set_boot("STATE", "READY")
             for item in recovered:
                 self.events.publish("JOB_UPDATED", {"job": self.job(str(item["id"]))})
