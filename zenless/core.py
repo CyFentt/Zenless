@@ -1801,6 +1801,7 @@ class ZenlessCore:
                     "Another local tool or model installation is already running.",
                     status=409,
                 )
+            self._tools_state = {"state": "INSTALLING", "detail": f"Preparing {target}"}
             self._tools_thread = threading.Thread(
                 target=self._prepare_tool_item,
                 args=(target,),
@@ -1849,6 +1850,7 @@ class ZenlessCore:
         with self._provider_lock:
             if self._tools_thread is not None and self._tools_thread.is_alive():
                 return True
+            self._tools_state = {"state": "INSTALLING", "detail": "Preparing pinned tools and local model"}
             self._tools_thread = threading.Thread(target=self._prepare_tools, name="Rubra-Tools", daemon=True)
             self._tools_thread.start()
         return True
