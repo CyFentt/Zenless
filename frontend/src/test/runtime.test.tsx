@@ -72,6 +72,33 @@ describe('ApplicationRuntime', () => {
     expect(useStore.getState().testState.status).toBe(event === 'started' ? 'RUNNING' : 'STOPPED');
     runtime.stop();
   });
+  it('runs a second authoritative hydration when a live event arrives during snapshot loading', async () => {
+    const api = new MockZenlessAPI();
+    const socket = new RuntimeSocket();
+    let release!: (value: AgentInfo[]) => void;
+    const firstAgents = new Promise<AgentInfo[]>((resolve) => { release = resolve; });
+    const getAgents = vi.spyOn(api, 'getAgents')
+      .mockReturnValueOnce(firstAgents)
+      .mockResolvedValue([
+        { id: 'chatgpt', name: 'Builder', status: 'READY', detail: 'fresh' },
+      ] as never);
+    vi.spyOn(api, 'getJobs').mockResolvedValue([]);
+    const runtime = new ApplicationRuntime(api, socket);
+    const started = runtime.start();
+
+    await waitFor(() => expect(getAgents).toHaveBeenCalledTimes(1));
+    socket.emit({
+      type: 'AGENT_STATUS_CHANGED',
+      data: { agent: 'chatgpt', status: 'READY', detail: 'fresh' },
+    });
+    release([{ id: 'chatgpt', name: 'Builder', status: 'OFF', detail: 'stale' }]);
+    await started;
+
+    await waitFor(() => expect(getAgents.mock.calls.length).toBeGreaterThanOrEqual(2));
+    await waitFor(() => expect(useStore.getState().agents.find((agent) => agent.id === 'chatgpt')?.status).toBe('READY'));
+    runtime.stop();
+  });
+
   it('finishes delayed hydration before leaving the splash and keeps the socket alive', async () => {
     const api = new MockZenlessAPI();
     const socket = new RuntimeSocket();
