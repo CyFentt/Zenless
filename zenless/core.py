@@ -622,8 +622,12 @@ class ZenlessCore:
         item = self.store.prompt_queue_item(queue_id)
         if item is None:
             raise CoreError("QUEUE_ITEM_NOT_FOUND", "Prompt queue item not found.", status=404)
-        if item["state"] in {"preparing", "inflight"}:
-            raise CoreError("QUEUE_ITEM_ACTIVE", "An active queue item cannot be edited.", status=409)
+        if item["state"] in {"preparing", "inflight", "sent_unconfirmed", "completed"}:
+            raise CoreError(
+                "QUEUE_ITEM_NOT_EDITABLE",
+                "Active, completed, or unconfirmed-delivery queue items cannot be edited.",
+                status=409,
+            )
         changes: dict[str, Any] = {}
         if content is not None:
             text = content.strip()
@@ -827,13 +831,16 @@ class ZenlessCore:
             if task is None:
                 self.store.update_prompt_queue_item(
                     item["id"],
-                    state="blocked",
-                    last_error="The dispatched task cannot be found; automatic resend is blocked to prevent duplication.",
+                    state="sent_unconfirmed",
+                    last_error=(
+                        "The dispatched task cannot be found after delivery. Verify Recent Tasks before retrying or "
+                        "mark it sent; automatic resend is blocked to prevent duplication."
+                    ),
+                    next_attempt_at="",
                 )
                 changed = True
-                if not config["continueOnFailure"]:
-                    config["paused"] = True
-                    self.store.set_setting("prompt_queue.config", config)
+                config["paused"] = True
+                self.store.set_setting("prompt_queue.config", config)
                 continue
             status = str(task.get("status") or "").casefold()
             if status == "complete":
