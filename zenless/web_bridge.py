@@ -209,6 +209,7 @@ class LocalWebBridge:
         app.router.add_get("/api/agents", self._sync_handler(self.core.agents))
         app.router.add_get("/api/tools", self._sync_handler(self.core.tools_payload))
         app.router.add_post("/api/providers/{provider}/login", self._login_provider)
+        app.router.add_post("/api/providers/{provider}/login/cancel", self._cancel_provider_login)
 
         app.router.add_get("/api/jobs", self._sync_handler(self.core.jobs))
         app.router.add_get("/api/jobs/{job_id}", self._get_job)
@@ -288,6 +289,11 @@ class LocalWebBridge:
 
     async def _login_provider(self, request: web.Request) -> web.Response:
         return self._json({"ok": self.core.login_provider(request.match_info["provider"])})
+
+    async def _cancel_provider_login(self, request: web.Request) -> web.Response:
+        return self._json(
+            {"ok": await asyncio.to_thread(self.core.cancel_provider_login, request.match_info["provider"])}
+        )
 
     async def _get_job(self, request: web.Request) -> web.Response:
         return self._json(self.core.job(request.match_info["job_id"]))
