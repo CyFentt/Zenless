@@ -999,9 +999,15 @@ class ZenlessOrchestrator:
                 f"Builder is creating the strategic plan (round {research_round}/{total_rounds}).",
             )
             prompt = principal_prompt(objective, context, tools, evidence, research_round)
-            raw = self._send_agent_prompt("chatgpt", prompt, task_id=task_id)
+            builder = self._builder_provider(task_id)
+            raw = self._send_agent_prompt(
+                builder,
+                prompt,
+                task_id=task_id,
+                attachment_paths=self._task_attachment_paths(task_id),
+            )
             self.store.append_message(task_id, "Builder", "agent", raw)
-            proposal = self._parse_proposal_with_recovery("chatgpt", raw, task_id)
+            proposal = self._parse_proposal_with_recovery(self._builder_provider(task_id), raw, task_id)
             errors = validate_proposal(proposal.actions, set(self.studio.tools))
             if errors:
                 raise OrchestratorError("The proposal was blocked by policy: " + " | ".join(errors))
@@ -1120,13 +1126,15 @@ class ZenlessOrchestrator:
             summary="The user requested adjustments.",
             required_changes=[user_note] if user_note else [],
         )
+        builder = self._builder_provider(task_id)
         raw = self._send_agent_prompt(
-            "chatgpt",
+            builder,
             revision_prompt(objective, context, proposal, effective_review, user_note),
             task_id=task_id,
+            attachment_paths=self._task_attachment_paths(task_id),
         )
         self.store.append_message(task_id, "Builder", "agent", raw)
-        return self._parse_proposal_with_recovery("chatgpt", raw, task_id)
+        return self._parse_proposal_with_recovery(self._builder_provider(task_id), raw, task_id)
 
     def _handle_visual_and_3d(
         self,
@@ -1148,9 +1156,10 @@ class ZenlessOrchestrator:
                 self._check_control(task_id, cancel_event)
                 if not master or (revision_note and not revision_note.startswith("regen:")):
                     raw_master = self._send_agent_prompt(
-                        "chatgpt",
+                        self._builder_provider(task_id),
                         visual_master_prompt(objective, visual_prompt, revision_note),
                         task_id=task_id,
+                        attachment_paths=self._task_attachment_paths(task_id),
                     )
                     self.store.append_message(task_id, "Builder", "visual-spec", raw_master)
                     master = extract_json_object(raw_master)
@@ -1844,13 +1853,15 @@ class ZenlessOrchestrator:
         console_output: str,
         source_evidence: list[dict[str, Any]],
     ) -> AgentProposal:
+        builder = self._builder_provider(task_id)
         raw = self._send_agent_prompt(
-            "chatgpt",
+            builder,
             repair_prompt(objective, proposal, console_output, source_evidence),
             task_id=task_id,
+            attachment_paths=self._task_attachment_paths(task_id),
         )
         self.store.append_message(task_id, "Builder", "agent", raw)
-        repair = self._parse_proposal_with_recovery("chatgpt", raw, task_id)
+        repair = self._parse_proposal_with_recovery(self._builder_provider(task_id), raw, task_id)
         errors = validate_proposal(repair.actions, set(self.studio.tools))
         if errors:
             raise OrchestratorError("The correction was blocked by policy: " + " | ".join(errors))
