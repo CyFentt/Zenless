@@ -391,7 +391,10 @@ function LinksTab({ connections, agents }: { connections: ConnectionInfo; agents
                   )}
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
-                  <StatusBadge status={status} />
+                  <StatusBadge
+                    status={status}
+                    label={agent?.transport === 'local' && status === 'READY' ? 'LOCAL' : undefined}
+                  />
                 {key === 'studio' && <button onClick={() => void getApi().refreshStudio().catch((error) => frontendDiagnostics.capture(error, 'studio', 'Studio reconnection failed'))} className="px-2 h-7 text-xs border border-ink-500 text-ink-50 hover:border-zen-red">Reconnect</button>}
                 {provider && (
                   <button onClick={() => setLoginModal(provider)} className="px-2 h-6 text-2xs uppercase tracking-wider text-ink-50 border border-ink-500 hover:bg-ink-800 transition-colors">LOGIN</button>
