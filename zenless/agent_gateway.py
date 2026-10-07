@@ -195,18 +195,27 @@ class AgentGateway:
 
     def cancel_login(self, provider: str) -> bool:
         dismissed = False
+        errors: list[str] = []
         cancel_embedded = getattr(self.embedded, "cancel_login", None)
         if callable(cancel_embedded):
             try:
                 dismissed = bool(cancel_embedded(provider, timeout=5.0)) or dismissed
-            except Exception:
-                pass
+            except Exception as exc:
+                errors.append(f"WebView2: {exc}")
         cancel_managed = getattr(self.managed, "cancel_login", None)
         if callable(cancel_managed):
             try:
                 dismissed = bool(cancel_managed(provider, timeout=5.0)) or dismissed
-            except Exception:
-                pass
+            except Exception as exc:
+                errors.append(f"managed browser: {exc}")
+        if errors and not dismissed:
+            raise BridgeError("Login cancellation failed: " + " | ".join(errors[-2:]))
+        if errors and self.status_callback is not None:
+            self.status_callback(
+                provider,
+                "Degraded",
+                "Login window was dismissed, but one browser transport reported a cleanup error: " + " | ".join(errors[-2:]),
+            )
         return dismissed
 
     def prefer_local(self, provider: str) -> bool:
