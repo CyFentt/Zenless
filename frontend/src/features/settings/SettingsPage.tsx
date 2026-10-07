@@ -330,6 +330,18 @@ function LinksTab({ connections, agents }: { connections: ConnectionInfo; agents
     { key: 'studio', name: 'Studio' },
   ];
 
+  const closeLoginModal = () => {
+    const provider = loginModal;
+    const shouldCancel = !!provider && (loggingIn || connections[provider] === 'CONNECTING');
+    setLoginModal(null);
+    setLoggingIn(false);
+    if (provider && shouldCancel) {
+      void getApi().cancelProviderLogin(provider).catch((error) =>
+        frontendDiagnostics.capture(error, 'settings', `Failed to cancel ${provider} login`)
+      );
+    }
+  };
+
   const handleLogin = async () => {
     if (!loginModal || loggingIn) return;
     const provider = loginModal;
@@ -404,10 +416,15 @@ function LinksTab({ connections, agents }: { connections: ConnectionInfo; agents
           Reviewer is optional when Independent Review is disabled. CAPTCHA or login failure on one provider does not disable the other providers or local routing.
         </p>
       </Section>
-      <Modal open={!!loginModal} onClose={() => { setLoginModal(null); setLoggingIn(false); }} title="LOGIN REQUIRED" width="w-80">
+      <Modal open={!!loginModal} onClose={closeLoginModal} title="LOGIN REQUIRED" width="w-80">
         <div className="space-y-4">
           <p className="text-xs text-ink-100 uppercase tracking-wider">{labels.find((label) => label.key === loginModal)?.name}</p>
-          <button disabled={loggingIn} onClick={() => void handleLogin()} className="w-full h-8 text-xs uppercase tracking-wider text-ink-0 bg-ink-700 border border-ink-500 hover:bg-ink-600 transition-colors disabled:opacity-50">{loggingIn ? (loginModal && connections[loginModal] === 'LOGIN' ? 'WAITING FOR LOGIN' : 'OPENING') : 'LOGIN'}</button>
+          <button disabled={loggingIn} onClick={() => void handleLogin()} className="w-full h-8 text-xs uppercase tracking-wider text-ink-0 bg-ink-700 border border-ink-500 hover:bg-ink-600 transition-colors disabled:opacity-50">{loggingIn ? 'WAITING FOR LOGIN' : 'LOGIN'}</button>
+          {loggingIn && (
+            <button onClick={closeLoginModal} className="w-full h-7 text-2xs uppercase tracking-wider text-ink-300 border border-ink-600 hover:text-ink-0 hover:border-zen-red">
+              CANCEL LOGIN
+            </button>
+          )}
         </div>
       </Modal>
     </div>
