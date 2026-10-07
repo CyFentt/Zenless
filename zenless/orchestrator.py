@@ -467,7 +467,6 @@ class ZenlessOrchestrator:
             marker in message
             for marker in (
                 "provider_input_limit",
-                "capability_unavailable",
                 "message is too long",
                 "prompt is too long",
                 "input is too long",
