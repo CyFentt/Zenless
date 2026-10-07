@@ -875,7 +875,7 @@ class ZenlessOrchestrator:
             prompt = principal_prompt(objective, context, tools, evidence, research_round)
             raw = self._send_agent_prompt("chatgpt", prompt, task_id=task_id)
             self.store.append_message(task_id, "Builder", "agent", raw)
-            proposal = self._parse_proposal(raw)
+            proposal = self._parse_proposal_with_recovery("chatgpt", raw, task_id)
             errors = validate_proposal(proposal.actions, set(self.studio.tools))
             if errors:
                 raise OrchestratorError("The proposal was blocked by policy: " + " | ".join(errors))
@@ -960,7 +960,7 @@ class ZenlessOrchestrator:
                 task_id=task_id,
             )
             self.store.append_message(task_id, "Reviewer", "reviewer", raw)
-            review = self._parse_review(raw)
+            review = self._parse_review_with_recovery(reviewer, raw, task_id)
             if review.approved:
                 self._emit(task_id, Stage.REVIEWING, "Independent review approved.", "success", review.summary)
                 return proposal, review
@@ -1000,7 +1000,7 @@ class ZenlessOrchestrator:
             task_id=task_id,
         )
         self.store.append_message(task_id, "Builder", "agent", raw)
-        return self._parse_proposal(raw)
+        return self._parse_proposal_with_recovery("chatgpt", raw, task_id)
 
     def _handle_visual_and_3d(
         self,
@@ -1721,7 +1721,7 @@ class ZenlessOrchestrator:
             task_id=task_id,
         )
         self.store.append_message(task_id, "Builder", "agent", raw)
-        repair = self._parse_proposal(raw)
+        repair = self._parse_proposal_with_recovery("chatgpt", raw, task_id)
         errors = validate_proposal(repair.actions, set(self.studio.tools))
         if errors:
             raise OrchestratorError("The correction was blocked by policy: " + " | ".join(errors))
@@ -1974,6 +1974,85 @@ class ZenlessOrchestrator:
                 }
             )
         return catalog
+
+    def _protocol_repair(
+        self,
+        provider: str,
+        raw: str,
+        task_id: str,
+        *,
+        kind: str,
+        parse_error: ProtocolError,
+    ) -> str:
+        value = str(raw or "")
+        if len(value) > 60_000:
+            value = value[:45_000] + "\n...[middle omitted by Rubra protocol recovery]...\n" + value[-15_000:]
+        schema = (
+            '{"summary":"string","actions":[{"tool":"string","arguments":{},"reason":"string",'
+            '"risk":"low|medium|high|critical"}],"final_message":"string","visual_prompt":"string",'
+            '"model_3d_prompt":"string","tests":["string"]}'
+            if kind == "proposal"
+            else '{"verdict":"approve|revise|block","summary":"string","issues":["string"],'
+            '"required_changes":["string"],"tests_required":["string"],'
+            '"risk":"low|medium|high|critical","confidence":0.0}'
+        )
+        self._emit(
+            task_id,
+            Stage.REVISING if kind == "proposal" else Stage.REVIEWING,
+            f"{kind.title()} response was incomplete; requesting one bounded protocol repair.",
+            "warning",
+            str(parse_error)[:1000],
+        )
+        repair_prompt = (
+            "Your previous response could not be parsed as the required Rubra protocol. "
+            "Do not execute tools, do not add commentary, and do not repeat analysis. "
+            "Return exactly one complete compact JSON object matching this schema:\n"
+            f"{schema}\n\n"
+            "Preserve the intent and concrete decisions from the previous response. "
+            "If content must be shortened, compress prose rather than dropping required fields or actions.\n\n"
+            f"PREVIOUS RESPONSE:\n{value}"
+        )
+        repaired = self._send_agent_prompt(provider, repair_prompt, task_id=task_id, timeout=180)
+        sender = "Builder Recovery" if kind == "proposal" else "Reviewer Recovery"
+        role = "agent" if kind == "proposal" else "reviewer"
+        self.store.append_message(task_id, sender, role, repaired)
+        return repaired
+
+    def _parse_proposal_with_recovery(self, provider: str, raw: str, task_id: str) -> AgentProposal:
+        try:
+            return self._parse_proposal(raw)
+        except ProtocolError as first_error:
+            repaired = self._protocol_repair(
+                provider,
+                raw,
+                task_id,
+                kind="proposal",
+                parse_error=first_error,
+            )
+            try:
+                return self._parse_proposal(repaired)
+            except ProtocolError as second_error:
+                raise ProtocolError(
+                    f"Proposal protocol recovery failed: {second_error}; initial parse error: {first_error}"
+                ) from second_error
+
+    def _parse_review_with_recovery(self, provider: str, raw: str, task_id: str) -> ReviewResult:
+        try:
+            return self._parse_review(raw)
+        except ProtocolError as first_error:
+            repaired = self._protocol_repair(
+                provider,
+                raw,
+                task_id,
+                kind="review",
+                parse_error=first_error,
+            )
+            try:
+                return self._parse_review(repaired)
+            except ProtocolError as second_error:
+                raise ProtocolError(
+                    f"Review protocol recovery failed: {second_error}; initial parse error: {first_error}"
+                ) from second_error
 
     @staticmethod
     def _parse_proposal(raw: str) -> AgentProposal:
