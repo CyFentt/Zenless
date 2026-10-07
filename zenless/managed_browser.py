@@ -236,12 +236,23 @@ class ManagedBrowserController:
         )
         deadline = time.monotonic() + timeout
         challenge_seen = False
+        challenge_since = 0.0
         while not self._stop.wait(0.5) and time.monotonic() < deadline:
             status = self.provider_status().get(provider, {})
             if status.get("state") == "Ready":
                 return {**result, "state": "ready", "authenticated": True}
             detail = str(status.get("detail") or "")
-            challenge_seen = challenge_seen or "challenge" in detail.casefold()
+            challenge_active = "challenge" in detail.casefold()
+            challenge_seen = challenge_seen or challenge_active
+            if challenge_active:
+                challenge_since = challenge_since or time.monotonic()
+                if time.monotonic() - challenge_since >= 90.0:
+                    raise BridgeError(
+                        "LOGIN_CHALLENGE: Managed anti-bot verification remained active for 90 seconds. "
+                        "The saved browser profile was preserved."
+                    )
+            else:
+                challenge_since = 0.0
             if "window was closed" in detail:
                 if challenge_seen:
                     raise BridgeError(
