@@ -172,6 +172,11 @@ class WebViewHost:
             raise ValueError(f"Unknown provider: {provider}")
         window = self._ensure_window(provider, visible=action == "login")
         spec = self.provider_specs[provider]
+        if action == "dismiss_login":
+            dismissed = self._dismissed.setdefault(provider, threading.Event())
+            dismissed.set()
+            window.hide()
+            return {"dismissed": True, "state": "login_dismissed"}
         if action == "health":
             state = self._authentication_state(window, spec)
             authenticated = bool(state.get("authenticated"))
