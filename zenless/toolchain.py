@@ -70,20 +70,29 @@ class ToolchainManager:
                     except Exception as exc:
                         result = InstallResult(item_id, "failed", str(exc))
                 results.append(result)
-                self._save_results(results)
+                self._save_results(results, merge=True)
             if not self.cancel_event.is_set():
                 try:
                     self._ensure_npm_packages(results)
                 except Exception as exc:
                     results.append(InstallResult("npm", "failed", str(exc)))
-            self._save_results(results)
+            self._save_results(results, merge=False)
             self._save_state()
             return results
 
-    def _save_results(self, results: list[InstallResult]) -> None:
+    def _save_results(self, results: list[InstallResult], *, merge: bool = True) -> None:
         target = self.runtime_root / "toolchain-results.json"
+        payload: dict[str, Any] = {}
+        if merge and target.is_file():
+            try:
+                raw = json.loads(target.read_text(encoding="utf-8"))
+                if isinstance(raw, dict):
+                    payload = raw
+            except (OSError, json.JSONDecodeError):
+                payload = {}
+        payload.update({item.item_id: asdict(item) for item in results})
         temporary = target.with_suffix(".tmp")
-        temporary.write_text(json.dumps({item.item_id: asdict(item) for item in results}, indent=2), encoding="utf-8")
+        temporary.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         os.replace(temporary, target)
 
     def _save_single_result(self, result: InstallResult) -> None:
