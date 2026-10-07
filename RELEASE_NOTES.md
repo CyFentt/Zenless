@@ -12,6 +12,11 @@
 - Harden portable packaging with rollback-safe updates, verified wheel-cache recovery, archive link rejection and reversible tool-directory swaps.
 - Prepare chat jobs, persisted messages and attachment assets before worker execution; roll back failed pre-start jobs and keep identical assets isolated per job.
 - Build source-only Python dependencies with SHA-256-pinned offline pip/setuptools tooling, pin CI to Python 3.14.7 and record source-build provenance in release.json.
+- Treat DeepSeek Reviewer as optional under Smart Routing, detect persistent CAPTCHA/challenge loops without attempting to bypass them, keep active login state stable across provider refreshes and Play Test shutdown, and close a usable Hunyuan login window automatically.
+- Add a durable sequential prompt queue with persisted ordering, configurable delay/retries/chaining, explicit SENT_UNCONFIRMED recovery, fail-closed restart semantics and manual Mark Sent / Retry resolution to prevent duplicate work.
+- Route Builder/Reviewer/research roles through free local Qwen or Gemini fallbacks when safe, use provider circuit breakers and deterministic prompt compaction for quota/input-limit failures, and never auto-resend after partial streamed output.
+- Make local AI installation recoverable per component: resumable verified downloads, exact Qwen/llama.cpp failure reasons, runtime/model retry controls, correct failed-vs-installed reporting and Ollama/portable backend visibility.
+- Persist browser/frontend/provider diagnostics with cause, impact and recovery context; surface previously silent local-QA and rollback failures; label local provider routes explicitly in Links.
 
 Baseline validation before the final hardening pass covered 190 Python tests, 72 frontend unit tests and 21 Chromium UI tests, plus Python/TypeScript checks and lint. The final hardening pass added regression coverage for safe chat continuation, standalone Play, provider routing/model confirmation, installer rollback, approval races, security headers, stale UI snapshots, legacy-code repair and settings consistency. The current GitHub Actions runner is failing before a runner is allocated, so no workflow steps execute for the current HEAD; those baseline counts must not be treated as a clean run of this exact revision.
 
