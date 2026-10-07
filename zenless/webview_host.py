@@ -744,6 +744,9 @@ class WebViewHost:
             const candidate = (node.innerText || node.textContent || '').trim();
             if (!candidate || candidate.length > 700) continue;
             const lowered = candidate.toLowerCase();
+            if (/(message is too long|prompt is too long|input is too long|context length|context window|maximum context|max context|too many tokens|token limit)/i.test(lowered)) {{
+              failure = candidate; failureCode = 'PROVIDER_INPUT_LIMIT'; break;
+            }}
             if (/(rate limit|too many requests|reached your limit|usage limit|quota exceeded)/i.test(lowered)) {{
               failure = candidate; failureCode = 'PROVIDER_RATE_LIMIT'; break;
             }}
