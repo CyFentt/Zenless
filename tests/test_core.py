@@ -756,8 +756,36 @@ class CoreTests(unittest.TestCase):
             core._preflight_providers(TaskOptions(create_3d_asset=False, independent_review=False))
 
         self.assertEqual(raised.exception.code, "PROVIDER_LOGIN_REQUIRED")
-        self.assertEqual(raised.exception.details, {"provider": "chatgpt"})
+        self.assertEqual(raised.exception.details["provider"], "chatgpt")
+        self.assertEqual(raised.exception.details["alternatives"], ["gemini", "local"])
         self.assertEqual(core.connections()["chatgpt"], "LOGIN")
+
+    def test_preflight_smart_routing_accepts_gemini_when_chatgpt_and_local_are_unavailable(self) -> None:
+        core = object.__new__(ZenlessCore)
+        bridge = Mock()
+        bridge.wait_for_provider.side_effect = lambda provider, timeout=0.0: provider == "gemini"
+        core.bridge = bridge
+        core.events = EventBus()
+        core._connections_lock = threading.RLock()
+        core._connections = {
+            "bridge": "READY",
+            "browser": "READY",
+            "chatgpt": "OFF",
+            "deepseek": "OFF",
+            "gemini": "OFF",
+            "hunyuan": "OFF",
+            "studio": "OFF",
+        }
+
+        core._preflight_providers(
+            TaskOptions(create_3d_asset=False, independent_review=False, smart_routing=True)
+        )
+
+        self.assertEqual(core._connections["gemini"], "READY")
+        self.assertEqual(
+            [call.args[0] for call in bridge.wait_for_provider.call_args_list],
+            ["chatgpt", "gemini"],
+        )
 
     def test_preflight_research_on_with_smart_routing_does_not_require_gemini(self) -> None:
         core = object.__new__(ZenlessCore)
