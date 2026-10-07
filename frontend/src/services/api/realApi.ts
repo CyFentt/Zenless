@@ -200,6 +200,9 @@ export class RealZenlessAPI implements ZenlessAPI {
   loginProvider(provider: ProviderId): Promise<{ ok: boolean }> {
     return request(`/api/providers/${encodeURIComponent(provider)}/login`, { method: 'POST', timeout: 30000 });
   }
+  cancelProviderLogin(provider: ProviderId): Promise<{ ok: boolean }> {
+    return request(`/api/providers/${encodeURIComponent(provider)}/login/cancel`, { method: 'POST', timeout: 10000 });
+  }
 
   getJobs(): Promise<Job[]> { return request('/api/jobs'); }
   getJob(id: string): Promise<Job> { return request(`/api/jobs/${encodeURIComponent(id)}`); }
