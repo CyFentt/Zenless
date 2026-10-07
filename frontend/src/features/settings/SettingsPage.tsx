@@ -91,10 +91,6 @@ function GeneralTab({ settings, onChange }: { settings: Settings | null; onChang
     }
   };
 
-  const loginAgent = loginModal ? agents.find((item) => item.id === loginModal) : undefined;
-  const loginDetail = loginAgent?.detail || '';
-  const challengeActive = /challenge|captcha|anti-bot|verification/i.test(loginDetail);
-
   return (
     <div className="p-6 max-w-2xl mx-auto w-full space-y-6 animate-fade-in">
       <Section title="BEHAVIOR">
@@ -367,6 +363,10 @@ function LinksTab({ connections, agents }: { connections: ConnectionInfo; agents
       frontendDiagnostics.capture(error, 'settings', `Failed to open ${provider} login`);
     }
   };
+
+  const loginAgent = loginModal ? agents.find((item) => item.id === loginModal) : undefined;
+  const loginDetail = loginAgent?.detail || '';
+  const challengeActive = /challenge|captcha|anti-bot|verification/i.test(loginDetail);
 
   return (
     <div className="p-6 max-w-2xl mx-auto w-full space-y-6 animate-fade-in">
