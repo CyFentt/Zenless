@@ -28,6 +28,43 @@ class CoreTests(unittest.TestCase):
             settings["models"]["gemini"]["model"] = "modified"
             self.assertNotEqual(core.settings()["models"]["gemini"]["model"], "modified")
 
+    def test_local_ai_state_does_not_report_failed_existing_model_as_installed(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            runtime = root / "runtime"
+            runtime.mkdir(parents=True)
+            (runtime / "toolchain-results.json").write_text(
+                json.dumps({
+                    "qwen3-4b": {
+                        "item_id": "qwen3-4b",
+                        "state": "failed",
+                        "detail": "SHA-256 mismatch",
+                        "path": "",
+                    }
+                }),
+                encoding="utf-8",
+            )
+            core = object.__new__(ZenlessCore)
+            core.portable_root = root
+            core.store = SQLiteStore(root / "state.db")
+            core._settings_lock = threading.RLock()
+            local_ai = Mock()
+            local_ai.available = False
+            local_ai.running = False
+            local_ai.backend_label = "Local AI unavailable"
+            local_ai.model_status.return_value = [
+                {"id": "qwen3-4b", "name": "Qwen3-4B-Q4_K_M", "installed": True}
+            ]
+            core.local_ai = local_ai
+            core._tools_state = {"state": "ERROR", "detail": "qwen3-4b failed"}
+
+            state = core.local_ai_state()
+
+            model = next(item for item in state["models"] if item["id"] == "qwen3-4b")
+            self.assertFalse(model["installed"])
+            self.assertEqual(model["state"], "failed")
+            self.assertIn("SHA-256", model["detail"])
+
     def test_task_options_are_bounded_and_typed(self) -> None:
         options = TaskOptions.from_ui(
             {
