@@ -72,6 +72,40 @@ def test_local_prompt_under_budget_is_not_modified(tmp_path: Path):
     assert service._compact_prompt(prompt) == prompt
 
 
+def test_ollama_model_selection_prefers_qwen_roles(tmp_path: Path):
+    service = LocalAIService(tmp_path)
+    with patch.object(
+        service,
+        "_ollama_models",
+        return_value=("llama3.2:latest", "qwen3:4b", "qwen2.5-coder:7b"),
+    ):
+        assert service._select_ollama_model("Role: Builder.\nBuild this") == "qwen2.5-coder:7b"
+        assert service._select_ollama_model("Role: Reviewer.\nReview this") == "qwen3:4b"
+
+
+def test_ollama_is_used_when_portable_runtime_is_unavailable(tmp_path: Path):
+    service = LocalAIService(tmp_path)
+    with (
+        patch.object(service, "_portable_available", return_value=False),
+        patch.object(service, "_select_ollama_model", return_value="qwen3:4b"),
+        patch.object(service, "_complete_ollama", return_value="local fallback") as ollama,
+    ):
+        assert service.complete("Role: Reviewer.\nReview") == "local fallback"
+    ollama.assert_called_once()
+
+
+def test_portable_local_ai_is_preferred_before_ollama(tmp_path: Path):
+    service = LocalAIService(tmp_path)
+    with (
+        patch.object(service, "_portable_available", return_value=True),
+        patch.object(service, "_complete_portable", return_value="portable") as portable,
+        patch.object(service, "_complete_ollama") as ollama,
+    ):
+        assert service.complete("Build") == "portable"
+    portable.assert_called_once()
+    ollama.assert_not_called()
+
+
 def test_vulkan_failure_is_stopped_before_cpu_retry(tmp_path: Path):
     service = LocalAIService(tmp_path)
     service.model_path.parent.mkdir(parents=True)
