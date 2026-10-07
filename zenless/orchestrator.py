@@ -689,19 +689,37 @@ class ZenlessOrchestrator:
                 raise BridgeError("Research is enabled, but neither Gemini nor the local research scout is available.")
         self.store.update_task(task_id, context_json=context)
 
-        if not self._provider_ready("chatgpt", timeout=2, options=options):
-            raise BridgeError("Builder requires login.")
+        builder_provider = self._builder_provider(task_id)
+        if not self._provider_ready(builder_provider, timeout=2, options=options):
+            replacement = self._select_builder_provider(options, timeout=2.0)
+            if not replacement:
+                raise BridgeError("Builder requires ChatGPT, Gemini, or an available local text model.")
+            builder_provider = replacement
+            self._set_builder_provider(task_id, builder_provider)
+            context["builder_provider"] = builder_provider
         if attachment_paths:
-            self._emit(task_id, Stage.COLLECTING_CONTEXT, "Uploading validated attachments to the builder.")
-            uploaded = self.bridge.request(
-                "chatgpt",
-                "upload_files",
-                {"files": [str(path) for path in attachment_paths]},
-                task_id=task_id,
-                timeout=120,
-            )
-            if str(uploaded.get("status", "ok")).casefold() != "ok":
-                raise BridgeError("The provider rejected this job's attachments.")
+            self._emit(task_id, Stage.COLLECTING_CONTEXT, "Uploading validated attachments to the active Builder route.")
+            try:
+                self._ensure_provider_attachments(builder_provider, task_id, attachment_paths)
+            except BridgeError as primary_error:
+                if (
+                    builder_provider == "chatgpt"
+                    and options.smart_routing
+                    and self.bridge.wait_for_provider("gemini", timeout=0.75)
+                ):
+                    self._ensure_provider_attachments("gemini", task_id, attachment_paths)
+                    builder_provider = "gemini"
+                    self._set_builder_provider(task_id, builder_provider)
+                    context["builder_provider"] = builder_provider
+                    self._emit(
+                        task_id,
+                        Stage.COLLECTING_CONTEXT,
+                        "The original Builder route could not carry every attachment; Gemini took over the Builder role.",
+                        "warning",
+                        str(primary_error)[:1000],
+                    )
+                else:
+                    raise
 
         proposal, evidence = self._build_proposal(
             task_id,
