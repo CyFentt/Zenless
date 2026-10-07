@@ -55,7 +55,7 @@ export function TopBar() {
           <StatusDot status={studioStatus} />
         </span>
         <span className="flex items-center gap-1.5">
-          <span className="text-ink-300">WS</span>
+          <span className="text-ink-300">SYNC</span>
           <StatusDot
             status={
               socketStatus === 'CONNECTED' ? 'READY' :
