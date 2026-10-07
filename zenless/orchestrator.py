@@ -326,6 +326,7 @@ class ZenlessOrchestrator:
         except ValueError:
             stage = Stage.PLANNING
         streamed = False
+        effective_prompt = prompt
 
         def publish(kind: str, detail: str = "") -> None:
             if self.event_callback is None:
@@ -352,7 +353,7 @@ class ZenlessOrchestrator:
             try:
                 return self.bridge.send_prompt(
                     target,
-                    prompt,
+                    effective_prompt,
                     task_id=task_id,
                     timeout=timeout,
                     stream_callback=on_delta,
@@ -360,13 +361,30 @@ class ZenlessOrchestrator:
             except TypeError as exc:
                 if "stream_callback" not in str(exc):
                     raise
-                return self.bridge.send_prompt(target, prompt, task_id=task_id, timeout=timeout)
+                return self.bridge.send_prompt(target, effective_prompt, task_id=task_id, timeout=timeout)
 
         publish("stream_start", provider)
         try:
             try:
                 return send(provider)
             except BridgeError as primary_error:
+                if not streamed and self._provider_input_limit_error(primary_error):
+                    compacted = self._compact_provider_prompt(prompt)
+                    if compacted != prompt:
+                        effective_prompt = compacted
+                        self._emit(
+                            task_id,
+                            stage,
+                            "Provider rejected the context size; retrying once with deterministic context compaction.",
+                            "warning",
+                            f"Prompt reduced from {len(prompt)} to {len(compacted)} characters.",
+                        )
+                        try:
+                            return send(provider)
+                        except BridgeError as compacted_error:
+                            if streamed:
+                                raise
+                            primary_error = compacted_error
                 if (
                     provider not in {"chatgpt", "deepseek"}
                     or not smart_routing
@@ -436,6 +454,43 @@ class ZenlessOrchestrator:
             publish("stream_finish", provider)
 
     @staticmethod
+    def _provider_input_limit_error(error: BaseException) -> bool:
+        message = str(error).casefold()
+        return any(
+            marker in message
+            for marker in (
+                "provider_input_limit",
+                "message is too long",
+                "prompt is too long",
+                "input is too long",
+                "context length",
+                "context window",
+                "maximum context",
+                "max context",
+                "too many tokens",
+                "token limit",
+            )
+        )
+
+    @staticmethod
+    def _compact_provider_prompt(prompt: str) -> str:
+        if len(prompt) <= 16_000:
+            return prompt
+        target = min(48_000, max(16_000, len(prompt) // 2))
+        if len(prompt) <= target:
+            return prompt
+        digest = hashlib.sha256(prompt.encode("utf-8", "replace")).hexdigest()
+        marker = (
+            "\n\n[RUBRA CONTEXT COMPACTED "
+            f"original_chars={len(prompt)} sha256={digest}; "
+            "middle context omitted after the provider rejected the original input size]\n\n"
+        )
+        budget = max(2, target - len(marker))
+        head = max(1, budget * 7 // 10)
+        tail = max(1, budget - head)
+        return prompt[:head] + marker + prompt[-tail:]
+
+    @staticmethod
     def _recoverable_provider_error(error: BaseException) -> bool:
         message = str(error).casefold()
         return any(
@@ -445,6 +500,7 @@ class ZenlessOrchestrator:
                 "provider_capacity",
                 "provider_transient_error",
                 "provider_circuit_open",
+                "provider_input_limit",
                 "rate limit",
                 "too many requests",
                 "reached your limit",
