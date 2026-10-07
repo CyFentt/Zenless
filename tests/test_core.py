@@ -65,6 +65,21 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(model["state"], "failed")
             self.assertIn("SHA-256", model["detail"])
 
+    def test_update_settings_rejects_non_numeric_revision_limit(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            core = object.__new__(ZenlessCore)
+            core.store = SQLiteStore(Path(folder) / "state.db")
+            core._settings_lock = threading.RLock()
+            core.project_index = Mock()
+            core.local_ai = Mock()
+            core.events = EventBus()
+
+            with self.assertRaises(CoreError) as raised:
+                core.update_settings({"maxRevisions": "not-a-number"})
+
+            self.assertEqual(raised.exception.code, "INVALID_MAX_REVISIONS")
+            self.assertEqual(raised.exception.status, 400)
+
     def test_task_options_are_bounded_and_typed(self) -> None:
         options = TaskOptions.from_ui(
             {
