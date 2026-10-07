@@ -624,6 +624,21 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(recovered_run["status"], "CANCELLED")
             self.assertTrue(recovered_run["summary"]["recovered"])
 
+    def test_orphan_running_test_is_cancelled_after_restart(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            store = SQLiteStore(Path(folder) / "state.db")
+            store.create_task("done-task", "Already done", TaskOptions())
+            store.update_task("done-task", stage=Stage.COMPLETE, status="complete")
+            store.create_test_run("orphan-run", "done-task", "STANDARD", 3)
+
+            recovered = store.recover_running_test_runs()
+
+            self.assertEqual(recovered, ["orphan-run"])
+            run = store.latest_test_run("done-task")
+            self.assertIsNotNone(run)
+            self.assertEqual(run["status"], "CANCELLED")
+            self.assertTrue(run["summary"]["recovered"])
+
     def test_pending_idempotent_operations_fail_closed_after_restart(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             store = SQLiteStore(Path(folder) / "state.db")
