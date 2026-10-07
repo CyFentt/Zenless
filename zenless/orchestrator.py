@@ -126,6 +126,7 @@ class ZenlessOrchestrator:
         self._pause: dict[str, threading.Event] = {}
         self._paused_from: dict[str, Stage] = {}
         self._gates: dict[tuple[str, str], _ApprovalGate] = {}
+        self._attachment_routes: set[tuple[str, str, str]] = set()
         self._state_lock = threading.RLock()
         self.current_task_id = ""
 
@@ -567,7 +568,10 @@ class ZenlessOrchestrator:
         attachment_paths: tuple[Path, ...],
     ) -> None:
         self._check_control(task_id, cancel_event)
-        required = [("chatgpt", "Builder")]
+        builder_provider = self._select_builder_provider(options, timeout=2.0)
+        if not builder_provider:
+            raise BridgeError("Builder requires ChatGPT, Gemini, or an available local text model.")
+        required: list[tuple[str, str]] = []
         if options.independent_review and not options.smart_routing:
             required.append(("deepseek", "Reviewer"))
         if options.create_3d_asset:
@@ -589,6 +593,9 @@ class ZenlessOrchestrator:
             create_3d=options.create_3d_asset,
         )
         context = self._collect_context(task_id, target.studio_id, analysis)
+        context["builder_provider"] = builder_provider
+        if attachment_paths:
+            context["attachment_paths"] = [str(path.resolve()) for path in attachment_paths]
         if isinstance(seed_context, dict):
             history = seed_context.get("conversation_history")
             if isinstance(history, list) and history:
