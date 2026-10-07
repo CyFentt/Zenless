@@ -29,6 +29,25 @@ from zenless.toolchain import ToolchainError, ToolchainManager
 from zenless.webview_host import WebViewHost
 
 
+def test_webview_busy_login_can_be_cancelled_out_of_band(tmp_path):
+    host = WebViewHost(profile_root=tmp_path, provider_specs=PROVIDERS, source=io.BytesIO(), target=io.BytesIO())
+    window = Mock()
+    host._windows["deepseek"] = window
+    lock = host._provider_locks["deepseek"]
+    assert lock.acquire(blocking=False)
+    try:
+        with patch.object(host, "_write") as write:
+            host._dispatch({"id": "cancel-1", "action": "dismiss_login", "provider": "deepseek"})
+    finally:
+        lock.release()
+
+    assert host._dismissed["deepseek"].is_set()
+    window.hide.assert_called_once()
+    payload = write.call_args.args[0]
+    assert payload["ok"] is True
+    assert payload["result"]["dismissed"] is True
+
+
 def test_webview_login_can_be_dismissed_without_destroying_saved_session(tmp_path):
     host = WebViewHost(profile_root=tmp_path, provider_specs=PROVIDERS, source=io.BytesIO(), target=io.BytesIO())
     window = Mock()
