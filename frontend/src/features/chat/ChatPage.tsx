@@ -361,6 +361,7 @@ function PromptQueuePanel({ snapshot, onChange }: { snapshot: PromptQueueSnapsho
           const active = item.state === 'PREPARING' || item.state === 'INFLIGHT';
           const uncertain = item.state === 'SENT_UNCONFIRMED';
           const failed = item.state === 'FAILED' || item.state === 'BLOCKED';
+          const editable = item.state === 'QUEUED' || failed;
           const stateClass = failed
             ? 'text-zen-errBright'
             : active || uncertain
