@@ -241,6 +241,18 @@ class AgentGatewayCapabilityTests(unittest.TestCase):
         with self.assertRaisesRegex(BridgeError, "LOGIN_CHALLENGE"):
             gateway.login("deepseek", timeout=1)
 
+    def test_deepseek_generic_webview_login_failure_does_not_fallback_to_playwright(self) -> None:
+        embedded = _CapabilityTransport({})
+        managed = _CapabilityTransport({})
+        embedded.login = lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            BridgeError("WebView2 helper failed during login")
+        )
+        managed.login = lambda *_args, **_kwargs: self.fail("DeepSeek login must not escalate to Playwright")
+        gateway = AgentGateway(managed=managed, embedded=embedded)
+
+        with self.assertRaisesRegex(BridgeError, "WebView2 helper failed"):
+            gateway.login("deepseek", timeout=1)
+
     def test_status_follows_the_selected_playwright_route(self) -> None:
         embedded = _CapabilityTransport({})
         managed = _CapabilityTransport({})
