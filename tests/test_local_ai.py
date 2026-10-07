@@ -92,6 +92,73 @@ def test_backend_label_reports_ollama_when_portable_backend_is_missing(tmp_path:
         assert service.backend_label == "Ollama · qwen3:4b"
 
 
+def test_ollama_selection_uses_supported_general_models_and_ignores_embedding(tmp_path: Path):
+    service = LocalAIService(tmp_path)
+    with patch.object(
+        service,
+        "_ollama_models",
+        return_value=("nomic-embed-text:latest", "bge-reranker:latest", "gpt-oss:20b"),
+    ):
+        assert service._select_ollama_model("Role: Builder.\nBuild this") == "gpt-oss:20b"
+        assert service._select_ollama_model("Role: Reviewer.\nReview this") == "gpt-oss:20b"
+
+
+def test_backend_label_can_use_reviewer_only_ollama_model(tmp_path: Path):
+    service = LocalAIService(tmp_path)
+    with (
+        patch.object(service, "_portable_available", return_value=False),
+        patch.object(
+            service,
+            "_select_ollama_model",
+            side_effect=lambda prompt: "" if prompt.startswith("Role: Builder") else "deepseek-r1:7b",
+        ),
+    ):
+        assert service.available
+        assert service.backend_label == "Ollama · deepseek-r1:7b"
+
+
+def test_ollama_chat_disables_thinking_and_unloads_after_response(tmp_path: Path):
+    service = LocalAIService(tmp_path)
+    captured: dict[str, object] = {}
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self, _limit: int) -> bytes:
+            return json.dumps(
+                {
+                    "message": {"role": "assistant", "content": "ready"},
+                    "done": True,
+                    "done_reason": "stop",
+                }
+            ).encode("utf-8")
+
+    def open_request(request, timeout):
+        captured["payload"] = json.loads(request.data.decode("utf-8"))
+        captured["timeout"] = timeout
+        return Response()
+
+    with patch("zenless.local_ai.urlopen", side_effect=open_request):
+        result = service._complete_ollama(
+            "Role: Builder.\nBuild",
+            "gpt-oss:20b",
+            max_tokens=700,
+            temperature=0.15,
+            timeout=30,
+        )
+
+    assert result == "ready"
+    payload = captured["payload"]
+    assert isinstance(payload, dict)
+    assert payload["think"] is False
+    assert payload["keep_alive"] == 0
+    assert payload["stream"] is False
+
+
 def test_ollama_is_used_when_portable_runtime_is_unavailable(tmp_path: Path):
     service = LocalAIService(tmp_path)
     with (
