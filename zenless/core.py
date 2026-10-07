@@ -381,7 +381,19 @@ class ZenlessCore:
         cancel = getattr(self.bridge, "cancel_login", None)
         if not callable(cancel):
             return False
-        dismissed = bool(cancel(provider))
+        try:
+            dismissed = bool(cancel(provider))
+        except BridgeError as exc:
+            self._report(
+                "browser",
+                f"cancel-login:{provider}",
+                exc,
+                "Retry Cancel Login or close the provider window manually. The saved browser profile is preserved.",
+                severity="WARNING",
+                probable_cause="Neither internal browser transport could confirm that the login window was dismissed.",
+                impact="Only the current login attempt may remain open; other providers are unaffected.",
+            )
+            raise CoreError("LOGIN_CANCEL_FAILED", str(exc), status=503, details={"provider": provider}) from exc
         if dismissed:
             with self._connections_lock:
                 if self._connections.get(provider) != "READY":
