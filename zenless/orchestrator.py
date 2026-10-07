@@ -1420,12 +1420,15 @@ class ZenlessOrchestrator:
         uploaded_texture = self.bridge.request(
             "hunyuan",
             "upload_files",
-            {"files": texture_inputs[:max_images]},
+            {"files": texture_inputs},
             task_id=task_id,
             timeout=120,
         )
-        if int(uploaded_texture.get("uploaded") or 0) != len(texture_inputs[:max_images]):
-            raise BridgeError("The 3D generator did not confirm the texture and PBR inputs.")
+        if int(uploaded_texture.get("uploaded") or 0) != len(texture_inputs):
+            raise BridgeError(
+                "The 3D generator did not confirm the geometry plus every approved texture reference; "
+                "Rubra will not silently drop a view."
+            )
         textured = self.bridge.request(
             "hunyuan",
             "generate_texture",
