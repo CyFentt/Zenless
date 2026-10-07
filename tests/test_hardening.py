@@ -291,6 +291,44 @@ class HardeningTests(unittest.TestCase):
             gateway.send_prompt("gemini", "research", task_id="job")
         self.assertEqual(embedded.calls, 3)
 
+    def test_deepseek_login_uses_managed_fallback_for_technical_webview_failure(self) -> None:
+        class BrokenEmbedded(FakeEmbedded):
+            def login(self, provider: str, *, install_if_missing: bool = True, timeout: float = 180.0) -> dict[str, Any]:
+                del provider, install_if_missing, timeout
+                raise BridgeError("WebView2 helper is not running.")
+
+        managed = FakeManaged(set())
+        gateway = AgentGateway(managed=managed, embedded=BrokenEmbedded(set()))
+
+        result = gateway.login("deepseek", timeout=1.0)
+
+        self.assertEqual(result["state"], "ready")
+        self.assertIn("deepseek", managed.ready)
+        self.assertEqual(gateway.provider_status()["deepseek"]["transport"], "playwright")
+
+    def test_deepseek_captcha_does_not_escalate_into_automated_browser(self) -> None:
+        class ChallengeEmbedded(FakeEmbedded):
+            def login(self, provider: str, *, install_if_missing: bool = True, timeout: float = 180.0) -> dict[str, Any]:
+                del provider, install_if_missing, timeout
+                raise BridgeError("LOGIN_CHALLENGE: anti-bot verification")
+
+        class CountingManaged(FakeManaged):
+            def __init__(self) -> None:
+                super().__init__(set())
+                self.login_calls = 0
+
+            def login(self, provider: str, *, install_if_missing: bool = True, timeout: float = 180.0) -> dict[str, Any]:
+                self.login_calls += 1
+                return super().login(provider, install_if_missing=install_if_missing, timeout=timeout)
+
+        managed = CountingManaged()
+        gateway = AgentGateway(managed=managed, embedded=ChallengeEmbedded(set()))
+
+        with self.assertRaisesRegex(BridgeError, "LOGIN_CHALLENGE"):
+            gateway.login("deepseek", timeout=1.0)
+
+        self.assertEqual(managed.login_calls, 0)
+
     def test_gateway_does_not_require_extension_by_default(self) -> None:
         gateway = AgentGateway(
             managed=FakeManaged(set()),
