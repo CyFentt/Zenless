@@ -561,12 +561,32 @@ class CoreTests(unittest.TestCase):
             store.create_task("applying", "Apply", TaskOptions())
             store.update_task("planning", stage=Stage.PLANNING, status="running")
             store.update_task("applying", stage=Stage.APPLYING, status="running")
+            store.create_test_run("run-applying", "applying", "STANDARD", 7)
 
             recovered = {item["id"]: item for item in store.recover_interrupted_tasks()}
 
             self.assertEqual(recovered["planning"]["stage"], Stage.PAUSED.value)
             self.assertEqual(recovered["applying"]["stage"], Stage.BLOCKED.value)
             self.assertIn("Safe recovery", recovered["applying"]["reason"])
+            recovered_run = store.latest_test_run("applying")
+            self.assertIsNotNone(recovered_run)
+            self.assertEqual(recovered_run["status"], "CANCELLED")
+            self.assertTrue(recovered_run["summary"]["recovered"])
+
+    def test_pending_idempotent_operations_fail_closed_after_restart(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            store = SQLiteStore(Path(folder) / "state.db")
+            claimed = store.claim_operation("chat-op-12345678", "chat", "")
+            self.assertTrue(claimed["claimed"])
+            self.assertEqual(claimed["state"], "pending")
+
+            recovered = store.recover_pending_operations()
+
+            self.assertEqual(recovered, ["chat-op-12345678"])
+            operation = store.operation("chat-op-12345678")
+            self.assertIsNotNone(operation)
+            self.assertEqual(operation["state"], "failed")
+            self.assertEqual(operation["response"]["code"], "RECOVERED_PENDING_OPERATION")
 
     def test_recovered_checkpoint_resume_restarts_as_child_job(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
