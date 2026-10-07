@@ -211,6 +211,7 @@ class LocalWebBridge:
         app.router.add_post("/api/providers/{provider}/login", self._login_provider)
         app.router.add_post("/api/providers/{provider}/login/cancel", self._cancel_provider_login)
 
+        app.router.add_get("/api/operations/{key}", self._operation_status)
         app.router.add_get("/api/jobs", self._sync_handler(self.core.jobs))
         app.router.add_get("/api/jobs/{job_id}", self._get_job)
         app.router.add_post("/api/jobs", self._create_job)
@@ -297,6 +298,22 @@ class LocalWebBridge:
 
     async def _get_job(self, request: web.Request) -> web.Response:
         return self._json(self.core.job(request.match_info["job_id"]))
+
+    async def _operation_status(self, request: web.Request) -> web.Response:
+        key = request.match_info["key"].strip()
+        if not re.fullmatch(r"[A-Za-z0-9._:-]{8,128}", key):
+            raise CoreError("INVALID_IDEMPOTENCY_KEY", "Invalid Idempotency-Key.")
+        operation = await asyncio.to_thread(self.core.store.operation, key)
+        if operation is None:
+            raise CoreError("OPERATION_NOT_FOUND", "Idempotent operation not found.", status=404)
+        return self._json(
+            {
+                "state": str(operation.get("state") or ""),
+                "kind": str(operation.get("kind") or ""),
+                "resourceId": str(operation.get("resource_id") or ""),
+                "response": operation.get("response") if isinstance(operation.get("response"), dict) else {},
+            }
+        )
 
     async def _create_job(self, request: web.Request) -> web.Response:
         body = await self._json_body(request)
