@@ -1729,7 +1729,7 @@ class ZenlessCore:
             "enabled": bool(self.settings()["localAI"]),
             "available": self.local_ai.available,
             "running": self.local_ai.running,
-            "model": "Qwen Coder 7B + Qwen3 4B",
+            "model": self.local_ai.backend_label,
             "models": models,
             "setup": dict(self._tools_state),
         }
