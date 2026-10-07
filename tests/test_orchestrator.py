@@ -825,6 +825,54 @@ class OrchestratorTests(unittest.TestCase):
             with self.assertRaisesRegex(BridgeError, "approved visual version"):
                 orchestrator._generate_hunyuan_model(task_id, "mesh", 1, "all")
 
+    def test_hunyuan_texture_upload_keeps_geometry_and_all_supported_views(self) -> None:
+        class RecordingHunyuan(FakeHunyuanBridge):
+            def __init__(self) -> None:
+                super().__init__({})
+                self.uploads: list[list[str]] = []
+
+            def request(
+                self,
+                provider: str,
+                action: str,
+                payload: dict[str, Any],
+                *,
+                task_id: str,
+                timeout: float,
+            ) -> dict[str, Any]:
+                if action == "upload_files":
+                    files = [str(item) for item in payload.get("files") or []]
+                    self.uploads.append(files)
+                    return {"status": "ok", "uploaded": len(files)}
+                if action in {"generate_geometry", "generate_texture"}:
+                    return {"status": "ok"}
+                return super().request(provider, action, payload, task_id=task_id, timeout=timeout)
+
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            bridge = RecordingHunyuan()
+            orchestrator, store = self.make_system(folder, bridge, FakeStudio())
+            task_id = "all-texture-views"
+            store.create_task(task_id, "Create the object", TaskOptions(create_3d_asset=True))
+            views: dict[str, dict[str, str]] = {}
+            for view in orchestrator._visual_views():
+                path = root / f"{view}.png"
+                path.write_bytes(b"png")
+                views[view] = {"path": str(path)}
+            store.update_task(
+                task_id,
+                context_json={"visual": {"status": "APPROVED", **views}},
+            )
+            glb = root / "model.glb"
+            glb.write_bytes(b"glb")
+
+            with patch.object(orchestrator, "_validated_glb_artifact", return_value=str(glb)):
+                orchestrator._generate_hunyuan_model(task_id, "mesh", 1, "all")
+
+            self.assertEqual([len(files) for files in bridge.uploads], [6, 7])
+            self.assertEqual(bridge.uploads[1][0], str(glb))
+            self.assertEqual(set(bridge.uploads[1][1:]), {item["path"] for item in views.values()})
+
     def test_rejected_change_never_reaches_multi_edit(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             bridge = FakeBridge({"chatgpt": [proposal()], "deepseek": [review()]})
