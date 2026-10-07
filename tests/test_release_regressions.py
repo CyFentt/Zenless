@@ -49,6 +49,46 @@ def test_managed_login_cancel_is_forwarded_to_browser_worker(tmp_path):
     call.assert_called_once_with("dismiss_login", "deepseek", timeout=5.0)
 
 
+def test_webview_health_does_not_probe_capabilities_on_login_challenge(tmp_path):
+    host = WebViewHost(profile_root=tmp_path, provider_specs=PROVIDERS, source=io.BytesIO(), target=io.BytesIO())
+    window = Mock()
+    window.get_current_url.return_value = "https://chat.deepseek.com/"
+    host._windows["deepseek"] = window
+    with (
+        patch.object(
+            host,
+            "_authentication_state",
+            return_value={"authenticated": False, "challenge": True, "guest": False},
+        ),
+        patch.object(host, "_capabilities") as capabilities,
+    ):
+        result = host._handle({"action": "health", "provider": "deepseek"})
+    assert result["ready"] is False
+    assert result["challenge"] is True
+    assert result["capabilities"] == {}
+    capabilities.assert_not_called()
+
+
+def test_webview_persistent_captcha_fails_login_without_destroying_session(tmp_path):
+    host = WebViewHost(profile_root=tmp_path, provider_specs=PROVIDERS, source=io.BytesIO(), target=io.BytesIO())
+    window = Mock()
+    window.get_current_url.return_value = "https://chat.deepseek.com/"
+    host._windows["deepseek"] = window
+    with (
+        patch.object(
+            host,
+            "_authentication_state",
+            return_value={"authenticated": False, "challenge": True, "guest": False},
+        ),
+        patch.object(host._stop, "wait", return_value=False),
+        patch("zenless.webview_host.time.monotonic", side_effect=[0.0, 1.0, 2.0, 3.0, 100.0, 100.0]),
+    ):
+        with pytest.raises(RuntimeError, match="LOGIN_CHALLENGE"):
+            host._handle({"action": "login", "provider": "deepseek", "payload": {"timeout": 600}})
+    assert host._windows["deepseek"] is window
+    window.destroy.assert_not_called()
+
+
 def test_login_closing_authenticated_window_keeps_verified_session(tmp_path):
     host = WebViewHost(profile_root=tmp_path, provider_specs=PROVIDERS, source=io.BytesIO(), target=io.BytesIO())
     window = Mock()
