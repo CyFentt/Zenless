@@ -678,7 +678,7 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(operation["state"], "uncertain")
             self.assertEqual(operation["response"]["code"], "IDEMPOTENCY_UNCERTAIN")
 
-    def test_operation_history_pruning_never_removes_uncertain_operations(self) -> None:
+    def test_operation_history_pruning_keeps_recent_uncertain_operations(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             store = SQLiteStore(Path(folder) / "state.db")
             for index in range(140):
