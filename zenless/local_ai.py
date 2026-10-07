@@ -34,7 +34,9 @@ class LocalAIService:
 
     @property
     def available(self) -> bool:
-        return self._portable_available() or bool(self._select_ollama_model("Role: Builder"))
+        return self._portable_available() or bool(
+            self._select_ollama_model("Role: Builder") or self._select_ollama_model("Role: Reviewer")
+        )
 
     @property
     def backend_label(self) -> str:
@@ -247,11 +249,39 @@ class LocalAIService:
                 return exact
         reviewer = prompt.startswith("Role: Reviewer")
         preferences = (
-            ("qwen3:4b", "qwen3-4b", "qwen3", "deepseek-r1", "deepseek")
+            (
+                "qwen3:4b",
+                "qwen3-4b",
+                "gpt-oss",
+                "qwen3",
+                "deepseek-r1",
+                "deepseek",
+                "llama",
+                "mistral",
+                "gemma",
+                "phi",
+            )
             if reviewer
-            else ("qwen2.5-coder", "qwen3-coder", "qwen-coder", "qwen3", "codellama", "deepseek-coder")
+            else (
+                "qwen3-coder",
+                "qwen2.5-coder",
+                "qwen-coder",
+                "gpt-oss",
+                "deepseek-coder",
+                "qwen3",
+                "codellama",
+                "codegemma",
+                "llama",
+                "mistral",
+                "gemma",
+                "phi",
+            )
         )
-        lowered = [(model, model.casefold()) for model in models]
+        lowered = [
+            (model, model.casefold())
+            for model in models
+            if not any(blocked in model.casefold() for blocked in ("embed", "embedding", "rerank"))
+        ]
         for preferred in preferences:
             match = next((model for model, value in lowered if preferred in value), "")
             if match:
@@ -287,7 +317,8 @@ class LocalAIService:
                 "model": model,
                 "messages": messages,
                 "stream": False,
-                "keep_alive": "0s",
+                "think": False,
+                "keep_alive": 0,
                 "options": {
                     "temperature": max(0.0, min(1.0, float(temperature))),
                     "num_predict": max(64, min(2048, int(max_tokens))),
