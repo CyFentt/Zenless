@@ -169,7 +169,10 @@
       "hardware_auto": {
         "min_ram_gb": 20,
         "min_free_gb": 8
-      }
+      },
+      "mirrors": [
+        "https://huggingface.co/Qwen/Qwen3-4B-GGUF/resolve/main/Qwen3-4B-Q4_K_M.gguf?download=true"
+      ]
     },
     {
       "id": "qwen-coder-7b",
@@ -184,7 +187,10 @@
       "hardware_auto": {
         "min_ram_gb": 20,
         "min_free_gb": 12
-      }
+      },
+      "mirrors": [
+        "https://huggingface.co/Qwen/Qwen2.5-Coder-7B-Instruct-GGUF/resolve/main/qwen2.5-coder-7b-instruct-q4_k_m.gguf?download=true"
+      ]
     },
     {
       "id": "uv",
