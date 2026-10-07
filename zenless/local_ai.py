@@ -42,7 +42,7 @@ class LocalAIService:
     def backend_label(self) -> str:
         if self._portable_available():
             return "Rubra local · Qwen"
-        ollama = self._select_ollama_model("Role: Builder")
+        ollama = self._select_ollama_model("Role: Builder") or self._select_ollama_model("Role: Reviewer")
         return f"Ollama · {ollama}" if ollama else "Local AI unavailable"
 
     def _model_paths(self) -> tuple[Path, Path]:
@@ -57,15 +57,22 @@ class LocalAIService:
             {"id": "qwen-coder-7b", "name": coder.stem, "installed": coder.is_file()},
             {"id": "qwen3-4b", "name": general.stem, "installed": general.is_file()},
         ]
-        ollama_model = self._select_ollama_model("Role: Builder")
+        builder_model = self._select_ollama_model("Role: Builder")
+        reviewer_model = self._select_ollama_model("Role: Reviewer")
+        ollama_model = builder_model or reviewer_model
         if ollama_model:
+            roles = []
+            if builder_model:
+                roles.append(f"Builder: {builder_model}")
+            if reviewer_model:
+                roles.append(f"Reviewer: {reviewer_model}")
             result.append(
                 {
                     "id": "ollama",
                     "name": f"Ollama · {ollama_model}",
                     "installed": True,
                     "state": "ready",
-                    "detail": "Detected through the local Ollama API; Rubra will use it as a free fallback.",
+                    "detail": "Detected through the local Ollama API; " + " · ".join(roles),
                 }
             )
         return result
