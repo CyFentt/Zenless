@@ -719,6 +719,14 @@ class LocalWebBridge:
             return self._json(operation["response"])
         if operation["state"] == "pending" and not operation.get("claimed"):
             raise CoreError("IDEMPOTENCY_PENDING", "The idempotent operation is still running.", status=409)
+        if operation["state"] == "uncertain":
+            response = operation.get("response") if isinstance(operation.get("response"), dict) else {}
+            raise CoreError(
+                "IDEMPOTENCY_UNCERTAIN",
+                str(response.get("message") or "The previous operation has an uncertain delivery outcome."),
+                status=409,
+                details={"kind": operation["kind"], "resourceId": operation["resource_id"]},
+            )
         if operation["state"] != "pending":
             raise CoreError("IDEMPOTENCY_FAILED", "The previous attempt did not complete.", status=409)
         try:
