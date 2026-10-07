@@ -2481,7 +2481,7 @@ class ZenlessCore:
             "updatedAt": _milliseconds(task["updated_at"]),
             "options": {
                 "visualFirst": bool(options.get("visual_first", False)),
-                "create3D": bool(options.get("create_3d_asset", True)),
+                "create3D": bool(options.get("create_3d_asset", False)),
                 "review": bool(options.get("independent_review", True)),
                 "autoTest": bool(options.get("automatic_play_test", True)),
                 "autoFix": bool(options.get("auto_fix_errors", True)),
