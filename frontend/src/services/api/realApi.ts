@@ -62,57 +62,92 @@ function withTimeout(ms: number): { signal: AbortSignal; cancel: () => void } {
 }
 
 async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
-  const { signal, cancel } = withTimeout(opts.timeout ?? DEFAULT_TIMEOUT);
-  const controller = new AbortController();
-  const abort = () => controller.abort();
-  signal.addEventListener('abort', abort, { once: true });
-  opts.signal?.addEventListener('abort', abort, { once: true });
-  if (opts.signal?.aborted) abort();
+  const attempts = opts.idempotencyKey ? 3 : 1;
   const requestId = crypto.randomUUID?.() ?? `req_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-  const headers: Record<string, string> = { 'X-Request-Id': requestId };
-  if (opts.rawBody === undefined) headers['Content-Type'] = 'application/json';
-  const token = getStoredToken();
-  if (token) headers['X-Rubra-Token'] = token;
-  if (opts.idempotencyKey) headers['Idempotency-Key'] = opts.idempotencyKey;
-  try {
-    const res = await fetch(`${API_BASE}${path}`, {
-      method: opts.method ?? 'GET',
-      headers,
-      body: opts.rawBody ?? (opts.body !== undefined ? JSON.stringify(opts.body) : undefined),
-      signal: controller.signal,
-    });
-    const responseRequestId = res.headers.get('X-Request-Id') ?? requestId;
-    if (res.status === 204) return undefined as T;
-    let body: unknown;
+  let finalTransportError: ApiError | null = null;
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const { signal, cancel } = withTimeout(opts.timeout ?? DEFAULT_TIMEOUT);
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    signal.addEventListener('abort', abort, { once: true });
+    opts.signal?.addEventListener('abort', abort, { once: true });
+    if (opts.signal?.aborted) abort();
+
+    const headers: Record<string, string> = { 'X-Request-Id': requestId };
+    if (opts.rawBody === undefined) headers['Content-Type'] = 'application/json';
+    const token = getStoredToken();
+    if (token) headers['X-Rubra-Token'] = token;
+    if (opts.idempotencyKey) headers['Idempotency-Key'] = opts.idempotencyKey;
+
     try {
-      body = await res.json();
-    } catch (error) {
-      if (controller.signal.aborted) throw error;
-      throw new ApiError(res.status, res.ok ? 'Invalid bridge response' : `HTTP ${res.status}`, responseRequestId, 'INVALID_RESPONSE');
-    }
-    if (!res.ok) {
-      const failure = body && typeof body === 'object' ? body as Record<string, unknown> : {};
-      const message = typeof failure.message === 'string' ? failure.message : typeof failure.error === 'string' ? failure.error : `HTTP ${res.status}`;
-      throw new ApiError(res.status, message, responseRequestId, typeof failure.code === 'string' ? failure.code : undefined, failure.details);
-    }
-    return body as T;
-  } catch (error) {
-    if (error instanceof ApiError) throw error;
-    const timedOut = signal.aborted;
-    const code = timedOut ? 'TIMEOUT' : controller.signal.aborted ? 'CANCELLED' : 'UNREACHABLE';
-    const message = timedOut ? 'Request timeout' : controller.signal.aborted ? 'Request cancelled' : 'Bridge unreachable';
-    if (opts.reportFailure !== false) {
-      frontendDiagnostics.report('error', 'api', message, undefined, undefined, {
-        requestId,
-        stack: error instanceof Error ? error.stack : undefined,
+      const res = await fetch(`${API_BASE}${path}`, {
+        method: opts.method ?? 'GET',
+        headers,
+        body: opts.rawBody ?? (opts.body !== undefined ? JSON.stringify(opts.body) : undefined),
+        signal: controller.signal,
       });
+      const responseRequestId = res.headers.get('X-Request-Id') ?? requestId;
+      if (res.status === 204) return undefined as T;
+      let body: unknown;
+      try {
+        body = await res.json();
+      } catch (error) {
+        if (controller.signal.aborted) throw error;
+        throw new ApiError(
+          res.status,
+          res.ok ? 'Invalid bridge response' : `HTTP ${res.status}`,
+          responseRequestId,
+          'INVALID_RESPONSE',
+        );
+      }
+      if (!res.ok) {
+        const failure = body && typeof body === 'object' ? body as Record<string, unknown> : {};
+        const message = typeof failure.message === 'string'
+          ? failure.message
+          : typeof failure.error === 'string'
+            ? failure.error
+            : `HTTP ${res.status}`;
+        const code = typeof failure.code === 'string' ? failure.code : undefined;
+        if (
+          opts.idempotencyKey
+          && res.status === 409
+          && code === 'IDEMPOTENCY_PENDING'
+          && attempt + 1 < attempts
+          && !opts.signal?.aborted
+        ) {
+          await new Promise((resolve) => window.setTimeout(resolve, 150 * (attempt + 1)));
+          continue;
+        }
+        throw new ApiError(res.status, message, responseRequestId, code, failure.details);
+      }
+      return body as T;
+    } catch (error) {
+      if (error instanceof ApiError) throw error;
+      const timedOut = signal.aborted;
+      const externallyCancelled = Boolean(opts.signal?.aborted);
+      const code = timedOut ? 'TIMEOUT' : externallyCancelled ? 'CANCELLED' : 'UNREACHABLE';
+      const message = timedOut ? 'Request timeout' : externallyCancelled ? 'Request cancelled' : 'Bridge unreachable';
+      finalTransportError = new ApiError(0, message, requestId, code);
+      if (opts.idempotencyKey && !externallyCancelled && attempt + 1 < attempts) {
+        await new Promise((resolve) => window.setTimeout(resolve, 150 * (attempt + 1)));
+        continue;
+      }
+      if (opts.reportFailure !== false) {
+        frontendDiagnostics.report('error', 'api', message, undefined, undefined, {
+          requestId,
+          stack: error instanceof Error ? error.stack : undefined,
+        });
+      }
+      throw finalTransportError;
+    } finally {
+      cancel();
+      signal.removeEventListener('abort', abort);
+      opts.signal?.removeEventListener('abort', abort);
     }
-    throw new ApiError(0, message, requestId, code);
-  } finally {
-    cancel();
-    signal.removeEventListener('abort', abort);
-    opts.signal?.removeEventListener('abort', abort);
   }
+
+  throw finalTransportError ?? new ApiError(0, 'Bridge unreachable', requestId, 'UNREACHABLE');
 }
 
 const TOKEN_KEY = 'rubra_token';
