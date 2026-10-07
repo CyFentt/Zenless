@@ -187,14 +187,30 @@ class ToolchainManager:
         target = self.portable_root / str(item["target"])
         if self._artifact_ready(item, target):
             return target
-        self._status(item_id, f"Installing {item.get('name', item_id)}")
         url = str(item["url"])
-        parsed = urllib.parse.urlparse(url)
         kind = str(item.get("kind") or "raw")
+        expected = str(item.get("sha256") or "").lower()
+        if kind == "raw" and expected and target.is_file():
+            self._status(item_id, f"Verifying existing {item.get('name', item_id)}")
+            actual = self._sha256(target)
+            if actual == expected:
+                size = target.stat().st_size
+                self._state[item_id] = {
+                    "url": url,
+                    "sha256": expected,
+                    "target": str(target),
+                    "markerSha256": actual,
+                    "size": size,
+                }
+                self._save_state()
+                self._status(item_id, f"Ready: {item.get('name', item_id)} (existing verified file)")
+                return target
+            self._status(item_id, f"Existing file failed verification; downloading a verified replacement")
+        self._status(item_id, f"Installing {item.get('name', item_id)}")
+        parsed = urllib.parse.urlparse(url)
         suffix = ".tar.gz" if kind == "tar.gz" else Path(parsed.path).suffix
         archive = self.download_root / f"{item_id}{suffix or '.bin'}"
         self._download(url, archive)
-        expected = str(item.get("sha256") or "").lower()
         if expected and self._sha256(archive) != expected:
             actual = self._sha256(archive)
             archive.unlink(missing_ok=True)
