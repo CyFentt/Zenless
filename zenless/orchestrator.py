@@ -1799,7 +1799,7 @@ class ZenlessOrchestrator:
                 task_id=task_id,
             )
             self.store.append_message(task_id, "Reviewer", "final-reviewer", raw)
-            review = self._parse_review(raw)
+            review = self._parse_review_with_recovery(reviewer, raw, task_id)
             self.store.update_task(task_id, final_review_json=review.to_dict())
             if review.approved:
                 self._emit(
