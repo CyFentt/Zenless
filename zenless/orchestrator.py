@@ -558,6 +558,9 @@ class ZenlessOrchestrator:
                 stale = [key for key in self._gates if key[0] == task_id]
                 for key in stale:
                     self._gates.pop(key, None)
+                self._attachment_routes = {
+                    key for key in self._attachment_routes if key[0] != task_id
+                }
 
     def _run(
         self,
