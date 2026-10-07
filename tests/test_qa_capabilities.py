@@ -246,6 +246,53 @@ class QACapabilityTests(unittest.TestCase):
         self.assertIn("expectedPlayers = 8", execute["code"])
         self.assertEqual(studio.calls[-1][0:2], ("start_stop_play", {"is_start": False}))
 
+    def test_manual_standard_playtest_does_not_probe_external_visual_reviewer(self) -> None:
+        qa = self._qa(_CapabilityStudio())
+        self.store.create_task(
+            "manual-standard",
+            "Play Test: Current Place",
+            TaskOptions(independent_review=False),
+        )
+        self.store.update_task(
+            "manual-standard",
+            context_json={"manual_test": True},
+        )
+
+        self.assertFalse(qa._needs_visual_review("manual-standard", PROFILES["STANDARD"]))
+        self.assertTrue(qa._needs_visual_review("manual-standard", PROFILES["DEEP"]))
+
+    def test_manual_playtest_skips_deepseek_result_review_even_if_provider_is_ready(self) -> None:
+        class ExplodingBridge(_OfflineBridge):
+            def wait_for_provider(self, provider: str, timeout: float = 0.0) -> bool:
+                raise AssertionError(f"Manual Play Test must not probe {provider}")
+
+        self.store.create_task(
+            "manual-review",
+            "Play Test: Current Place",
+            TaskOptions(independent_review=False),
+        )
+        self.store.update_task(
+            "manual-review",
+            context_json={"manual_test": True},
+        )
+        qa = QABreaker(
+            store=self.store,
+            studio=_CapabilityStudio(),
+            bridge=ExplodingBridge(),
+            events=EventBus(),
+            play_test_seconds=1,
+        )
+
+        review = qa._review_results(
+            "manual-review",
+            qa._make_plan("manual-review", PROFILES["STANDARD"], [], 7, False),
+            [],
+            "",
+            False,
+        )
+
+        self.assertEqual(review, "")
+
     def test_qa_smart_routing_off_skips_local_scout_and_requires_web_text_provider(self) -> None:
         class RoutingBridge(_OfflineBridge):
             def __init__(self) -> None:
