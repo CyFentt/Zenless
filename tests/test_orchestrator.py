@@ -533,6 +533,57 @@ class OrchestratorTests(unittest.TestCase):
             self.assertTrue(bridge.local)
             self.assertEqual(bridge.selected, "chatgpt")
 
+    def test_builder_local_failure_hands_off_once_to_gemini(self) -> None:
+        class Bridge(FakeBridge):
+            def __init__(self) -> None:
+                super().__init__({}, available={"chatgpt", "gemini"})
+                self.local = False
+                self.calls: list[str] = []
+
+            def prefer_local(self, provider: str) -> bool:
+                self.local = provider == "chatgpt"
+                return self.local
+
+            def provider_status(self) -> dict[str, dict[str, str]]:
+                return {
+                    "chatgpt": {
+                        "state": "Ready" if self.local else "Degraded",
+                        "transport": "local" if self.local else "webview2",
+                    },
+                    "gemini": {"state": "Ready", "transport": "webview2"},
+                }
+
+            def send_prompt(
+                self,
+                provider: str,
+                prompt: str,
+                *,
+                task_id: str,
+                timeout: float = 360.0,
+                stream_callback=None,
+            ) -> str:
+                del prompt, task_id, timeout
+                self.calls.append(provider)
+                if provider == "chatgpt" and not self.local:
+                    raise BridgeError("PROVIDER_RATE_LIMIT: quota reached")
+                if provider == "chatgpt":
+                    raise BridgeError("Local Builder failed: Local model request failed: timed out")
+                result = proposal()
+                if stream_callback is not None:
+                    stream_callback(result)
+                return result
+
+        with tempfile.TemporaryDirectory() as folder:
+            bridge = Bridge()
+            orchestrator, store = self.make_system(folder, bridge, FakeStudio())
+            store.create_task("builder-chain", "Build", TaskOptions(smart_routing=True))
+            store.update_task("builder-chain", stage=Stage.PLANNING, status="running")
+
+            result = orchestrator._send_agent_prompt("chatgpt", "build", task_id="builder-chain")
+
+            self.assertEqual(result, proposal())
+            self.assertEqual(bridge.calls, ["chatgpt", "chatgpt", "gemini"])
+
     def test_builder_does_not_auto_resend_after_partial_stream(self) -> None:
         class Bridge(FakeBridge):
             def __init__(self) -> None:
