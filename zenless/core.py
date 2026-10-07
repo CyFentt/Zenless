@@ -1897,7 +1897,15 @@ class ZenlessCore:
                 current["approvalMode"] = approval_mode
                 current["autoApprove"] = approval_mode == "FULL_AUTO"
             if "maxRevisions" in patch:
-                current["maxRevisions"] = max(1, min(64, int(patch["maxRevisions"])))
+                try:
+                    max_revisions = int(patch["maxRevisions"])
+                except (TypeError, ValueError) as exc:
+                    raise CoreError(
+                        "INVALID_MAX_REVISIONS",
+                        "Max revisions must be an integer between 1 and 64.",
+                        status=400,
+                    ) from exc
+                current["maxRevisions"] = max(1, min(64, max_revisions))
             if "projectRoot" in patch:
                 project_root = str(patch["projectRoot"] or "").strip()
                 try:
