@@ -108,8 +108,13 @@ class WebViewHost:
     def _dispatch(self, request: dict[str, Any]) -> None:
         lock = self._provider_locks.get(str(request.get("provider") or ""))
         if lock is not None and not lock.acquire(blocking=False):
-            if request.get("action") == "health":
+            action = request.get("action")
+            if action == "health":
                 self._write({"id": request.get("id"), "ok": True, "result": {"ready": False, "busy": True}})
+            elif action == "dismiss_login":
+                # Cancellation must be out-of-band: the long-running login request owns
+                # the provider lock and waits on this provider's dismissed event.
+                self._write(self._handle_guarded(request))
             else:
                 self._write(
                     {
