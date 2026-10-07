@@ -133,6 +133,16 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
         await new Promise((resolve) => window.setTimeout(resolve, 150 * (attempt + 1)));
         continue;
       }
+      if (opts.idempotencyKey && !externallyCancelled) {
+        const reconciliation = await reconcileIdempotentOperation<T>(
+          opts.idempotencyKey,
+          requestId,
+          opts.signal,
+        );
+        if (reconciliation.state === 'complete') return reconciliation.value as T;
+        if (reconciliation.state === 'uncertain') throw reconciliation.error;
+        if (reconciliation.state === 'failed') throw reconciliation.error;
+      }
       if (opts.reportFailure !== false) {
         frontendDiagnostics.report('error', 'api', message, undefined, undefined, {
           requestId,
@@ -148,6 +158,84 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
   }
 
   throw finalTransportError ?? new ApiError(0, 'Bridge unreachable', requestId, 'UNREACHABLE');
+}
+
+type OperationReconciliation<T> =
+  | { state: 'complete'; value: T }
+  | { state: 'uncertain' | 'failed'; error: ApiError }
+  | { state: 'unresolved' };
+
+async function reconcileIdempotentOperation<T>(
+  key: string,
+  requestId: string,
+  externalSignal?: AbortSignal,
+): Promise<OperationReconciliation<T>> {
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    if (externalSignal?.aborted) return { state: 'unresolved' };
+    if (attempt > 0) {
+      await new Promise((resolve) => window.setTimeout(resolve, Math.min(800, 200 * attempt)));
+    }
+    const { signal, cancel } = withTimeout(1500);
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    signal.addEventListener('abort', abort, { once: true });
+    externalSignal?.addEventListener('abort', abort, { once: true });
+    try {
+      const headers: Record<string, string> = { 'X-Request-Id': requestId };
+      const token = getStoredToken();
+      if (token) headers['X-Rubra-Token'] = token;
+      const response = await fetch(
+        `${API_BASE}/api/operations/${encodeURIComponent(key)}`,
+        { method: 'GET', headers, signal: controller.signal },
+      );
+      if (response.status === 404) continue;
+      if (!response.ok) return { state: 'unresolved' };
+      const payload = await response.json() as {
+        state?: unknown;
+        response?: unknown;
+      };
+      const state = typeof payload.state === 'string' ? payload.state : '';
+      const original = payload.response && typeof payload.response === 'object'
+        ? payload.response as Record<string, unknown>
+        : {};
+      if (state === 'complete') {
+        return { state: 'complete', value: original as T };
+      }
+      if (state === 'uncertain') {
+        return {
+          state: 'uncertain',
+          error: new ApiError(
+            409,
+            typeof original.message === 'string'
+              ? original.message
+              : 'The operation may have been delivered, but its final result is uncertain. Check Recent Tasks before retrying.',
+            requestId,
+            'IDEMPOTENCY_UNCERTAIN',
+            original,
+          ),
+        };
+      }
+      if (state === 'failed' || state === 'cancelled') {
+        return {
+          state: 'failed',
+          error: new ApiError(
+            409,
+            typeof original.message === 'string' ? original.message : 'The idempotent operation failed.',
+            requestId,
+            'IDEMPOTENCY_FAILED',
+            original,
+          ),
+        };
+      }
+    } catch {
+      // A reconciliation probe is best-effort. The original transport error is retained.
+    } finally {
+      cancel();
+      signal.removeEventListener('abort', abort);
+      externalSignal?.removeEventListener('abort', abort);
+    }
+  }
+  return { state: 'unresolved' };
 }
 
 const TOKEN_KEY = 'rubra_token';
