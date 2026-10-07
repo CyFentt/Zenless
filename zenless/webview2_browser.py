@@ -177,6 +177,15 @@ class WebView2BrowserController:
         self._set_state(provider, "Ready", "Authenticated WebView2 session")
         return result
 
+    def cancel_login(self, provider: str, *, timeout: float = 5.0) -> bool:
+        if not self.running:
+            return False
+        try:
+            result = self._request("dismiss_login", provider, {}, timeout=max(0.1, timeout))
+        except BridgeError:
+            return False
+        return bool(result.get("dismissed"))
+
     def send_prompt(
         self,
         provider: str,
