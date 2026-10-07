@@ -109,6 +109,19 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(items[0]["options"]["review"], False)
             self.assertEqual(items[1]["max_attempts"], 4)
 
+    def test_prompt_queue_partial_reorder_preserves_unspecified_order(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            store = SQLiteStore(Path(folder) / "queue.db")
+            for queue_id in ("q1", "q2", "q3", "q4"):
+                store.enqueue_prompt(queue_id, queue_id)
+
+            store.reorder_prompt_queue(["q3", "q1"])
+
+            self.assertEqual(
+                [item["id"] for item in store.prompt_queue_items()],
+                ["q3", "q1", "q2", "q4"],
+            )
+
     def test_prompt_queue_unconfirmed_delivery_requires_explicit_resolution(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             core = object.__new__(ZenlessCore)
