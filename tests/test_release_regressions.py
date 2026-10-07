@@ -29,6 +29,26 @@ from zenless.toolchain import ToolchainError, ToolchainManager
 from zenless.webview_host import WebViewHost
 
 
+def test_webview_login_can_be_dismissed_without_destroying_saved_session(tmp_path):
+    host = WebViewHost(profile_root=tmp_path, provider_specs=PROVIDERS, source=io.BytesIO(), target=io.BytesIO())
+    window = Mock()
+    host._windows["deepseek"] = window
+
+    result = host._handle({"action": "dismiss_login", "provider": "deepseek"})
+
+    assert result["dismissed"] is True
+    assert host._dismissed["deepseek"].is_set()
+    window.hide.assert_called_once()
+    window.destroy.assert_not_called()
+
+
+def test_managed_login_cancel_is_forwarded_to_browser_worker(tmp_path):
+    controller = ManagedBrowserController(data_root=tmp_path)
+    with patch.object(controller, "_call", return_value={"dismissed": True}) as call:
+        assert controller.cancel_login("deepseek")
+    call.assert_called_once_with("dismiss_login", "deepseek", timeout=5.0)
+
+
 def test_login_closing_authenticated_window_keeps_verified_session(tmp_path):
     host = WebViewHost(profile_root=tmp_path, provider_specs=PROVIDERS, source=io.BytesIO(), target=io.BytesIO())
     window = Mock()
