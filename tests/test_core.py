@@ -297,6 +297,44 @@ class CoreTests(unittest.TestCase):
             self.assertIn("paused checkpoint", item["last_error"].casefold())
             self.assertEqual(item["dispatched_job_id"], "job-1")
 
+    def test_prompt_queue_history_never_hides_new_pending_work(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            store = SQLiteStore(Path(folder) / "queue.db")
+            for index in range(140):
+                queue_id = f"done-{index:03d}"
+                store.enqueue_prompt(queue_id, queue_id)
+                store.update_prompt_queue_item(queue_id, state="completed")
+            store.enqueue_prompt("pending-new", "Must remain visible")
+
+            items = store.prompt_queue_items(128)
+
+            self.assertIn("pending-new", [item["id"] for item in items])
+            self.assertEqual(
+                [item["id"] for item in items if item["state"] != "completed"],
+                ["pending-new"],
+            )
+            self.assertLessEqual(
+                len([item for item in items if item["state"] == "completed"]),
+                128,
+            )
+
+    def test_prompt_queue_position_swap_does_not_reorder_terminal_history(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            store = SQLiteStore(Path(folder) / "queue.db")
+            store.enqueue_prompt("done", "done")
+            store.update_prompt_queue_item("done", state="completed")
+            store.enqueue_prompt("one", "one")
+            store.enqueue_prompt("two", "two")
+            before_done = store.prompt_queue_item("done")["position"]
+
+            store.swap_prompt_queue_positions("one", "two")
+
+            self.assertEqual(store.prompt_queue_item("done")["position"], before_done)
+            self.assertLess(
+                store.prompt_queue_item("two")["position"],
+                store.prompt_queue_item("one")["position"],
+            )
+
     def test_prompt_queue_reorder_preserves_every_item_once(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             store = SQLiteStore(Path(folder) / "queue.db")
