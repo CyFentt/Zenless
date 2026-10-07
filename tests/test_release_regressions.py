@@ -300,6 +300,42 @@ def test_existing_verified_raw_model_is_adopted_without_redownload(tmp_path):
     assert state['qwen3-4b']['sha256'] == digest
 
 
+def test_toolchain_uses_verified_mirror_after_primary_download_failure(tmp_path):
+    (tmp_path / 'assets').mkdir()
+    payload = b'verified-model'
+    digest = hashlib.sha256(payload).hexdigest()
+    (tmp_path / 'assets/toolchain.json').write_text(json.dumps({'artifacts': [{
+        'id': 'qwen3-4b',
+        'name': 'Qwen test',
+        'kind': 'raw',
+        'url': 'https://primary.invalid/model.gguf',
+        'mirrors': ['https://mirror.invalid/model.gguf'],
+        'sha256': digest,
+        'target': 'runtime/models/model.gguf',
+        'marker': 'model.gguf',
+    }]}))
+    manager = ToolchainManager(resource_root=tmp_path, portable_root=tmp_path)
+    calls = []
+
+    def download(url, target):
+        calls.append(url)
+        if 'primary.invalid' in url:
+            raise ToolchainError('primary unavailable')
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(payload)
+
+    with patch.object(manager, '_download', side_effect=download):
+        result = manager.install('qwen3-4b')
+
+    assert result.state == 'ready'
+    assert calls == [
+        'https://primary.invalid/model.gguf',
+        'https://mirror.invalid/model.gguf',
+    ]
+    state = json.loads((tmp_path / 'runtime/toolchain-state.json').read_text())
+    assert state['qwen3-4b']['url'] == 'https://mirror.invalid/model.gguf'
+
+
 def test_targeted_tool_install_persists_failure_for_ui(tmp_path):
     (tmp_path / 'assets').mkdir()
     (tmp_path / 'assets/toolchain.json').write_text(json.dumps({'artifacts': [
