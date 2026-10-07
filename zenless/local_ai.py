@@ -36,6 +36,13 @@ class LocalAIService:
     def available(self) -> bool:
         return self._portable_available() or bool(self._select_ollama_model("Role: Builder"))
 
+    @property
+    def backend_label(self) -> str:
+        if self._portable_available():
+            return "Rubra local · Qwen"
+        ollama = self._select_ollama_model("Role: Builder")
+        return f"Ollama · {ollama}" if ollama else "Local AI unavailable"
+
     def _model_paths(self) -> tuple[Path, Path]:
         return (
             self.runtime_root / "models" / "qwen2.5-coder-7b-instruct-q4_k_m.gguf",
