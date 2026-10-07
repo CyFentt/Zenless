@@ -2246,7 +2246,7 @@ class ZenlessOrchestrator:
         except InvalidStageTransition:
             raise
         except KeyError:
-            pass
+            return
         if self.event_callback is not None:
             self.event_callback(event)
 
