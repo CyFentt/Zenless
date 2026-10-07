@@ -353,6 +353,27 @@ class SQLiteStore:
                     "UPDATE tasks SET stage = ?, status = ?, error = ?, updated_at = ? WHERE id = ?",
                     (next_stage, next_status, reason, timestamp, task_id),
                 )
+                connection.execute(
+                    """
+                    UPDATE test_runs
+                    SET status = 'CANCELLED',
+                        summary_json = ?,
+                        finished_at = ?
+                    WHERE job_id = ? AND status = 'RUNNING'
+                    """,
+                    (
+                        json.dumps(
+                            {
+                                "recovered": True,
+                                "reason": "Rubra stopped before this test run reached a terminal state.",
+                                "previousTaskStage": previous,
+                            },
+                            ensure_ascii=False,
+                        ),
+                        timestamp,
+                        task_id,
+                    ),
+                )
                 recovered.append(
                     {
                         "id": task_id,
@@ -364,6 +385,36 @@ class SQLiteStore:
                 )
             connection.execute("COMMIT")
         return recovered
+
+    def recover_pending_operations(self) -> list[str]:
+        timestamp = now_iso()
+        with closing(self._connect()) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            rows = connection.execute(
+                "SELECT idempotency_key FROM operations WHERE state = 'pending' ORDER BY created_at"
+            ).fetchall()
+            keys = [str(row["idempotency_key"]) for row in rows]
+            if keys:
+                response = json.dumps(
+                    {
+                        "code": "RECOVERED_PENDING_OPERATION",
+                        "message": (
+                            "Rubra restarted before this idempotent operation reached a confirmed result. "
+                            "Verify Recent Tasks before retrying with a new operation."
+                        ),
+                    },
+                    ensure_ascii=False,
+                )
+                connection.execute(
+                    """
+                    UPDATE operations
+                    SET state = 'failed', response_json = ?, updated_at = ?
+                    WHERE state = 'pending'
+                    """,
+                    (response, timestamp),
+                )
+            connection.execute("COMMIT")
+        return keys
 
     def operations_for_resource(self, resource_id: str) -> list[dict[str, Any]]:
         with closing(self._connect()) as connection:
