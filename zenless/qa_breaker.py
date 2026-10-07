@@ -691,7 +691,12 @@ class QABreaker:
         output: str,
         rerun: bool,
     ) -> str:
-        if rerun or not self._provider_ready(job_id, "deepseek", timeout=0.5):
+        task = self.store.load_task(job_id) or {}
+        options = task.get("options") if isinstance(task.get("options"), dict) else {}
+        context = task.get("context") if isinstance(task.get("context"), dict) else {}
+        if rerun or context.get("manual_test") or not bool(options.get("independent_review", True)):
+            return ""
+        if not self._provider_ready(job_id, "deepseek", timeout=0.5):
             return ""
         payload = {
             "plan": asdict(plan),
@@ -726,6 +731,9 @@ class QABreaker:
 
     def _needs_visual_review(self, job_id: str, profile: TestProfile) -> bool:
         task = self.store.load_task(job_id) or {}
+        context = task.get("context") if isinstance(task.get("context"), dict) else {}
+        if context.get("manual_test") and profile.name not in {"DEEP", "EXHAUSTIVE"}:
+            return False
         prompt = str(task.get("prompt", "")).casefold()
         visual_terms = (
             "ui",
