@@ -194,6 +194,7 @@ export class MockZenlessAPI implements ZenlessAPI {
   async updatePromptQueueItem(id: string, patch: { content?: string; options?: TaskOptions }): Promise<PromptQueueItem> {
     const item = this.promptQueue.find((value) => value.id === id);
     if (!item) throw new Error("Queue item not found");
+    if (!["QUEUED", "BLOCKED", "FAILED"].includes(item.state)) throw new Error("Queue item is not editable");
     if (patch.content !== undefined) item.content = patch.content;
     if (patch.options !== undefined) item.options = patch.options;
     item.updatedAt = Date.now();
@@ -202,9 +203,12 @@ export class MockZenlessAPI implements ZenlessAPI {
   async retryPromptQueueItem(id: string): Promise<PromptQueueItem> {
     const item = this.promptQueue.find((value) => value.id === id);
     if (!item) throw new Error("Queue item not found");
+    if (!["BLOCKED", "FAILED", "SENT_UNCONFIRMED"].includes(item.state)) throw new Error("Queue item is not retryable");
     item.state = "QUEUED";
     item.attempts = 0;
+    item.jobId = undefined;
     item.lastError = "";
+    item.nextAttemptAt = "";
     item.updatedAt = Date.now();
     return clone(item);
   }
@@ -218,21 +222,31 @@ export class MockZenlessAPI implements ZenlessAPI {
     return clone(item);
   }
   async movePromptQueueItem(id: string, direction: -1 | 1): Promise<PromptQueueSnapshot> {
-    const index = this.promptQueue.findIndex((value) => value.id === id);
-    const target = Math.max(0, Math.min(this.promptQueue.length - 1, index + direction));
-    if (index >= 0 && target !== index) {
-      const [item] = this.promptQueue.splice(index, 1);
-      this.promptQueue.splice(target, 0, item);
-      this.promptQueue.forEach((value, position) => { value.position = (position + 1) * 10; });
+    const movable = this.promptQueue.filter((value) => ["QUEUED", "BLOCKED", "FAILED"].includes(value.state));
+    const index = movable.findIndex((value) => value.id === id);
+    if (index < 0) throw new Error("Queue item is not movable");
+    const target = Math.max(0, Math.min(movable.length - 1, index + direction));
+    if (target !== index) {
+      const first = movable[index];
+      const second = movable[target];
+      const position = first.position;
+      first.position = second.position;
+      second.position = position;
+      this.promptQueue.sort((a, b) => a.position - b.position || a.createdAt - b.createdAt);
     }
     return this.getPromptQueue();
   }
   async deletePromptQueueItem(id: string): Promise<{ ok: boolean }> {
-    const before = this.promptQueue.length;
+    const item = this.promptQueue.find((value) => value.id === id);
+    if (!item) return { ok: false };
+    if (item.state === "PREPARING" || item.state === "INFLIGHT") throw new Error("Queue item is active");
     this.promptQueue = this.promptQueue.filter((value) => value.id !== id);
-    return { ok: this.promptQueue.length !== before };
+    return { ok: true };
   }
   async updatePromptQueueConfig(patch: Partial<PromptQueueConfig>): Promise<PromptQueueConfig> {
+    if (patch.paused === false && this.promptQueue.some((value) => value.state === "SENT_UNCONFIRMED")) {
+      throw new Error("Resolve unconfirmed queued deliveries before resuming the queue");
+    }
     this.promptQueueConfig = { ...this.promptQueueConfig, ...patch };
     return clone(this.promptQueueConfig);
   }
