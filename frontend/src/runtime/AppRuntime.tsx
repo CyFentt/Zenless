@@ -39,7 +39,10 @@ export class ApplicationRuntime {
       const store = useStore.getState();
       store.setBootSteps(result.steps);
       store.setBackendReady(result.steps.some((step) => step.stage === 'UI' && step.state === 'READY'));
-      this.unsubscribeEvent = this.socket.on('event', handleEvent);
+      this.unsubscribeEvent = this.socket.on('event', (event) => {
+        handleEvent(event);
+        if (this.hydration) this.hydrationQueued = true;
+      });
       this.unsubscribeStatus = this.socket.on('status', (status) => this.handleSocketStatus(status));
       this.socket.connect();
       await this.rehydrate();
