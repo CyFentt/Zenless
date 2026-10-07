@@ -371,6 +371,17 @@ class OrchestratorTests(unittest.TestCase):
             self.assertNotIn(prepared[0], orchestrator._tasks)
             orchestrator.event_callback.assert_not_called()
 
+    def test_missing_task_does_not_emit_ghost_frontend_event(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            orchestrator, store = self.make_system(folder, FakeBridge({}), FakeStudio())
+            orchestrator.event_callback = Mock()
+            store.create_task("gone", "Temporary", TaskOptions())
+            self.assertTrue(store.delete_task("gone"))
+
+            orchestrator._emit("gone", Stage.PLANNING, "Should not appear")
+
+            orchestrator.event_callback.assert_not_called()
+
     def test_independent_review_off_skips_final_reviewer_entirely(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             bridge = FakeBridge({}, available={"chatgpt"})
