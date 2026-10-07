@@ -284,6 +284,41 @@ class OrchestratorTests(unittest.TestCase):
                 with self.assertRaisesRegex(OrchestratorError, "READ_BACK_MISMATCH"):
                     orchestrator._apply_actions("corrupt", "studio-1", [action])
 
+    def test_truncated_proposal_gets_one_bounded_protocol_repair(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            bridge = FakeBridge({"chatgpt": [proposal()]}, available={"chatgpt"})
+            orchestrator, store = self.make_system(folder, bridge, FakeStudio())
+            store.create_task("protocol-repair", "Build", TaskOptions())
+            store.update_task("protocol-repair", stage=Stage.PLANNING, status="running")
+
+            parsed = orchestrator._parse_proposal_with_recovery(
+                "chatgpt",
+                '{"summary":"cut off","actions":[',
+                "protocol-repair",
+            )
+
+            self.assertEqual(parsed.summary, "Planned implementation")
+            self.assertEqual(len(bridge.prompts), 1)
+            self.assertIn("previous response could not be parsed", bridge.prompts[0][1].casefold())
+            messages = store.task_messages("protocol-repair")
+            self.assertTrue(any(item["sender"] == "Builder Recovery" for item in messages))
+
+    def test_protocol_repair_fails_after_one_invalid_retry(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            bridge = FakeBridge({"chatgpt": ['{"summary":']}, available={"chatgpt"})
+            orchestrator, store = self.make_system(folder, bridge, FakeStudio())
+            store.create_task("protocol-fail", "Build", TaskOptions())
+            store.update_task("protocol-fail", stage=Stage.PLANNING, status="running")
+
+            with self.assertRaisesRegex(Exception, "protocol recovery failed"):
+                orchestrator._parse_proposal_with_recovery(
+                    "chatgpt",
+                    '{"summary":"cut off","actions":[',
+                    "protocol-fail",
+                )
+
+            self.assertEqual(len(bridge.prompts), 1)
+
     def test_submit_rolls_back_persisted_task_when_prepare_fails(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             orchestrator, store = self.make_system(folder, FakeBridge({}), FakeStudio())
