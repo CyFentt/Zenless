@@ -821,15 +821,23 @@ class ZenlessCore:
         if "delaySeconds" in patch:
             try:
                 config["delaySeconds"] = max(0, min(300, int(patch["delaySeconds"])))
-            except TypeError, ValueError:
-                pass
+            except (TypeError, ValueError) as exc:
+                raise CoreError(
+                    "INVALID_QUEUE_DELAY",
+                    "Queue delay must be an integer between 0 and 300 seconds.",
+                    status=400,
+                ) from exc
         max_attempts_changed = False
         if "maxAttempts" in patch:
             try:
                 config["maxAttempts"] = max(1, min(8, int(patch["maxAttempts"])))
                 max_attempts_changed = True
-            except TypeError, ValueError:
-                pass
+            except (TypeError, ValueError) as exc:
+                raise CoreError(
+                    "INVALID_QUEUE_ATTEMPTS",
+                    "Queue retries must be an integer between 1 and 8.",
+                    status=400,
+                ) from exc
         self.store.set_setting("prompt_queue.config", config)
         if max_attempts_changed:
             for item in self.store.prompt_queue_items(128):
