@@ -317,6 +317,7 @@ class ZenlessOrchestrator:
         *,
         task_id: str,
         timeout: float = 360.0,
+        attachment_paths: tuple[Path, ...] = (),
     ) -> str:
         message_id = uuid.uuid4().hex
         task = self.store.load_task(task_id) or {}
@@ -351,6 +352,8 @@ class ZenlessOrchestrator:
                 publish("stream_delta", value)
 
         def send(target: str) -> str:
+            if attachment_paths:
+                self._ensure_provider_attachments(target, task_id, attachment_paths)
             try:
                 return self.bridge.send_prompt(
                     target,
@@ -446,7 +449,10 @@ class ZenlessOrchestrator:
                         " | ".join(fallback_errors)[-1800:],
                     )
                     publish("stream_start", "gemini")
-                    return send("gemini")
+                    result = send("gemini")
+                    if provider == "chatgpt":
+                        self._set_builder_provider(task_id, "gemini")
+                    return result
                 raise BridgeError(
                     f"Smart Routing exhausted available {role.lower()} routes: "
                     + " | ".join(fallback_errors)[-3000:]
