@@ -100,6 +100,14 @@ export class MockZenlessAPI implements ZenlessAPI {
     this.setMockAgentStatus(provider, "READY");
     return { ok: true };
   }
+  async cancelProviderLogin(provider: ProviderId) {
+    await delay(30);
+    if (this.connections[provider] !== "READY") {
+      this.connections[provider] = "LOGIN";
+      this.setMockAgentStatus(provider, "LOGIN");
+    }
+    return { ok: true };
+  }
   async getJobs() {
     await delay(80);
     return clone(this.jobs);
