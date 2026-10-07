@@ -194,6 +194,22 @@ class AgentGateway:
             self._task_routes = {key: value for key, value in self._task_routes.items() if key[0] != provider}
         return result
 
+    def cancel_login(self, provider: str) -> bool:
+        dismissed = False
+        cancel_embedded = getattr(self.embedded, "cancel_login", None)
+        if callable(cancel_embedded):
+            try:
+                dismissed = bool(cancel_embedded(provider, timeout=5.0)) or dismissed
+            except Exception:
+                pass
+        cancel_managed = getattr(self.managed, "cancel_login", None)
+        if callable(cancel_managed):
+            try:
+                dismissed = bool(cancel_managed(provider, timeout=5.0)) or dismissed
+            except Exception:
+                pass
+        return dismissed
+
     def prefer_local(self, provider: str) -> bool:
         if not self._can_use_local(provider):
             return False
