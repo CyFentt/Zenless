@@ -88,6 +88,22 @@ def test_webview_health_does_not_probe_capabilities_on_login_challenge(tmp_path)
     capabilities.assert_not_called()
 
 
+def test_managed_persistent_captcha_is_bounded(tmp_path):
+    controller = ManagedBrowserController(data_root=tmp_path)
+    with (
+        patch.object(controller, "_call", return_value={"state": "login_window_open"}),
+        patch.object(
+            controller,
+            "provider_status",
+            return_value={"deepseek": {"state": "Login Required", "detail": "Anti-bot challenge is active"}},
+        ),
+        patch.object(controller._stop, "wait", return_value=False),
+        patch("zenless.managed_browser.time.monotonic", side_effect=[0.0, 1.0, 2.0, 3.0, 100.0, 100.0]),
+    ):
+        with pytest.raises(BridgeError, match="LOGIN_CHALLENGE"):
+            controller.login("deepseek", timeout=600)
+
+
 def test_webview_persistent_captcha_fails_login_without_destroying_session(tmp_path):
     host = WebViewHost(profile_root=tmp_path, provider_specs=PROVIDERS, source=io.BytesIO(), target=io.BytesIO())
     window = Mock()
