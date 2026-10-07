@@ -2043,6 +2043,7 @@ class ZenlessCore:
     def _start_services(self) -> None:
         try:
             recovered = self.store.recover_interrupted_tasks()
+            recovered_tests = self.store.recover_running_test_runs()
             recovered_queue = self.store.recover_prompt_queue()
             recovered_operations = self.store.recover_pending_operations()
             self._set_boot("STATE", "READY")
@@ -2055,6 +2056,15 @@ class ZenlessCore:
                     message=str(item["reason"]),
                     impact=f"Interrupted task {item['id']} moved to {item['stage']}.",
                     recovery_action="Resume only pre-mutation checkpoints; inspect blocked mutation evidence manually.",
+                )
+            for run_id in recovered_tests:
+                self.diagnostics.report(
+                    severity="WARNING",
+                    source="qa",
+                    component="test-recovery",
+                    message="An unfinished Play Test was closed during startup recovery.",
+                    impact=f"Test run {run_id[:48]} is now marked CANCELLED instead of remaining RUNNING.",
+                    recovery_action="Run a fresh Play Test if verification is still required.",
                 )
             for operation_key in recovered_operations:
                 self.diagnostics.report(
