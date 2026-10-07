@@ -2309,6 +2309,91 @@ class ZenlessOrchestrator:
     def _ensure_task_attachments(self, provider: str, task_id: str) -> None:
         self._ensure_provider_attachments(provider, task_id, self._task_attachment_paths(task_id))
 
+    def _builder_smart_routing(self, task_id: str) -> bool:
+        task = self.store.load_task(task_id) or {}
+        options = task.get("options") if isinstance(task.get("options"), dict) else {}
+        return bool(options.get("smart_routing", True))
+
+    def _ensure_builder_attachments(self, task_id: str, paths: tuple[Path, ...]) -> str:
+        provider = self._builder_provider(task_id)
+        try:
+            self._ensure_provider_attachments(provider, task_id, paths)
+            return provider
+        except BridgeError as primary_error:
+            if (
+                provider == "chatgpt"
+                and self._builder_smart_routing(task_id)
+                and self.bridge.wait_for_provider("gemini", timeout=0.75)
+            ):
+                self._ensure_provider_attachments("gemini", task_id, paths)
+                self._set_builder_provider(task_id, "gemini")
+                task = self.store.load_task(task_id) or {}
+                try:
+                    stage = Stage(str(task.get("stage") or Stage.COLLECTING_CONTEXT.value))
+                except ValueError:
+                    stage = Stage.COLLECTING_CONTEXT
+                self._emit(
+                    task_id,
+                    stage,
+                    "Builder attachment capability moved to Gemini.",
+                    "warning",
+                    str(primary_error)[:1000],
+                )
+                return "gemini"
+            raise
+
+    def _builder_request(
+        self,
+        task_id: str,
+        action: str,
+        payload: dict[str, Any],
+        *,
+        timeout: float,
+    ) -> dict[str, Any]:
+        provider = self._builder_provider(task_id)
+        try:
+            return self.bridge.request(provider, action, payload, task_id=task_id, timeout=timeout)
+        except BridgeError as primary_error:
+            message = str(primary_error).casefold()
+            safely_reroutable = any(
+                marker in message
+                for marker in (
+                    "capability_unavailable",
+                    "provider_rate_limit",
+                    "provider_capacity",
+                    "provider_transient_error",
+                    "rate limit",
+                    "quota exceeded",
+                    "high traffic",
+                    "overloaded",
+                )
+            )
+            if (
+                provider != "chatgpt"
+                or not self._builder_smart_routing(task_id)
+                or not safely_reroutable
+                or not self.bridge.wait_for_provider("gemini", timeout=0.75)
+            ):
+                raise
+            task_attachments = self._task_attachment_paths(task_id)
+            if task_attachments:
+                self._ensure_provider_attachments("gemini", task_id, task_attachments)
+            result = self.bridge.request("gemini", action, payload, task_id=task_id, timeout=timeout)
+            self._set_builder_provider(task_id, "gemini")
+            task = self.store.load_task(task_id) or {}
+            try:
+                stage = Stage(str(task.get("stage") or Stage.CREATING.value))
+            except ValueError:
+                stage = Stage.CREATING
+            self._emit(
+                task_id,
+                stage,
+                f"Builder capability {action} moved to Gemini.",
+                "warning",
+                str(primary_error)[:1000],
+            )
+            return result
+
     def _review_provider(self, options: TaskOptions) -> str:
         if self._provider_ready("deepseek", timeout=1.0, options=options):
             return "deepseek"
