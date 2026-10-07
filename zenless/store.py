@@ -386,6 +386,40 @@ class SQLiteStore:
             connection.execute("COMMIT")
         return recovered
 
+    def recover_running_test_runs(self) -> list[str]:
+        timestamp = now_iso()
+        with closing(self._connect()) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            rows = connection.execute(
+                "SELECT id, job_id, profile FROM test_runs WHERE status = 'RUNNING' ORDER BY started_at"
+            ).fetchall()
+            run_ids = [str(row["id"]) for row in rows]
+            for row in rows:
+                connection.execute(
+                    """
+                    UPDATE test_runs
+                    SET status = 'CANCELLED',
+                        summary_json = ?,
+                        finished_at = ?
+                    WHERE id = ? AND status = 'RUNNING'
+                    """,
+                    (
+                        json.dumps(
+                            {
+                                "recovered": True,
+                                "reason": "Rubra restarted before this test run reached a terminal state.",
+                                "profile": str(row["profile"] or ""),
+                                "jobId": str(row["job_id"] or ""),
+                            },
+                            ensure_ascii=False,
+                        ),
+                        timestamp,
+                        str(row["id"]),
+                    ),
+                )
+            connection.execute("COMMIT")
+        return run_ids
+
     def recover_pending_operations(self) -> list[str]:
         timestamp = now_iso()
         with closing(self._connect()) as connection:
