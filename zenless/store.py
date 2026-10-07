@@ -612,14 +612,23 @@ class SQLiteStore:
     def reorder_prompt_queue(self, ordered_ids: list[str]) -> None:
         with closing(self._connect()) as connection:
             connection.execute("BEGIN IMMEDIATE")
-            rows = connection.execute("SELECT id FROM prompt_queue").fetchall()
-            known = {str(row["id"]) for row in rows}
-            supplied = [queue_id for queue_id in ordered_ids if queue_id in known]
-            tail = [queue_id for queue_id in known if queue_id not in supplied]
-            for index, queue_id in enumerate([*supplied, *sorted(tail)], start=1):
+            rows = connection.execute(
+                "SELECT id FROM prompt_queue ORDER BY position, created_at, id"
+            ).fetchall()
+            current = [str(row["id"]) for row in rows]
+            known = set(current)
+            supplied: list[str] = []
+            seen: set[str] = set()
+            for queue_id in ordered_ids:
+                if queue_id in known and queue_id not in seen:
+                    supplied.append(queue_id)
+                    seen.add(queue_id)
+            tail = [queue_id for queue_id in current if queue_id not in seen]
+            timestamp = now_iso()
+            for index, queue_id in enumerate([*supplied, *tail], start=1):
                 connection.execute(
                     "UPDATE prompt_queue SET position = ?, updated_at = ? WHERE id = ?",
-                    (index * 10, now_iso(), queue_id),
+                    (index * 10, timestamp, queue_id),
                 )
             connection.execute("COMMIT")
 
