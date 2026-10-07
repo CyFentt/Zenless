@@ -249,6 +249,23 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(item["state"], "sent_unconfirmed")
             self.assertTrue(core._prompt_queue_config()["paused"])
 
+    def test_prompt_queue_rejects_invalid_numeric_config(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            core = object.__new__(ZenlessCore)
+            core.store = SQLiteStore(Path(folder) / "queue.db")
+            core.events = EventBus()
+            core._queue_wake = threading.Event()
+
+            with self.assertRaises(CoreError) as delay:
+                core.update_prompt_queue_config({"delaySeconds": "later"})
+            self.assertEqual(delay.exception.code, "INVALID_QUEUE_DELAY")
+            self.assertEqual(delay.exception.status, 400)
+
+            with self.assertRaises(CoreError) as attempts:
+                core.update_prompt_queue_config({"maxAttempts": "many"})
+            self.assertEqual(attempts.exception.code, "INVALID_QUEUE_ATTEMPTS")
+            self.assertEqual(attempts.exception.status, 400)
+
     def test_prompt_queue_cannot_resume_with_unconfirmed_delivery(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             core = object.__new__(ZenlessCore)
