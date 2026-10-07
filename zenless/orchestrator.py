@@ -1298,15 +1298,14 @@ class ZenlessOrchestrator:
             if view not in requested and prior_path.is_file():
                 shutil.copy2(prior_path, output)
             else:
-                response = self.bridge.request(
-                    "chatgpt",
+                response = self._builder_request(
+                    task_id,
                     "generate_image",
                     {
                         "prompt": visual_view_prompt(master, view),
                         "output_path": str(output),
                         "timeout_ms": 420_000,
                     },
-                    task_id=task_id,
                     timeout=435,
                 )
                 if str(response.get("status", "ok")).casefold() != "ok":
@@ -1351,19 +1350,13 @@ class ZenlessOrchestrator:
                 "warnings": ["Two or more views have identical PNG content."],
                 "summary": "Deterministic visual QA detected duplicate directions.",
             }
-        upload = self.bridge.request(
-            "chatgpt",
-            "upload_files",
-            {"files": paths},
-            task_id=task_id,
-            timeout=120,
-        )
-        if int(upload.get("uploaded") or 0) != 6:
-            raise BridgeError("Visual QA requires confirmed uploads for all six separate views.")
+        view_paths = tuple(Path(path).resolve() for path in paths)
+        builder = self._ensure_builder_attachments(task_id, view_paths)
         raw = self._send_agent_prompt(
-            "chatgpt",
+            builder,
             visual_qa_prompt(master, version),
             task_id=task_id,
+            attachment_paths=view_paths,
         )
         self.store.append_message(task_id, "Builder", "visual-qa", raw)
         qa = extract_json_object(raw)
