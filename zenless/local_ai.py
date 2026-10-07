@@ -29,10 +29,12 @@ class LocalAIService:
         self._log_path = self.portable_root / "data" / "logs" / "local-ai.log"
         self._lock = threading.RLock()
         self._inference_lock = threading.Lock()
+        self._ollama_models_cache: tuple[str, ...] = ()
+        self._ollama_cache_until = 0.0
 
     @property
     def available(self) -> bool:
-        return any(path.is_file() for path in self._model_paths()) and bool(self._server_candidates())
+        return self._portable_available() or bool(self._select_ollama_model("Role: Builder"))
 
     def _model_paths(self) -> tuple[Path, Path]:
         return (
@@ -42,10 +44,25 @@ class LocalAIService:
 
     def model_status(self) -> list[dict[str, object]]:
         coder, general = self._model_paths()
-        return [
+        result: list[dict[str, object]] = [
             {"id": "qwen-coder-7b", "name": coder.stem, "installed": coder.is_file()},
             {"id": "qwen3-4b", "name": general.stem, "installed": general.is_file()},
         ]
+        ollama_model = self._select_ollama_model("Role: Builder")
+        if ollama_model:
+            result.append(
+                {
+                    "id": "ollama",
+                    "name": f"Ollama · {ollama_model}",
+                    "installed": True,
+                    "state": "ready",
+                    "detail": "Detected through the local Ollama API; Rubra will use it as a free fallback.",
+                }
+            )
+        return result
+
+    def _portable_available(self) -> bool:
+        return any(path.is_file() for path in self._model_paths()) and bool(self._server_candidates())
 
     def _select_model(self, prompt: str) -> None:
         coder, general = self._model_paths()
@@ -74,6 +91,53 @@ class LocalAIService:
             return self._complete(prompt, max_tokens=max_tokens, temperature=temperature, timeout=timeout)
 
     def _complete(
+        self,
+        prompt: str,
+        *,
+        max_tokens: int = 700,
+        temperature: float = 0.15,
+        timeout: float = 120.0,
+    ) -> str:
+        value = prompt.strip()
+        if not value:
+            raise LocalAIError("Local prompt is empty.")
+        value = self._compact_prompt(value)
+        portable_error: LocalAIError | None = None
+        if self._portable_available():
+            try:
+                return self._complete_portable(
+                    value,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    timeout=timeout,
+                )
+            except LocalAIError as exc:
+                portable_error = exc
+
+        ollama_model = self._select_ollama_model(value)
+        if ollama_model:
+            try:
+                return self._complete_ollama(
+                    value,
+                    ollama_model,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    timeout=timeout,
+                )
+            except LocalAIError as exc:
+                if portable_error is not None:
+                    raise LocalAIError(
+                        f"Portable local AI failed: {portable_error} | Ollama fallback failed: {exc}"
+                    ) from exc
+                raise
+
+        if portable_error is not None:
+            raise portable_error
+        raise LocalAIError(
+            "No local text model is available. Install the pinned Rubra model/runtime or start Ollama with a supported local model."
+        )
+
+    def _complete_portable(
         self,
         prompt: str,
         *,
@@ -139,6 +203,120 @@ class LocalAIService:
             ]
         raise LocalAIError(
             "Local output is still truncated after three continuations. Reduce the task scope before applying changes."
+        )
+
+    def _ollama_models(self) -> tuple[str, ...]:
+        now = time.monotonic()
+        if now < self._ollama_cache_until:
+            return self._ollama_models_cache
+        models: tuple[str, ...] = ()
+        try:
+            request = Request("http://127.0.0.1:11434/api/tags", headers={"Accept": "application/json"})
+            with urlopen(request, timeout=0.4) as response:
+                payload = json.loads(response.read(1024 * 1024).decode("utf-8"))
+            raw_models = payload.get("models", []) if isinstance(payload, dict) else []
+            names = []
+            for item in raw_models if isinstance(raw_models, list) else []:
+                if not isinstance(item, dict):
+                    continue
+                name = str(item.get("name") or item.get("model") or "").strip()
+                if name:
+                    names.append(name)
+            models = tuple(dict.fromkeys(names))
+        except (OSError, TimeoutError, URLError, ValueError, json.JSONDecodeError):
+            models = ()
+        self._ollama_models_cache = models
+        self._ollama_cache_until = now + 10.0
+        return models
+
+    def _select_ollama_model(self, prompt: str) -> str:
+        models = self._ollama_models()
+        if not models:
+            return ""
+        override = str(os.environ.get("RUBRA_OLLAMA_MODEL") or "").strip()
+        if override:
+            exact = next((model for model in models if model.casefold() == override.casefold()), "")
+            if exact:
+                return exact
+        reviewer = prompt.startswith("Role: Reviewer")
+        preferences = (
+            ("qwen3:4b", "qwen3-4b", "qwen3", "deepseek-r1", "deepseek")
+            if reviewer
+            else ("qwen2.5-coder", "qwen3-coder", "qwen-coder", "qwen3", "codellama", "deepseek-coder")
+        )
+        lowered = [(model, model.casefold()) for model in models]
+        for preferred in preferences:
+            match = next((model for model, value in lowered if preferred in value), "")
+            if match:
+                return match
+        return ""
+
+    def _complete_ollama(
+        self,
+        prompt: str,
+        model: str,
+        *,
+        max_tokens: int,
+        temperature: float,
+        timeout: float,
+    ) -> str:
+        system = (
+            "You are Rubra, a Roblox Studio engineering assistant. Build, analyze, or review Luau according "
+            "to the requested role. Follow the supplied JSON protocol exactly when requested. Use only "
+            "advertised tools. Be evidence-aware and never claim a test ran without test evidence. "
+            "Respond in English. /no_think"
+        )
+        messages: list[dict[str, str]] = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": prompt},
+        ]
+        deadline = time.monotonic() + max(10.0, min(900.0, timeout))
+        parts: list[str] = []
+        for _ in range(3):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise LocalAIError("Ollama completion exceeded its time budget.")
+            payload = {
+                "model": model,
+                "messages": messages,
+                "stream": False,
+                "keep_alive": "0s",
+                "options": {
+                    "temperature": max(0.0, min(1.0, float(temperature))),
+                    "num_predict": max(64, min(2048, int(max_tokens))),
+                },
+            }
+            request = Request(
+                "http://127.0.0.1:11434/api/chat",
+                data=json.dumps(payload).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            try:
+                with urlopen(request, timeout=remaining) as response:
+                    body = json.loads(response.read(2 * 1024 * 1024).decode("utf-8"))
+                message = body.get("message") if isinstance(body, dict) else None
+                content = str(message.get("content") or "") if isinstance(message, dict) else ""
+                if not content.strip():
+                    raise ValueError("Empty Ollama model content")
+            except (OSError, TimeoutError, URLError, ValueError, json.JSONDecodeError) as exc:
+                self._ollama_cache_until = 0.0
+                raise LocalAIError(f"Ollama request failed for {model}: {exc}") from exc
+            parts.append(content)
+            done_reason = str(body.get("done_reason") or "").casefold() if isinstance(body, dict) else ""
+            if done_reason not in {"length", "max_tokens"}:
+                return "".join(parts).strip()
+            messages = [
+                {"role": "system", "content": system},
+                {"role": "user", "content": prompt},
+                {"role": "assistant", "content": "".join(parts)},
+                {
+                    "role": "user",
+                    "content": "Continue exactly where you stopped. Do not repeat any content or restart the JSON object.",
+                },
+            ]
+        raise LocalAIError(
+            "Ollama output is still truncated after three continuations. Reduce the task scope before applying changes."
         )
 
     @classmethod
