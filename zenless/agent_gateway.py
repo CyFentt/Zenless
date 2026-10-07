@@ -179,11 +179,10 @@ class AgentGateway:
             route = "webview2"
         except BridgeError as embedded_error:
             message = str(embedded_error)
-            if provider == "deepseek" or "LOGIN_CANCELLED" in message or "LOGIN_CHALLENGE" in message:
-                # DeepSeek commonly places production anti-bot verification on login. Do not
-                # escalate it into Playwright: automated browsers are a worse environment for
-                # that challenge and can create an endless verification loop. Preserve the
-                # WebView2 profile and let Smart Routing use the local reviewer instead.
+            if "LOGIN_CANCELLED" in message or "LOGIN_CHALLENGE" in message:
+                # Anti-bot and user-cancelled login states are not transport failures.
+                # Preserve the WebView2 profile instead of reopening the same challenge
+                # inside an automated browser.
                 raise
             if self._stopping.is_set():
                 raise BridgeError("Rubra is closing; provider login was cancelled.") from embedded_error
