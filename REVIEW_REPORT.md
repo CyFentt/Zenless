@@ -31,4 +31,20 @@ The continuation review closed the remaining pre-release failure paths that were
 - Legacy provider login-state symbols removed in the earlier pass have no remaining references in the current frontend/backend contract paths reviewed.
 
 The current GitHub Actions validation still fails before a hosted runner is assigned: the validate job reports runner_id 0, an empty runner name and zero executed steps, while package/release are skipped. Re-running failed jobs after the October 5 Actions incident was marked resolved produced the same pre-runner failure. Therefore no new Python, frontend, Playwright or Windows packaging pass is claimed for this exact HEAD. The repository changes above are regression-covered in source, but release remains blocked on an executable CI/Windows run.
+## User-reproduced 2.1.2 hardening closure
+
+A second Windows-oriented review was driven by live failures reproduced in the packaged application and closed the following cross-layer paths:
+
+- Provider authentication no longer treats the DeepSeek Reviewer as globally mandatory. Independent Review can be disabled, Smart Routing can use a local reviewer or Gemini, anti-bot challenges are detected and bounded without challenge bypass, and active login workers cannot be downgraded by background health refresh or Play Test shutdown.
+- Hunyuan authentication can be confirmed from a stable usable 3D session/capability surface and the embedded login window hides after confirmed authentication instead of remaining open indefinitely.
+- Manual Play Stop waits for the QA worker shutdown before provider reconciliation so a Studio test lifecycle cannot corrupt unrelated provider UI state.
+- Qwen/llama.cpp preparation records individual component results, resumes interrupted downloads, verifies pinned SHA-256 values, exposes RAM/disk eligibility reasons, supports targeted retries, and never labels a failed-but-existing file as installed.
+- The prompt queue is durable and sequential. Pending and inflight work are separated, retry/backoff is bounded, restart reconciliation follows the persisted job identity, ambiguous delivery becomes SENT_UNCONFIRMED, queue continuation is blocked until ambiguity is explicitly resolved, and partial/unknown sends are never replayed automatically.
+- Smart Routing now treats recoverable provider quota/capacity/input-limit failures as routing events. Builder/Reviewer roles can move to verified local/Gemini routes before output begins; partial streamed output disables automatic resend. Research can fall back to the local scout instead of requiring Gemini when Smart Routing is enabled.
+- Diagnostics now persist frontend, browser, provider, queue, local-AI and QA failures with bounded details. Previously silent local QA planner and task rollback failures are surfaced while preserving safe fallback behavior.
+- UI contracts were aligned with backend state: Independent Review is named explicitly, local provider fallbacks are labelled LOCAL, local model/runtime failures remain retryable, prompt-queue ambiguity has explicit Mark Sent / Retry controls, and the sidebar status indicator is labelled as system health.
+
+Official Qwen Hugging Face metadata was checked for the pinned local weights: Qwen3-4B Q4_K_M SHA-256 is 7485fe6f11af29433bc51cab58009521f205840f5b4ae3a32fa7f92e8534fdf5 and Qwen2.5-Coder-7B-Instruct Q4_K_M SHA-256 is 509287f78cb4d4cf6b3843734733b914b2c158e43e22a7f4bf5e963800894d3c. The pinned llama.cpp b11379 Windows CPU/Vulkan release asset digests were also matched against GitHub release metadata.
+
+GitHub Actions remains an external validation blocker for this repository: current validate jobs still complete with runner_id 0, an empty runner name and zero executed steps, so no current-HEAD CI pass is claimed. Source regressions were added for the newly fixed state machines and validation paths, but a native Windows/package run is still required before calling the prerelease fully validated.
 
