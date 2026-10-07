@@ -675,8 +675,25 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(recovered, ["chat-op-12345678"])
             operation = store.operation("chat-op-12345678")
             self.assertIsNotNone(operation)
-            self.assertEqual(operation["state"], "failed")
-            self.assertEqual(operation["response"]["code"], "RECOVERED_PENDING_OPERATION")
+            self.assertEqual(operation["state"], "uncertain")
+            self.assertEqual(operation["response"]["code"], "IDEMPOTENCY_UNCERTAIN")
+
+    def test_operation_history_pruning_never_removes_uncertain_operations(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            store = SQLiteStore(Path(folder) / "state.db")
+            for index in range(140):
+                key = f"done-op-{index:08d}"
+                store.claim_operation(key, "chat", "")
+                store.finish_operation(key, "complete", {"ok": True})
+            store.claim_operation("uncertain-op-12345678", "chat", "")
+            store.recover_pending_operations()
+
+            removed = store.prune_operations(128)
+
+            self.assertGreaterEqual(removed, 12)
+            uncertain = store.operation("uncertain-op-12345678")
+            self.assertIsNotNone(uncertain)
+            self.assertEqual(uncertain["state"], "uncertain")
 
     def test_recovered_checkpoint_resume_restarts_as_child_job(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
