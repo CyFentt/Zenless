@@ -91,6 +91,10 @@ function GeneralTab({ settings, onChange }: { settings: Settings | null; onChang
     }
   };
 
+  const loginAgent = loginModal ? agents.find((item) => item.id === loginModal) : undefined;
+  const loginDetail = loginAgent?.detail || '';
+  const challengeActive = /challenge|captcha|anti-bot|verification/i.test(loginDetail);
+
   return (
     <div className="p-6 max-w-2xl mx-auto w-full space-y-6 animate-fade-in">
       <Section title="BEHAVIOR">
@@ -419,7 +423,13 @@ function LinksTab({ connections, agents }: { connections: ConnectionInfo; agents
       <Modal open={!!loginModal} onClose={closeLoginModal} title="LOGIN REQUIRED" width="w-80">
         <div className="space-y-4">
           <p className="text-xs text-ink-100 uppercase tracking-wider">{labels.find((label) => label.key === loginModal)?.name}</p>
-          <button disabled={loggingIn} onClick={() => void handleLogin()} className="w-full h-8 text-xs uppercase tracking-wider text-ink-0 bg-ink-700 border border-ink-500 hover:bg-ink-600 transition-colors disabled:opacity-50">{loggingIn ? 'WAITING FOR LOGIN' : 'LOGIN'}</button>
+          {loginDetail && <p className={`text-2xs leading-relaxed ${challengeActive ? 'text-zen-warnBright' : 'text-ink-400'}`}>{loginDetail}</p>}
+          {loginModal === 'deepseek' && (
+            <p className="text-2xs leading-relaxed text-ink-400">
+              Reviewer login is optional with Smart Routing. A looping CAPTCHA can be cancelled without disabling Builder, Research, local AI, or Studio.
+            </p>
+          )}
+          <button disabled={loggingIn} onClick={() => void handleLogin()} className="w-full h-8 text-xs uppercase tracking-wider text-ink-0 bg-ink-700 border border-ink-500 hover:bg-ink-600 transition-colors disabled:opacity-50">{loggingIn ? (challengeActive ? 'CAPTCHA REQUIRES ATTENTION' : 'WAITING FOR LOGIN') : 'LOGIN'}</button>
           {loggingIn && (
             <button onClick={closeLoginModal} className="w-full h-7 text-2xs uppercase tracking-wider text-ink-300 border border-ink-600 hover:text-ink-0 hover:border-zen-red">
               CANCEL LOGIN
