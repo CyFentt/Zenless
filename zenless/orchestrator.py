@@ -461,6 +461,7 @@ class ZenlessOrchestrator:
             marker in message
             for marker in (
                 "provider_input_limit",
+                "capability_unavailable",
                 "message is too long",
                 "prompt is too long",
                 "input is too long",
@@ -2185,6 +2186,82 @@ class ZenlessOrchestrator:
         if not output.strip():
             return False
         return bool(re.search(r"(?im)(\bexception\b|\btraceback\b|stack begin|(^|\s)error[:\s])", output))
+
+    def _select_builder_provider(self, options: TaskOptions, *, timeout: float) -> str:
+        if self._provider_ready("chatgpt", timeout=timeout, options=options):
+            return "chatgpt"
+        if options.smart_routing and self.bridge.wait_for_provider("gemini", timeout=timeout):
+            return "gemini"
+        return ""
+
+    def _builder_provider(self, task_id: str) -> str:
+        task = self.store.load_task(task_id) or {}
+        context = task.get("context") if isinstance(task.get("context"), dict) else {}
+        provider = str(context.get("builder_provider") or "chatgpt")
+        return provider if provider in {"chatgpt", "gemini"} else "chatgpt"
+
+    def _set_builder_provider(self, task_id: str, provider: str) -> None:
+        if provider not in {"chatgpt", "gemini"}:
+            raise ValueError(f"Unsupported Builder provider: {provider}")
+        self.store.update_context_section(task_id, "builder_provider", provider)
+
+    def _task_attachment_paths(self, task_id: str) -> tuple[Path, ...]:
+        task = self.store.load_task(task_id) or {}
+        context = task.get("context") if isinstance(task.get("context"), dict) else {}
+        raw = context.get("attachment_paths")
+        if not isinstance(raw, list):
+            return ()
+        paths: list[Path] = []
+        for value in raw[:5]:
+            path = Path(str(value)).expanduser().resolve()
+            if path.is_file():
+                paths.append(path)
+        return tuple(paths)
+
+    def _route_identity(self, provider: str) -> str:
+        identify = getattr(self.bridge, "route_identity", None)
+        if callable(identify):
+            try:
+                value = str(identify(provider) or "").strip().casefold()
+                if value:
+                    return value
+            except BridgeError:
+                pass
+        status_fn = getattr(self.bridge, "provider_status", None)
+        if callable(status_fn):
+            try:
+                status = status_fn().get(provider, {})
+                if isinstance(status, dict):
+                    value = str(status.get("transport") or "").strip().casefold()
+                    if value:
+                        return value
+            except Exception:
+                pass
+        return provider
+
+    def _ensure_task_attachments(self, provider: str, task_id: str) -> None:
+        paths = self._task_attachment_paths(task_id)
+        if not paths:
+            return
+        route = self._route_identity(provider)
+        key = (task_id, provider, route)
+        if key in self._attachment_routes:
+            return
+        result = self.bridge.request(
+            provider,
+            "upload_files",
+            {"files": [str(path) for path in paths]},
+            task_id=task_id,
+            timeout=120,
+        )
+        if str(result.get("status", "ok")).casefold() != "ok":
+            raise BridgeError(f"{provider} rejected this job's attachments.")
+        if "uploaded" in result and int(result.get("uploaded") or 0) != len(paths):
+            raise BridgeError(
+                f"{provider} confirmed only {int(result.get('uploaded') or 0)} of {len(paths)} attachments."
+            )
+        actual_route = str(result.get("transport") or self._route_identity(provider) or route).casefold()
+        self._attachment_routes.add((task_id, provider, actual_route))
 
     def _review_provider(self, options: TaskOptions) -> str:
         if self._provider_ready("deepseek", timeout=1.0, options=options):
