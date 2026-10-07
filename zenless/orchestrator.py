@@ -126,7 +126,7 @@ class ZenlessOrchestrator:
         self._pause: dict[str, threading.Event] = {}
         self._paused_from: dict[str, Stage] = {}
         self._gates: dict[tuple[str, str], _ApprovalGate] = {}
-        self._attachment_routes: set[tuple[str, str, str]] = set()
+        self._attachment_routes: set[tuple[str, str, str, str]] = set()
         self._state_lock = threading.RLock()
         self.current_task_id = ""
 
@@ -2239,29 +2239,40 @@ class ZenlessOrchestrator:
                 pass
         return provider
 
-    def _ensure_task_attachments(self, provider: str, task_id: str) -> None:
-        paths = self._task_attachment_paths(task_id)
-        if not paths:
+    def _ensure_provider_attachments(
+        self,
+        provider: str,
+        task_id: str,
+        paths: tuple[Path, ...],
+    ) -> None:
+        valid = tuple(path.expanduser().resolve() for path in paths if path.is_file())
+        if not valid:
             return
+        fingerprint = hashlib.sha256(
+            "\0".join(str(path) for path in valid).encode("utf-8", "replace")
+        ).hexdigest()[:24]
         route = self._route_identity(provider)
-        key = (task_id, provider, route)
+        key = (task_id, provider, route, fingerprint)
         if key in self._attachment_routes:
             return
         result = self.bridge.request(
             provider,
             "upload_files",
-            {"files": [str(path) for path in paths]},
+            {"files": [str(path) for path in valid]},
             task_id=task_id,
             timeout=120,
         )
         if str(result.get("status", "ok")).casefold() != "ok":
             raise BridgeError(f"{provider} rejected this job's attachments.")
-        if "uploaded" in result and int(result.get("uploaded") or 0) != len(paths):
+        if "uploaded" in result and int(result.get("uploaded") or 0) != len(valid):
             raise BridgeError(
-                f"{provider} confirmed only {int(result.get('uploaded') or 0)} of {len(paths)} attachments."
+                f"{provider} confirmed only {int(result.get('uploaded') or 0)} of {len(valid)} attachments."
             )
         actual_route = str(result.get("transport") or self._route_identity(provider) or route).casefold()
-        self._attachment_routes.add((task_id, provider, actual_route))
+        self._attachment_routes.add((task_id, provider, actual_route, fingerprint))
+
+    def _ensure_task_attachments(self, provider: str, task_id: str) -> None:
+        self._ensure_provider_attachments(provider, task_id, self._task_attachment_paths(task_id))
 
     def _review_provider(self, options: TaskOptions) -> str:
         if self._provider_ready("deepseek", timeout=1.0, options=options):
