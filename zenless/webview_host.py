@@ -174,13 +174,20 @@ class WebViewHost:
         spec = self.provider_specs[provider]
         if action == "health":
             state = self._authentication_state(window, spec)
+            authenticated = bool(state.get("authenticated"))
+            capabilities = state.get("capabilities") if isinstance(state.get("capabilities"), dict) else {}
+            if authenticated and not capabilities:
+                try:
+                    capabilities = self._capabilities(window, spec)
+                except Exception:
+                    capabilities = {}
             return {
-                "ready": bool(state.get("authenticated")),
-                "authenticated": bool(state.get("authenticated")),
+                "ready": authenticated,
+                "authenticated": authenticated,
                 "challenge": bool(state.get("challenge")),
                 "guest": bool(state.get("guest")),
                 "url": str(window.get_current_url() or spec.url),
-                "capabilities": state.get("capabilities") or self._capabilities(window, spec),
+                "capabilities": capabilities,
             }
         if action == "login":
             dismissed = self._dismissed.setdefault(provider, threading.Event())
@@ -190,6 +197,7 @@ class WebViewHost:
             deadline = time.monotonic() + max(30.0, min(900.0, float(payload.get("timeout", 600))))
             ready_since = 0.0
             challenge_seen = False
+            challenge_since = 0.0
             while time.monotonic() < deadline and not self._stop.wait(0.75):
                 if self._windows.get(provider) is not window:
                     raise RuntimeError("LOGIN_CANCELLED: Login window was closed. Click Login to reopen it.")
@@ -200,7 +208,17 @@ class WebViewHost:
                         raise RuntimeError("LOGIN_CANCELLED: Session could not be verified. Click Login to reopen it.")
                     ready_since = 0.0
                     continue
-                challenge_seen = challenge_seen or bool(state.get("challenge"))
+                challenge_active = bool(state.get("challenge"))
+                challenge_seen = challenge_seen or challenge_active
+                if challenge_active:
+                    challenge_since = challenge_since or time.monotonic()
+                    if time.monotonic() - challenge_since >= 90.0:
+                        raise RuntimeError(
+                            "LOGIN_CHALLENGE: Anti-bot verification remained active for 90 seconds. "
+                            "The provider window and saved session were preserved; retry later or leave this provider optional."
+                        )
+                else:
+                    challenge_since = 0.0
                 if state.get("authenticated"):
                     ready_since = ready_since or time.monotonic()
                     if dismissed.is_set() or time.monotonic() - ready_since >= 3.0:
