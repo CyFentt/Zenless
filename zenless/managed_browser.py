@@ -255,6 +255,13 @@ class ManagedBrowserController:
             )
         raise BridgeError("LOGIN_CANCELLED: Managed login was not confirmed before timeout.")
 
+    def cancel_login(self, provider: str, *, timeout: float = 5.0) -> bool:
+        try:
+            result = self._call("dismiss_login", provider, timeout=max(0.1, timeout))
+        except BridgeError:
+            return False
+        return bool(result.get("dismissed"))
+
     def send_prompt(
         self,
         provider: str,
@@ -390,6 +397,17 @@ class ManagedBrowserController:
 
     def _handle(self, command: _Command) -> Any:
         # Background probes must never replace the visible login context.
+        if command.action == "dismiss_login":
+            if self._login_provider and command.provider != self._login_provider:
+                return {"dismissed": False}
+            provider = self._login_provider or command.provider
+            self._login_provider = ""
+            self._login_ready_at = 0.0
+            if self._context is not None and self._headed:
+                self._ensure_context(headed=False)
+            if provider:
+                self._set_state(provider, "Login Required", "Managed login dismissed; saved session preserved")
+            return {"dismissed": True}
         if self._login_provider:
             if command.action == "health":
                 return {"ready": False, "runtime": "ready", "busy": True}
