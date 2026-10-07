@@ -513,13 +513,69 @@ class SQLiteStore:
         return self._decode_prompt_queue(row)
 
     def prompt_queue_items(self, limit: int = 64) -> list[dict[str, Any]]:
-        safe_limit = max(1, min(128, int(limit)))
+        history_limit = max(1, min(256, int(limit)))
         with closing(self._connect()) as connection:
-            rows = connection.execute(
-                "SELECT * FROM prompt_queue ORDER BY position, created_at LIMIT ?",
-                (safe_limit,),
+            active = connection.execute(
+                """
+                SELECT * FROM prompt_queue
+                WHERE state NOT IN ('completed', 'cancelled')
+                ORDER BY position, created_at
+                """
             ).fetchall()
+            history = connection.execute(
+                """
+                SELECT * FROM prompt_queue
+                WHERE state IN ('completed', 'cancelled')
+                ORDER BY position DESC, created_at DESC
+                LIMIT ?
+                """,
+                (history_limit,),
+            ).fetchall()
+        rows = [*active, *history]
+        rows.sort(key=lambda row: (int(row["position"] or 0), str(row["created_at"] or "")))
         return [self._decode_prompt_queue(row) for row in rows]
+
+    def swap_prompt_queue_positions(self, first_id: str, second_id: str) -> None:
+        if first_id == second_id:
+            return
+        with closing(self._connect()) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            rows = connection.execute(
+                "SELECT id, position FROM prompt_queue WHERE id IN (?, ?)",
+                (first_id, second_id),
+            ).fetchall()
+            positions = {str(row["id"]): int(row["position"]) for row in rows}
+            if first_id not in positions or second_id not in positions:
+                connection.execute("ROLLBACK")
+                raise KeyError("Prompt queue item not found while reordering.")
+            timestamp = now_iso()
+            connection.execute(
+                "UPDATE prompt_queue SET position = ?, updated_at = ? WHERE id = ?",
+                (positions[second_id], timestamp, first_id),
+            )
+            connection.execute(
+                "UPDATE prompt_queue SET position = ?, updated_at = ? WHERE id = ?",
+                (positions[first_id], timestamp, second_id),
+            )
+            connection.execute("COMMIT")
+
+    def prune_prompt_queue_history(self, keep_terminal: int = 256) -> int:
+        keep = max(32, min(2048, int(keep_terminal)))
+        with closing(self._connect()) as connection:
+            cursor = connection.execute(
+                """
+                DELETE FROM prompt_queue
+                WHERE state IN ('completed', 'cancelled')
+                  AND id NOT IN (
+                    SELECT id FROM prompt_queue
+                    WHERE state IN ('completed', 'cancelled')
+                    ORDER BY updated_at DESC, position DESC
+                    LIMIT ?
+                  )
+                """,
+                (keep,),
+            )
+        return max(0, int(cursor.rowcount))
 
     def prompt_queue_item(self, queue_id: str) -> dict[str, Any] | None:
         with closing(self._connect()) as connection:
