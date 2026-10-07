@@ -188,6 +188,8 @@ class ToolchainManager:
         if self._artifact_ready(item, target):
             return target
         url = str(item["url"])
+        mirrors = [str(value) for value in item.get("mirrors", []) if str(value).strip()]
+        sources = list(dict.fromkeys([url, *mirrors]))
         kind = str(item.get("kind") or "raw")
         expected = str(item.get("sha256") or "").lower()
         if kind == "raw" and expected and target.is_file():
@@ -211,11 +213,27 @@ class ToolchainManager:
         parsed = urllib.parse.urlparse(url)
         suffix = ".tar.gz" if kind == "tar.gz" else Path(parsed.path).suffix
         archive = self.download_root / f"{item_id}{suffix or '.bin'}"
-        self._download(url, archive)
-        if expected and self._sha256(archive) != expected:
-            actual = self._sha256(archive)
-            archive.unlink(missing_ok=True)
-            raise ToolchainError(f"SHA-256 mismatch for {item_id}: {actual}")
+        source_url = url
+        failures: list[str] = []
+        for index, candidate in enumerate(sources):
+            if index:
+                self._status(item_id, f"Primary download failed; trying verified mirror {index}/{len(sources) - 1}")
+            try:
+                self._download(candidate, archive)
+                if expected:
+                    actual = self._sha256(archive)
+                    if actual != expected:
+                        archive.unlink(missing_ok=True)
+                        failures.append(f"{candidate}: SHA-256 mismatch {actual}")
+                        continue
+                source_url = candidate
+                break
+            except Exception as exc:
+                failures.append(f"{candidate}: {exc}")
+        else:
+            raise ToolchainError(
+                f"All verified download sources failed for {item_id}: " + " | ".join(failures[-3:])
+            )
         if kind == "raw":
             target.parent.mkdir(parents=True, exist_ok=True)
             temporary = target.with_suffix(target.suffix + ".partial")
@@ -227,7 +245,7 @@ class ToolchainManager:
         marker_sha = self._sha256(marker_path) if marker_path is not None and marker_path.is_file() else ""
         size = target.stat().st_size if target.is_file() else 0
         self._state[item_id] = {
-            "url": url,
+            "url": source_url,
             "sha256": expected,
             "target": str(target),
             "markerSha256": marker_sha,
