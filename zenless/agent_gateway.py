@@ -494,7 +494,7 @@ class AgentGateway:
                 if self.local_cancel is not None:
                     self.local_cancel()
                 return {"status": "idle", "cancelled": self.local_cancel is not None, "transport": "local"}
-            raise BridgeError(f"Local route does not support {action}.")
+            raise BridgeError(f"CAPABILITY_UNAVAILABLE: Local route does not support {action}.")
         if provider == "hunyuan" and action in self._HUNYUAN_TRANSACTION_ACTIONS:
             route, capabilities = self._hunyuan_transaction_route(provider, task_id=task_id, timeout=timeout)
             if action in {"generate_geometry", "generate_texture"}:
