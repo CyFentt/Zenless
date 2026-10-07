@@ -2024,6 +2024,7 @@ class ZenlessCore:
         try:
             recovered = self.store.recover_interrupted_tasks()
             recovered_queue = self.store.recover_prompt_queue()
+            recovered_operations = self.store.recover_pending_operations()
             self._set_boot("STATE", "READY")
             for item in recovered:
                 self.events.publish("JOB_UPDATED", {"job": self.job(str(item["id"]))})
@@ -2034,6 +2035,22 @@ class ZenlessCore:
                     message=str(item["reason"]),
                     impact=f"Interrupted task {item['id']} moved to {item['stage']}.",
                     recovery_action="Resume only pre-mutation checkpoints; inspect blocked mutation evidence manually.",
+                )
+            for operation_key in recovered_operations:
+                self.diagnostics.report(
+                    severity="WARNING",
+                    source="state",
+                    component="idempotency-recovery",
+                    message=(
+                        "An idempotent request was interrupted before Rubra could confirm its final result."
+                    ),
+                    impact=(
+                        f"Operation {operation_key[:48]} will not be replayed automatically after restart."
+                    ),
+                    recovery_action=(
+                        "Check Recent Tasks for a matching result before repeating the action. "
+                        "A fresh user action will use a new idempotency key."
+                    ),
                 )
             recovered_queue_requires_pause = False
             for queue_id in recovered_queue:
