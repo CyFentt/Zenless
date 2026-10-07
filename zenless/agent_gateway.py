@@ -234,6 +234,9 @@ class AgentGateway:
             )
         return True
 
+    def route_identity(self, provider: str) -> str:
+        return self._selected_route(provider)
+
     def release_task_route(self, task_id: str) -> None:
         with self._route_lock:
             self._task_routes = {key: value for key, value in self._task_routes.items() if key[1] != task_id}
@@ -466,7 +469,7 @@ class AgentGateway:
                         raise BridgeError(f"Local attachment is unavailable: {path.name}") from exc
                     if not valid:
                         raise BridgeError(
-                            "Local AI accepts existing small text/code attachments. Images and large files require a web provider."
+                            "CAPABILITY_UNAVAILABLE: Local AI accepts existing small text/code attachments. Images and large files require a web provider."
                         )
                     try:
                         content = path.read_text(encoding="utf-8", errors="replace")
