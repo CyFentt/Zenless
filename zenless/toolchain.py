@@ -201,6 +201,7 @@ class ToolchainManager:
                     "target": str(target),
                     "markerSha256": actual,
                     "size": size,
+                    "mtimeNs": target.stat().st_mtime_ns,
                 }
                 self._save_state()
                 self._status(item_id, f"Ready: {item.get('name', item_id)} (existing verified file)")
@@ -231,6 +232,7 @@ class ToolchainManager:
             "target": str(target),
             "markerSha256": marker_sha,
             "size": size,
+            "mtimeNs": target.stat().st_mtime_ns if target.is_file() else 0,
         }
         self._save_state()
         self._status(item_id, f"Ready: {item.get('name', item_id)}")
@@ -518,6 +520,18 @@ class ToolchainManager:
                 return False
             if size <= 128 * 1024 * 1024:
                 return self._sha256(target) == expected
+            try:
+                current_mtime = target.stat().st_mtime_ns
+            except OSError:
+                return False
+            recorded_mtime = int(state.get("mtimeNs") or 0)
+            if recorded_mtime and recorded_mtime == current_mtime:
+                return True
+            if self._sha256(target) != expected:
+                return False
+            state["mtimeNs"] = current_mtime
+            state["size"] = size
+            self._save_state()
             return True
         recorded_marker_sha = str(state.get("markerSha256") or "").lower()
         if not recorded_marker_sha:
