@@ -129,6 +129,58 @@ describe('transport failure recovery', () => {
     expect(new Set(calls.map((entry) => entry.key)).size).toBe(1);
   });
 
+  it('recovers a completed idempotent operation after the final transport failure', async () => {
+    vi.useFakeTimers();
+    let operationUrl = '';
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError('socket reset'))
+      .mockRejectedValueOnce(new TypeError('socket reset'))
+      .mockRejectedValueOnce(new TypeError('socket reset'))
+      .mockImplementationOnce((url) => {
+        operationUrl = String(url);
+        return Promise.resolve(new Response(JSON.stringify({
+          state: 'complete',
+          kind: 'create-job',
+          resourceId: '',
+          response: { id: 'job-late', title: 'Recovered build' },
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const pending = new RealZenlessAPI().createJob('Recovered build');
+    await vi.advanceTimersByTimeAsync(1000);
+
+    await expect(pending).resolves.toMatchObject({ id: 'job-late' });
+    expect(operationUrl).toMatch(/^\/api\/operations\/create-job-/);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+
+  it('surfaces an uncertain idempotent result instead of encouraging a blind resend', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError('socket reset'))
+      .mockRejectedValueOnce(new TypeError('socket reset'))
+      .mockRejectedValueOnce(new TypeError('socket reset'))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        state: 'uncertain',
+        kind: 'create-job',
+        resourceId: '',
+        response: {
+          code: 'IDEMPOTENCY_UNCERTAIN',
+          message: 'Verify Recent Tasks before repeating it.',
+        },
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const pending = new RealZenlessAPI().createJob('Uncertain build');
+    await vi.advanceTimersByTimeAsync(1000);
+
+    await expect(pending).rejects.toMatchObject({
+      code: 'IDEMPOTENCY_UNCERTAIN',
+      message: 'Verify Recent Tasks before repeating it.',
+    });
+  });
+
   it('accepts no-content success without parsing JSON', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 204 })));
     await expect(new RealZenlessAPI().cancelJob('job')).resolves.toBeUndefined();
