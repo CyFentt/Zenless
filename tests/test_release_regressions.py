@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import os
@@ -270,6 +271,33 @@ def test_toolchain_incremental_results_preserve_unprocessed_component_state(tmp_
     payload = json.loads(results_path.read_text())
     assert payload['rojo']['state'] == 'ready'
     assert payload['qwen3-4b']['detail'] == 'previous download error'
+
+
+def test_existing_verified_raw_model_is_adopted_without_redownload(tmp_path):
+    (tmp_path / 'assets').mkdir()
+    payload = b'already-downloaded-model'
+    digest = hashlib.sha256(payload).hexdigest()
+    (tmp_path / 'assets/toolchain.json').write_text(json.dumps({'artifacts': [{
+        'id': 'qwen3-4b',
+        'name': 'Qwen test',
+        'kind': 'raw',
+        'url': 'https://example.invalid/model.gguf',
+        'sha256': digest,
+        'target': 'runtime/models/model.gguf',
+        'marker': 'model.gguf',
+    }]}))
+    target = tmp_path / 'runtime/models/model.gguf'
+    target.parent.mkdir(parents=True)
+    target.write_bytes(payload)
+    manager = ToolchainManager(resource_root=tmp_path, portable_root=tmp_path)
+
+    with patch.object(manager, '_download', side_effect=AssertionError('must not download')):
+        result = manager.install('qwen3-4b')
+
+    assert result.state == 'ready'
+    assert result.path == str(target)
+    state = json.loads((tmp_path / 'runtime/toolchain-state.json').read_text())
+    assert state['qwen3-4b']['sha256'] == digest
 
 
 def test_targeted_tool_install_persists_failure_for_ui(tmp_path):
