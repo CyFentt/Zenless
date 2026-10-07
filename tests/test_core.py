@@ -144,6 +144,46 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(retried["attempts"], 0)
             self.assertEqual(retried["lastError"], "")
 
+    def test_prompt_queue_audit_states_are_not_editable_or_movable(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            core = object.__new__(ZenlessCore)
+            core.store = SQLiteStore(Path(folder) / "queue.db")
+            core.events = EventBus()
+            core._queue_wake = threading.Event()
+            core.store.enqueue_prompt("queue-uncertain", "Potentially sent")
+            core.store.enqueue_prompt("queue-next", "Next")
+            core.store.update_prompt_queue_item("queue-uncertain", state="sent_unconfirmed")
+
+            with self.assertRaises(CoreError) as edited:
+                core.update_prompt_queue_item("queue-uncertain", content="Changed after send")
+            self.assertEqual(edited.exception.code, "QUEUE_ITEM_NOT_EDITABLE")
+
+            with self.assertRaises(CoreError) as moved:
+                core.move_prompt_queue_item("queue-uncertain", 1)
+            self.assertEqual(moved.exception.code, "QUEUE_ITEM_NOT_MOVABLE")
+
+    def test_prompt_queue_live_missing_job_becomes_unconfirmed_and_pauses(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            core = object.__new__(ZenlessCore)
+            core.store = SQLiteStore(Path(folder) / "queue.db")
+            core.events = EventBus()
+            core.orchestrator = Mock()
+            core.orchestrator.current_task_id = ""
+            core.store.enqueue_prompt("queue-live", "Potentially dispatched")
+            core.store.update_prompt_queue_item(
+                "queue-live",
+                state="inflight",
+                dispatched_job_id="missing-job",
+                attempts=1,
+            )
+
+            core._prompt_queue_tick()
+
+            item = core.store.prompt_queue_item("queue-live")
+            self.assertIsNotNone(item)
+            self.assertEqual(item["state"], "sent_unconfirmed")
+            self.assertTrue(core._prompt_queue_config()["paused"])
+
     def test_prompt_queue_cannot_resume_with_unconfirmed_delivery(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             core = object.__new__(ZenlessCore)
