@@ -174,6 +174,54 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(raised.exception.code, "QUEUE_UNCONFIRMED_DELIVERY")
             self.assertTrue(core._prompt_queue_config()["paused"])
 
+    def test_prompt_queue_tick_marks_missing_inflight_job_unconfirmed_and_pauses(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            core = object.__new__(ZenlessCore)
+            core.store = SQLiteStore(Path(folder) / "queue.db")
+            core.events = EventBus()
+            core._queue_wake = threading.Event()
+            core.orchestrator = Mock()
+            core.orchestrator.current_task_id = ""
+            core.store.set_setting(
+                "prompt_queue.config",
+                {
+                    "paused": False,
+                    "continueOnFailure": True,
+                    "chainConversation": True,
+                    "delaySeconds": 0,
+                    "maxAttempts": 3,
+                },
+            )
+            core.store.enqueue_prompt("queue-missing", "Potentially dispatched")
+            core.store.update_prompt_queue_item(
+                "queue-missing",
+                state="inflight",
+                dispatched_job_id="missing-job",
+                attempts=1,
+            )
+
+            core._prompt_queue_tick()
+
+            item = core.store.prompt_queue_item("queue-missing")
+            self.assertEqual(item["state"], "sent_unconfirmed")
+            self.assertTrue(core._prompt_queue_config()["paused"])
+            self.assertIn("cannot be found", item["last_error"])
+
+    def test_prompt_queue_unconfirmed_delivery_cannot_be_edited(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            core = object.__new__(ZenlessCore)
+            core.store = SQLiteStore(Path(folder) / "queue.db")
+            core.events = EventBus()
+            core._queue_wake = threading.Event()
+            core.store.enqueue_prompt("queue-uncertain", "Original")
+            core.store.update_prompt_queue_item("queue-uncertain", state="sent_unconfirmed")
+
+            with self.assertRaises(CoreError) as raised:
+                core.update_prompt_queue_item("queue-uncertain", content="Different text")
+
+            self.assertEqual(raised.exception.code, "QUEUE_ITEM_NOT_EDITABLE")
+            self.assertEqual(core.store.prompt_queue_item("queue-uncertain")["content"], "Original")
+
     def test_prompt_queue_recovery_blocks_inflight_paused_checkpoint(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             store = SQLiteStore(Path(folder) / "queue.db")
