@@ -231,8 +231,8 @@ class ToolchainManager:
                 payload = json.loads(marker.read_text(encoding="utf-8"))
                 if payload.get("commit") == commit and payload.get("repo") == item.get("repo"):
                     return target
-            except Exception:
-                pass
+            except (OSError, json.JSONDecodeError) as exc:
+                self._status(item_id, f"Cached source marker is invalid; repairing it: {exc}")
         repo = str(item["repo"])
         self._status(item_id, f"Syncing {repo}")
         archive = self.download_root / f"source-{item_id}.zip"
