@@ -461,7 +461,7 @@ class SQLiteStore:
                     SELECT idempotency_key
                     FROM operations
                     WHERE state IN ('complete', 'failed', 'cancelled', 'uncertain')
-                    ORDER BY updated_at DESC
+                    ORDER BY updated_at DESC, rowid DESC
                     LIMIT ?
                   )
                 """,
