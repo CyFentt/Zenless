@@ -496,6 +496,24 @@ def test_manual_test_plan_never_waits_for_an_ai_account(tmp_path):
             assert qa._make_plan('manual', profile, [], 1, False).scenarios
 
 
+def test_play_stop_cancels_active_qa_provider_request(tmp_path):
+    store = SQLiteStore(tmp_path / "state.db")
+    bridge = Mock()
+    bridge.provider_status.return_value = {
+        "chatgpt": {"state": "Working", "transport": "webview2"},
+        "deepseek": {"state": "Ready", "transport": "webview2"},
+    }
+    bridge.request.return_value = {"status": "idle", "cancelled": True}
+    qa = QABreaker(store=store, studio=Mock(), bridge=bridge, events=EventBus())
+    cancel = threading.Event()
+    qa._manual_cancel["manual"] = cancel
+
+    assert qa.stop("manual")
+
+    assert cancel.is_set()
+    bridge.request.assert_called_once_with("chatgpt", "cancel", {}, task_id="manual", timeout=3)
+
+
 def test_local_shutdown_can_interrupt_an_active_completion(tmp_path):
     service = LocalAIService(tmp_path)
     entered, finish = threading.Event(), threading.Event()
