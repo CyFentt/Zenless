@@ -417,6 +417,30 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(len(core.store.assets("job-a")), 1)
             self.assertEqual(core.store.assets("job-b"), [])
 
+    def test_cancel_provider_login_preserves_session_and_returns_to_login_state(self) -> None:
+        core = object.__new__(ZenlessCore)
+        core._connections = {
+            "bridge": "READY",
+            "browser": "READY",
+            "chatgpt": "OFF",
+            "deepseek": "CONNECTING",
+            "gemini": "OFF",
+            "hunyuan": "OFF",
+            "studio": "OFF",
+        }
+        core._connections_lock = threading.RLock()
+        core.bridge = Mock()
+        core.bridge.cancel_login.return_value = True
+        core.events = EventBus()
+
+        self.assertTrue(core.cancel_provider_login("deepseek"))
+
+        self.assertEqual(core._connections["deepseek"], "LOGIN")
+        event = core.events.recent()[-1]
+        self.assertEqual(event.type, "AGENT_STATUS_CHANGED")
+        self.assertEqual(event.data["agent"], "deepseek")
+        self.assertEqual(event.data["status"], "LOGIN")
+
     def test_connections_do_not_downgrade_active_login_to_login_required(self) -> None:
         core = object.__new__(ZenlessCore)
         core._closing = threading.Event()
