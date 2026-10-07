@@ -431,10 +431,10 @@ class SQLiteStore:
             if keys:
                 response = json.dumps(
                     {
-                        "code": "RECOVERED_PENDING_OPERATION",
+                        "code": "IDEMPOTENCY_UNCERTAIN",
                         "message": (
                             "Rubra restarted before this idempotent operation reached a confirmed result. "
-                            "Verify Recent Tasks before retrying with a new operation."
+                            "Verify Recent Tasks before repeating it; the original operation will never be replayed automatically."
                         ),
                     },
                     ensure_ascii=False,
@@ -442,13 +442,32 @@ class SQLiteStore:
                 connection.execute(
                     """
                     UPDATE operations
-                    SET state = 'failed', response_json = ?, updated_at = ?
+                    SET state = 'uncertain', response_json = ?, updated_at = ?
                     WHERE state = 'pending'
                     """,
                     (response, timestamp),
                 )
             connection.execute("COMMIT")
         return keys
+
+    def prune_operations(self, keep_final: int = 2048) -> int:
+        keep = max(128, min(10000, int(keep_final)))
+        with closing(self._connect()) as connection:
+            cursor = connection.execute(
+                """
+                DELETE FROM operations
+                WHERE state IN ('complete', 'failed', 'cancelled')
+                  AND idempotency_key NOT IN (
+                    SELECT idempotency_key
+                    FROM operations
+                    WHERE state IN ('complete', 'failed', 'cancelled')
+                    ORDER BY updated_at DESC
+                    LIMIT ?
+                  )
+                """,
+                (keep,),
+            )
+        return max(0, int(cursor.rowcount))
 
     def operations_for_resource(self, resource_id: str) -> list[dict[str, Any]]:
         with closing(self._connect()) as connection:
