@@ -355,6 +355,27 @@ class ZenlessCore:
             thread.start()
         return True
 
+    def cancel_provider_login(self, provider: str) -> bool:
+        if provider not in {"chatgpt", "deepseek", "gemini", "hunyuan"}:
+            raise CoreError("UNKNOWN_PROVIDER", "Unknown provider.", status=404)
+        cancel = getattr(self.bridge, "cancel_login", None)
+        if not callable(cancel):
+            return False
+        dismissed = bool(cancel(provider))
+        if dismissed:
+            with self._connections_lock:
+                if self._connections.get(provider) != "READY":
+                    self._connections[provider] = "LOGIN"
+            self.events.publish(
+                "AGENT_STATUS_CHANGED",
+                {
+                    "agent": provider,
+                    "status": "LOGIN",
+                    "detail": "Login dismissed; saved provider session was preserved.",
+                },
+            )
+        return dismissed
+
     def jobs(self) -> list[dict[str, Any]]:
         return [self._task_to_job(task) for task in self.store.recent_tasks(100)]
 
