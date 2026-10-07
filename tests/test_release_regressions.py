@@ -25,7 +25,7 @@ from zenless.qa_breaker import PROFILES, QABreaker
 from zenless.store import SQLiteStore
 from zenless.studio_data import SourceSnapshot, export_sources
 from zenless.tool_registry import ToolRegistry
-from zenless.toolchain import ToolchainError, ToolchainManager
+from zenless.toolchain import InstallResult, ToolchainError, ToolchainManager
 from zenless.webview_host import WebViewHost
 
 
@@ -233,6 +233,27 @@ def test_tool_setup_continues_after_failed_critical_and_prioritizes_sources(tmp_
     failed = ToolRegistry(tmp_path, tmp_path).descriptors()[0]
     assert failed['reason'] == 'network unavailable'
     assert failed['status'] == 'FAILED'
+
+
+def test_toolchain_incremental_results_preserve_unprocessed_component_state(tmp_path):
+    (tmp_path / 'assets').mkdir()
+    (tmp_path / 'assets/toolchain.json').write_text(json.dumps({'artifacts': []}))
+    manager = ToolchainManager(resource_root=tmp_path, portable_root=tmp_path)
+    results_path = tmp_path / 'runtime/toolchain-results.json'
+    results_path.write_text(json.dumps({
+        'qwen3-4b': {
+            'item_id': 'qwen3-4b',
+            'state': 'failed',
+            'detail': 'previous download error',
+            'path': '',
+        }
+    }))
+
+    manager._save_results([InstallResult('rojo', 'ready', 'ready')], merge=True)
+
+    payload = json.loads(results_path.read_text())
+    assert payload['rojo']['state'] == 'ready'
+    assert payload['qwen3-4b']['detail'] == 'previous download error'
 
 
 def test_targeted_tool_install_persists_failure_for_ui(tmp_path):
