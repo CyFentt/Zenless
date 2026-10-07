@@ -264,10 +264,10 @@ function LocalModelsPanel() {
         <div className="flex justify-between gap-4">
           <span className="text-ink-100">{model.name}</span>
           <div className="flex items-center gap-2">
-            <span className={model.installed ? 'text-zen-okBright' : model.state === 'failed' ? 'text-zen-errBright' : 'text-ink-300'}>
-              {model.installed ? 'Installed' : model.state === 'failed' ? 'Failed' : model.state === 'skipped' ? 'Skipped' : 'Setup needed'}
+            <span className={model.state === 'failed' ? 'text-zen-errBright' : model.installed ? 'text-zen-okBright' : 'text-ink-300'}>
+              {model.state === 'failed' ? 'Failed' : model.installed ? 'Installed' : model.state === 'skipped' ? 'Skipped' : 'Setup needed'}
             </span>
-            {!model.installed && model.id && model.state !== 'skipped' && (
+            {model.id && model.state !== 'skipped' && (!model.installed || model.state === 'failed') && (
               <button
                 disabled={busy || busyModelId !== null || state?.setup.state === 'INSTALLING'}
                 onClick={async () => {
