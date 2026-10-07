@@ -95,6 +95,40 @@ describe('transport failure recovery', () => {
     await expect(new RealZenlessAPI().getStatus()).rejects.toMatchObject({ status: 503, message: 'Offline', code: 'STUDIO_UNAVAILABLE', requestId: 'server-id', details: { retry: true } });
   });
 
+  it('reuses the same idempotency key across transport retry and pending reconciliation', async () => {
+    vi.useFakeTimers();
+    const calls: Array<{ key: string | null; url: string }> = [];
+    const fetchMock = vi.fn()
+      .mockImplementationOnce((url, init) => {
+        calls.push({ key: new Headers(init.headers).get('Idempotency-Key'), url: String(url) });
+        return Promise.reject(new TypeError('socket reset'));
+      })
+      .mockImplementationOnce((url, init) => {
+        calls.push({ key: new Headers(init.headers).get('Idempotency-Key'), url: String(url) });
+        return Promise.resolve(new Response(JSON.stringify({
+          message: 'The idempotent operation is still running.',
+          code: 'IDEMPOTENCY_PENDING',
+        }), { status: 409, headers: { 'Content-Type': 'application/json' } }));
+      })
+      .mockImplementationOnce((url, init) => {
+        calls.push({ key: new Headers(init.headers).get('Idempotency-Key'), url: String(url) });
+        return Promise.resolve(new Response(JSON.stringify({ id: 'job-1', title: 'Build' }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }));
+      });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const pending = new RealZenlessAPI().createJob('Build');
+    await vi.advanceTimersByTimeAsync(500);
+    await expect(pending).resolves.toMatchObject({ id: 'job-1' });
+
+    expect(calls).toHaveLength(3);
+    expect(calls.every((entry) => entry.url === '/api/jobs')).toBe(true);
+    expect(calls[0].key).toBeTruthy();
+    expect(new Set(calls.map((entry) => entry.key)).size).toBe(1);
+  });
+
   it('accepts no-content success without parsing JSON', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 204 })));
     await expect(new RealZenlessAPI().cancelJob('job')).resolves.toBeUndefined();
