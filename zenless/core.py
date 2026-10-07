@@ -622,10 +622,10 @@ class ZenlessCore:
         item = self.store.prompt_queue_item(queue_id)
         if item is None:
             raise CoreError("QUEUE_ITEM_NOT_FOUND", "Prompt queue item not found.", status=404)
-        if item["state"] in {"preparing", "inflight", "sent_unconfirmed", "completed"}:
+        if item["state"] not in {"queued", "blocked", "failed"}:
             raise CoreError(
                 "QUEUE_ITEM_NOT_EDITABLE",
-                "Active, completed, or unconfirmed-delivery queue items cannot be edited.",
+                "Only queued, blocked, or failed queue items can be edited.",
                 status=409,
             )
         changes: dict[str, Any] = {}
@@ -699,15 +699,19 @@ class ZenlessCore:
 
     def move_prompt_queue_item(self, queue_id: str, direction: int) -> dict[str, Any]:
         items = self.store.prompt_queue_items(128)
-        movable = [item for item in items if item["state"] not in {"preparing", "inflight"}]
+        movable = [item for item in items if item["state"] in {"queued", "blocked", "failed"}]
         index = next((i for i, item in enumerate(movable) if item["id"] == queue_id), -1)
         if index < 0:
             raise CoreError("QUEUE_ITEM_NOT_MOVABLE", "Prompt queue item cannot be moved.", status=409)
         target = max(0, min(len(movable) - 1, index + (-1 if direction < 0 else 1)))
         if target != index:
             movable[index], movable[target] = movable[target], movable[index]
-            active = [item for item in items if item["state"] in {"preparing", "inflight"}]
-            self.store.reorder_prompt_queue([*(item["id"] for item in active), *(item["id"] for item in movable)])
+            movable_ids = [item["id"] for item in movable]
+            ordered_ids = [item["id"] for item in items]
+            movable_slots = [index for index, item in enumerate(items) if item["state"] in {"queued", "blocked", "failed"}]
+            for slot, queue_item_id in zip(movable_slots, movable_ids, strict=True):
+                ordered_ids[slot] = queue_item_id
+            self.store.reorder_prompt_queue(ordered_ids)
         self._publish_prompt_queue()
         return self.prompt_queue()
 
