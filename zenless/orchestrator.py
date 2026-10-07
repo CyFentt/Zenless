@@ -376,12 +376,25 @@ class ZenlessOrchestrator:
                     raise
 
                 role = "Builder" if provider == "chatgpt" else "Reviewer"
+                fallback_errors = [str(primary_error)]
+                current_transport = ""
+                status_fn = getattr(self.bridge, "provider_status", None)
+                if callable(status_fn):
+                    try:
+                        status = status_fn().get(provider, {})
+                        if isinstance(status, dict):
+                            current_transport = str(status.get("transport") or "").casefold()
+                    except Exception:
+                        current_transport = ""
+
                 prefer_local = getattr(self.bridge, "prefer_local", None)
-                if callable(prefer_local):
+                primary_is_local = current_transport == "local" or str(primary_error).casefold().startswith("local ")
+                if not primary_is_local and callable(prefer_local):
                     try:
                         local_selected = bool(prefer_local(provider))
-                    except Exception:
+                    except Exception as exc:
                         local_selected = False
+                        fallback_errors.append(f"local-route: {exc}")
                     if local_selected:
                         self._emit(
                             task_id,
@@ -391,19 +404,34 @@ class ZenlessOrchestrator:
                             str(primary_error)[:1000],
                         )
                         publish("stream_start", f"local-{provider}")
-                        return send(provider)
+                        try:
+                            return send(provider)
+                        except BridgeError as local_error:
+                            if streamed:
+                                raise
+                            fallback_errors.append(str(local_error))
+                            self._emit(
+                                task_id,
+                                stage,
+                                f"Local {role.lower()} failed before producing output; trying the next independent route.",
+                                "warning",
+                                str(local_error)[:1000],
+                            )
 
                 if self.bridge.wait_for_provider("gemini", timeout=0.75):
                     self._emit(
                         task_id,
                         stage,
-                        f"{role} web route is unavailable; Smart Routing handed the role to Gemini.",
+                        f"{role} route failed; Smart Routing handed the role to Gemini.",
                         "warning",
-                        str(primary_error)[:1000],
+                        " | ".join(fallback_errors)[-1800:],
                     )
                     publish("stream_start", "gemini")
                     return send("gemini")
-                raise
+                raise BridgeError(
+                    f"Smart Routing exhausted available {role.lower()} routes: "
+                    + " | ".join(fallback_errors)[-3000:]
+                ) from primary_error
         finally:
             publish("stream_finish", provider)
 
@@ -428,6 +456,13 @@ class ZenlessOrchestrator:
                 "overloaded",
                 "response timeout",
                 "timed out waiting for a complete response",
+                "local builder failed",
+                "local reviewer failed",
+                "local ai is unavailable",
+                "local model request failed",
+                "local model returned empty output",
+                "local output is still truncated",
+                "local completion exceeded",
             )
         )
 
