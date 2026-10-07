@@ -1893,8 +1893,17 @@ class ZenlessCore:
             try:
                 response = self.bridge.request(provider, "get_models", {}, task_id="settings", timeout=8)
                 names = [str(item).strip() for item in response.get("models", []) if str(item).strip()]
-            except BridgeError:
+            except BridgeError as exc:
                 names = []
+                self._report(
+                    provider,
+                    "model-catalog",
+                    exc,
+                    "Keep the provider on Auto or refresh its login before selecting a specific model.",
+                    severity="WARNING",
+                    probable_cause="The provider UI/API did not expose its model catalog through the selected route.",
+                    impact="Model discovery is unavailable for this provider; existing Auto/default selection is preserved.",
+                )
             if not names:
                 continue
             options = [{"id": "auto", "label": "Current provider default"}]
