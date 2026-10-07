@@ -588,7 +588,33 @@ class ZenlessCore:
         return result
 
     def _preflight_providers(self, options: TaskOptions) -> None:
-        required = ["chatgpt"]
+        required: list[str] = []
+        if options.smart_routing:
+            builder_ready = False
+            connections = self.connections()
+            for candidate in ("chatgpt", "gemini"):
+                if connections.get(candidate) == "READY":
+                    builder_ready = True
+                    break
+                try:
+                    ready = self.bridge.wait_for_provider(candidate, timeout=0.5)
+                except BridgeError:
+                    ready = False
+                if ready:
+                    self._set_connection(candidate, "READY")
+                    builder_ready = True
+                    break
+            if not builder_ready:
+                if self.connections().get("chatgpt") != "ERR":
+                    self._set_connection("chatgpt", "LOGIN")
+                raise CoreError(
+                    "PROVIDER_LOGIN_REQUIRED",
+                    "Builder requires ChatGPT, Gemini, or an available local text model.",
+                    status=409,
+                    details={"provider": "chatgpt", "alternatives": ["gemini", "local"]},
+                )
+        else:
+            required.append("chatgpt")
         if options.independent_review and not options.smart_routing:
             required.append("deepseek")
         if options.create_3d_asset:
