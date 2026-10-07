@@ -681,6 +681,7 @@ class ZenlessCore:
             last_error="Marked sent after manual verification.",
             next_attempt_at="",
         )
+        self.store.prune_prompt_queue_history()
         self._publish_prompt_queue()
         self._queue_wake.set()
         return self._queue_item_payload(self.store.prompt_queue_item(queue_id) or item)
@@ -705,13 +706,10 @@ class ZenlessCore:
             raise CoreError("QUEUE_ITEM_NOT_MOVABLE", "Prompt queue item cannot be moved.", status=409)
         target = max(0, min(len(movable) - 1, index + (-1 if direction < 0 else 1)))
         if target != index:
-            movable[index], movable[target] = movable[target], movable[index]
-            movable_ids = [item["id"] for item in movable]
-            ordered_ids = [item["id"] for item in items]
-            movable_slots = [index for index, item in enumerate(items) if item["state"] in {"queued", "blocked", "failed"}]
-            for slot, queue_item_id in zip(movable_slots, movable_ids, strict=True):
-                ordered_ids[slot] = queue_item_id
-            self.store.reorder_prompt_queue(ordered_ids)
+            self.store.swap_prompt_queue_positions(
+                str(movable[index]["id"]),
+                str(movable[target]["id"]),
+            )
         self._publish_prompt_queue()
         return self.prompt_queue()
 
@@ -849,6 +847,7 @@ class ZenlessCore:
             status = str(task.get("status") or "").casefold()
             if status == "complete":
                 self.store.update_prompt_queue_item(item["id"], state="completed", last_error="")
+                self.store.prune_prompt_queue_history()
                 changed = True
             elif status in {"failed", "blocked"}:
                 error = str(task.get("error") or task.get("final_text") or "Queued task failed.")
