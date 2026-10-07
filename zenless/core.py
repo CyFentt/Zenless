@@ -287,8 +287,19 @@ class ZenlessCore:
         if bridge is not None and not self._closing.is_set():
             try:
                 statuses = bridge.provider_status()
-            except Exception:
+            except Exception as exc:
                 statuses = {}
+                diagnostics = getattr(self, "diagnostics", None)
+                if diagnostics is not None:
+                    self._report(
+                        "browser",
+                        "provider-status",
+                        exc,
+                        "Provider sessions were preserved. Retry Links refresh; restart the browser helper only if status remains stale.",
+                        severity="WARNING",
+                        probable_cause="A provider transport failed while Rubra was collecting its status snapshot.",
+                        impact="Displayed provider status can be stale; authentication data is not cleared.",
+                    )
             if statuses:
                 with self._connections_lock:
                     for provider in ("chatgpt", "deepseek", "gemini", "hunyuan"):
@@ -314,8 +325,17 @@ class ZenlessCore:
         models = self.settings()["models"]
         try:
             provider_states = self.bridge.provider_status()
-        except Exception:
+        except Exception as exc:
             provider_states = {}
+            self._report(
+                "browser",
+                "agent-status",
+                exc,
+                "Agent cards will use the last connection snapshot. Retry Links refresh if provider details stay stale.",
+                severity="WARNING",
+                probable_cause="The live provider detail snapshot failed after the connection snapshot was collected.",
+                impact="Agent detail/transport text can be missing while the provider session remains intact.",
+            )
 
         def provider_payload(provider: str, **extra: Any) -> dict[str, Any]:
             live = provider_states.get(provider)
