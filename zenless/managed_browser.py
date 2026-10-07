@@ -919,6 +919,21 @@ class ManagedBrowserController:
             if not text or len(text) > 700:
                 continue
             lowered = text.casefold()
+            if any(
+                term in lowered
+                for term in (
+                    "message is too long",
+                    "prompt is too long",
+                    "input is too long",
+                    "context length",
+                    "context window",
+                    "maximum context",
+                    "max context",
+                    "too many tokens",
+                    "token limit",
+                )
+            ):
+                return "PROVIDER_INPUT_LIMIT", text
             if any(term in lowered for term in ("rate limit", "too many requests", "reached your limit", "usage limit", "quota exceeded")):
                 return "PROVIDER_RATE_LIMIT", text
             if any(term in lowered for term in ("server is busy", "servers are busy", "high traffic", "overloaded", "capacity")):
