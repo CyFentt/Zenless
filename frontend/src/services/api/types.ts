@@ -35,6 +35,7 @@ export interface ZenlessAPI {
   getAgents(): Promise<AgentInfo[]>;
   getTools(): Promise<ToolDescriptor[]>;
   loginProvider(provider: ProviderId): Promise<{ ok: boolean }>;
+  cancelProviderLogin(provider: ProviderId): Promise<{ ok: boolean }>;
 
   getJobs(): Promise<Job[]>;
   getJob(id: string): Promise<Job>;
