@@ -298,7 +298,27 @@ class QABreaker:
         if cancel is None:
             return False
         cancel.set()
+        self._cancel_active_provider_requests(job_id)
         return True
+
+    def _cancel_active_provider_requests(self, job_id: str) -> None:
+        status_fn = getattr(self.bridge, "provider_status", None)
+        if not callable(status_fn):
+            return
+        try:
+            statuses = status_fn()
+        except Exception as exc:
+            self._log(job_id, "WARN", f"Could not inspect provider state during Play Stop: {exc}")
+            return
+        for provider in ("chatgpt", "deepseek", "gemini"):
+            state = statuses.get(provider, {}) if isinstance(statuses, dict) else {}
+            if str(state.get("state") or "").casefold() != "working":
+                continue
+            try:
+                self.bridge.request(provider, "cancel", {}, task_id=job_id, timeout=3)
+            except Exception as exc:
+                self._log(job_id, "WARN", f"Could not cancel active {provider} QA request: {exc}")
+
 
     def stop_all(self) -> None:
         with self._manual_lock:
