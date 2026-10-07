@@ -1742,15 +1742,40 @@ class ZenlessCore:
                 tool_results = raw
         except (OSError, json.JSONDecodeError):
             tool_results = {}
-        model_results = {"qwen-coder-7b": tool_results.get("qwen-coder-7b"), "qwen3-4b": tool_results.get("qwen3-4b")}
+        component_results = {
+            item_id: tool_results.get(item_id)
+            for item_id in ("qwen-coder-7b", "qwen3-4b", "llama-vulkan", "llama-cpu")
+        }
         models = []
         for item in self.local_ai.model_status():
             model = dict(item)
-            result = model_results.get(str(model.get("id") or ""))
+            result = component_results.get(str(model.get("id") or ""))
             if isinstance(result, dict):
                 model["state"] = str(result.get("state") or "")
                 model["detail"] = str(result.get("detail") or "")
             models.append(model)
+
+        for item_id, label, root in (
+            ("llama-vulkan", "llama.cpp Vulkan runtime", self.portable_root / "runtime" / "local-ai" / "llama-vulkan"),
+            ("llama-cpu", "llama.cpp CPU runtime", self.portable_root / "runtime" / "local-ai" / "llama-cpu"),
+        ):
+            installed = root.exists() and next(root.rglob("llama-server.exe"), None) is not None
+            result = component_results.get(item_id)
+            models.append(
+                {
+                    "id": item_id,
+                    "name": label,
+                    "installed": installed,
+                    **(
+                        {
+                            "state": str(result.get("state") or ""),
+                            "detail": str(result.get("detail") or ""),
+                        }
+                        if isinstance(result, dict)
+                        else {}
+                    ),
+                }
+            )
         return {
             "enabled": bool(self.settings()["localAI"]),
             "available": self.local_ai.available,
