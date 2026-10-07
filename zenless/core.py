@@ -1751,8 +1751,11 @@ class ZenlessCore:
             model = dict(item)
             result = component_results.get(str(model.get("id") or ""))
             if isinstance(result, dict):
-                model["state"] = str(result.get("state") or "")
+                state = str(result.get("state") or "")
+                model["state"] = state
                 model["detail"] = str(result.get("detail") or "")
+                if state in {"failed", "skipped"}:
+                    model["installed"] = False
             models.append(model)
 
         for item_id, label, root in (
@@ -1761,14 +1764,15 @@ class ZenlessCore:
         ):
             installed = root.exists() and next(root.rglob("llama-server.exe"), None) is not None
             result = component_results.get(item_id)
+            state = str(result.get("state") or "") if isinstance(result, dict) else ""
             models.append(
                 {
                     "id": item_id,
                     "name": label,
-                    "installed": installed,
+                    "installed": installed and state not in {"failed", "skipped"},
                     **(
                         {
-                            "state": str(result.get("state") or ""),
+                            "state": state,
                             "detail": str(result.get("detail") or ""),
                         }
                         if isinstance(result, dict)
