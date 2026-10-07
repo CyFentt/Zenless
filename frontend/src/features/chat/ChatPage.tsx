@@ -391,7 +391,7 @@ function PromptQueuePanel({ snapshot, onChange }: { snapshot: PromptQueueSnapsho
                     </>
                   ) : (
                     <>
-                      {!active && item.state !== 'COMPLETED' && <button title="Edit" onClick={() => { setEditingId(item.id); setDraft(item.content); }} className="w-6 h-6 grid place-items-center text-ink-300 hover:text-ink-0"><Pencil size={10}/></button>}
+                      {!active && !uncertain && item.state !== 'COMPLETED' && <button title="Edit" onClick={() => { setEditingId(item.id); setDraft(item.content); }} className="w-6 h-6 grid place-items-center text-ink-300 hover:text-ink-0"><Pencil size={10}/></button>}
                       {!active && item.state !== 'COMPLETED' && <button title="Move up" disabled={index === 0 || busyId === item.id} onClick={() => void mutate(item.id, () => getApi().movePromptQueueItem(item.id, -1))} className="w-6 h-6 grid place-items-center text-ink-300 disabled:opacity-25"><ChevronUp size={10}/></button>}
                       {!active && item.state !== 'COMPLETED' && <button title="Move down" disabled={index === visible.length - 1 || busyId === item.id} onClick={() => void mutate(item.id, () => getApi().movePromptQueueItem(item.id, 1))} className="w-6 h-6 grid place-items-center text-ink-300 disabled:opacity-25"><ChevronDown size={10}/></button>}
                       {uncertain && <button title="Mark sent after verifying Recent Tasks" disabled={busyId === item.id} onClick={() => void mutate(item.id, () => getApi().confirmPromptQueueItem(item.id))} className="w-6 h-6 grid place-items-center text-zen-okBright"><Check size={10}/></button>}
