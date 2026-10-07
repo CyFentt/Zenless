@@ -456,11 +456,11 @@ class SQLiteStore:
             cursor = connection.execute(
                 """
                 DELETE FROM operations
-                WHERE state IN ('complete', 'failed', 'cancelled')
+                WHERE state IN ('complete', 'failed', 'cancelled', 'uncertain')
                   AND idempotency_key NOT IN (
                     SELECT idempotency_key
                     FROM operations
-                    WHERE state IN ('complete', 'failed', 'cancelled')
+                    WHERE state IN ('complete', 'failed', 'cancelled', 'uncertain')
                     ORDER BY updated_at DESC
                     LIMIT ?
                   )
