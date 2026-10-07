@@ -83,6 +83,15 @@ def test_ollama_model_selection_prefers_qwen_roles(tmp_path: Path):
         assert service._select_ollama_model("Role: Reviewer.\nReview this") == "qwen3:4b"
 
 
+def test_backend_label_reports_ollama_when_portable_backend_is_missing(tmp_path: Path):
+    service = LocalAIService(tmp_path)
+    with (
+        patch.object(service, "_portable_available", return_value=False),
+        patch.object(service, "_select_ollama_model", return_value="qwen3:4b"),
+    ):
+        assert service.backend_label == "Ollama · qwen3:4b"
+
+
 def test_ollama_is_used_when_portable_runtime_is_unavailable(tmp_path: Path):
     service = LocalAIService(tmp_path)
     with (
