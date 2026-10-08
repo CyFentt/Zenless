@@ -106,7 +106,18 @@ class ZenlessCore:
         self._owns_diagnostics = diagnostics is None
         self.diagnostics = diagnostics or ErrorBus(self.data_root / "logs")
         self.diagnostics.install_global_hooks()
-        self.events = EventBus()
+        self.events = EventBus(
+            error_callback=lambda exc: self.diagnostics.report(
+                severity="ERROR",
+                source="event-bus",
+                component="subscriber",
+                error=exc,
+                message=f"Event subscriber failed: {exc}",
+                probable_cause="A UI/WebSocket or internal event subscriber raised while handling a core event.",
+                impact="The originating core operation continued, but one realtime consumer may have missed that event.",
+                recovery_action="Reload the affected view; inspect diagnostics if the subscriber keeps failing.",
+            )
+        )
         self.store = SQLiteStore(self.data_root / "zenless.db")
         self.storage = StorageManager(self.data_root)
         self.portable_root = Path(os.environ.get("RUBRA_HOME") or self.data_root.parent).expanduser().resolve()
