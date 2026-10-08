@@ -1821,6 +1821,12 @@ class ZenlessCore:
         if target not in allowed:
             raise CoreError("UNKNOWN_LOCAL_AI_ITEM", "Unknown local AI component.", status=404)
         with self._provider_lock:
+            if self.orchestrator.current_task_id:
+                raise CoreError(
+                    "TOOLS_BUSY",
+                    "Wait for the active task to finish before changing local AI components.",
+                    status=409,
+                )
             if self._tools_thread is not None and self._tools_thread.is_alive():
                 raise CoreError(
                     "TOOLS_BUSY",
@@ -1843,6 +1849,7 @@ class ZenlessCore:
 
         self._tools_state = {"state": "INSTALLING", "detail": f"Preparing {item_id}"}
         try:
+            self.local_ai.close()
             manager = ToolchainManager(
                 resource_root=self.resource_root,
                 portable_root=self.portable_root,
@@ -1874,6 +1881,12 @@ class ZenlessCore:
 
     def prepare_tools(self) -> bool:
         with self._provider_lock:
+            if self.orchestrator.current_task_id:
+                raise CoreError(
+                    "TOOLS_BUSY",
+                    "Wait for the active task to finish before changing local tools or models.",
+                    status=409,
+                )
             if self._tools_thread is not None and self._tools_thread.is_alive():
                 return True
             self._tools_state = {"state": "INSTALLING", "detail": "Preparing pinned tools and local model"}
@@ -1887,6 +1900,7 @@ class ZenlessCore:
 
         self._tools_state = {"state": "INSTALLING", "detail": "Preparing pinned tools and local model"}
         try:
+            self.local_ai.close()
             manager = ToolchainManager(
                 resource_root=self.resource_root,
                 portable_root=self.portable_root,
