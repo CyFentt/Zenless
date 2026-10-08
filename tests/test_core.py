@@ -665,6 +665,14 @@ class CoreTests(unittest.TestCase):
         core._refresh_provider_states.assert_called_once_with()
         core.orchestrator.cancel.assert_not_called()
 
+    def test_chat_rejects_empty_json_request_without_attachments(self) -> None:
+        core = object.__new__(ZenlessCore)
+
+        with self.assertRaises(CoreError) as raised:
+            core.send_chat("   ", None, (), None)
+
+        self.assertEqual(raised.exception.code, "EMPTY_MESSAGE")
+
     def test_chat_returns_prepared_message_identity_without_post_start_message_read(self) -> None:
         core = object.__new__(ZenlessCore)
         core.settings = lambda: json.loads(json.dumps(ZenlessCore.DEFAULT_SETTINGS))
