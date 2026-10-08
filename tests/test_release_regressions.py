@@ -284,6 +284,65 @@ def test_toolchain_incremental_results_preserve_unprocessed_component_state(tmp_
     assert payload['qwen3-4b']['detail'] == 'previous download error'
 
 
+def test_failed_local_ai_components_are_excluded_from_portable_routing(tmp_path):
+    runtime = tmp_path / "runtime"
+    models = runtime / "models"
+    models.mkdir(parents=True)
+    (models / "Qwen3-4B-Q4_K_M.gguf").write_bytes(b"bad-model")
+    llama = runtime / "local-ai" / "llama-cpu"
+    llama.mkdir(parents=True)
+    (llama / "llama-server.exe").write_bytes(b"MZ")
+    (runtime / "toolchain-results.json").write_text(
+        json.dumps(
+            {
+                "qwen3-4b": {"state": "failed", "detail": "SHA mismatch"},
+                "llama-cpu": {"state": "ready", "detail": "ok"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    service = LocalAIService(tmp_path)
+
+    assert service._portable_available() is False
+    assert service.model_status()[1]["installed"] is False
+
+
+def test_invalid_existing_raw_model_is_removed_before_redownload(tmp_path):
+    (tmp_path / "assets").mkdir()
+    expected_payload = b"verified-model"
+    expected = hashlib.sha256(expected_payload).hexdigest()
+    (tmp_path / "assets/toolchain.json").write_text(
+        json.dumps(
+            {
+                "artifacts": [
+                    {
+                        "id": "qwen3-4b",
+                        "name": "Qwen test",
+                        "kind": "raw",
+                        "url": "https://example.invalid/model.gguf",
+                        "sha256": expected,
+                        "target": "runtime/models/model.gguf",
+                        "marker": "model.gguf",
+                    }
+                ]
+            }
+        )
+    )
+    target = tmp_path / "runtime/models/model.gguf"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"corrupt-model")
+    manager = ToolchainManager(resource_root=tmp_path, portable_root=tmp_path)
+
+    with patch.object(manager, "_download", side_effect=ToolchainError("offline")):
+        with pytest.raises(ToolchainError, match="All verified download sources failed"):
+            manager.install("qwen3-4b")
+
+    assert not target.exists()
+    result = json.loads((tmp_path / "runtime/toolchain-results.json").read_text())["qwen3-4b"]
+    assert result["state"] == "failed"
+
+
 def test_existing_verified_raw_model_is_adopted_without_redownload(tmp_path):
     (tmp_path / 'assets').mkdir()
     payload = b'already-downloaded-model'
