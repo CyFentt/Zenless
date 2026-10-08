@@ -46,7 +46,8 @@ class ToolchainManager:
         self.manifest = json.loads((self.resource_root / "assets" / "toolchain.json").read_text(encoding="utf-8"))
         self._state = self._load_state()
 
-    def ensure_default(self) -> list[InstallResult]:
+    def ensure_default(self, *, skip_groups: set[str] | None = None) -> list[InstallResult]:
+        skipped_groups = {str(value).strip().casefold() for value in (skip_groups or set()) if str(value).strip()}
         with self._lock:
             results: list[InstallResult] = []
             artifacts = self.manifest.get("artifacts", [])
@@ -58,7 +59,14 @@ class ToolchainManager:
                 if self.cancel_event.is_set():
                     break
                 item_id = str(item["id"])
-                if item.get("auto", True) is False:
+                group = str(item.get("group") or "").strip().casefold()
+                if group and group in skipped_groups:
+                    result = InstallResult(
+                        item_id,
+                        "optional",
+                        "Skipped automatic installation because a compatible local backend is already available; install on demand for portable fallback.",
+                    )
+                elif item.get("auto", True) is False:
                     result = InstallResult(item_id, "optional", "Available on demand")
                 elif not self._eligible(item):
                     _ok, reason = self._eligibility(item)
