@@ -298,7 +298,13 @@ function PromptQueuePanel({ snapshot, onChange }: { snapshot: PromptQueueSnapsho
   const [busyId, setBusyId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
-  const visible = snapshot.items.filter((item) => item.state !== 'CANCELLED').slice(-32);
+  const activeItems = snapshot.items.filter((item) =>
+    !['COMPLETED', 'CANCELLED'].includes(item.state)
+  );
+  const recentHistory = snapshot.items
+    .filter((item) => item.state === 'COMPLETED')
+    .slice(-Math.max(0, 32 - activeItems.length));
+  const visible = [...activeItems, ...recentHistory];
 
   const refresh = async () => onChange(await getApi().getPromptQueue());
   const mutate = async (id: string, action: () => Promise<unknown>) => {
