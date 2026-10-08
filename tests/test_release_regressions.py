@@ -294,6 +294,40 @@ def test_tool_setup_continues_after_failed_critical_and_prioritizes_sources(tmp_
     assert failed['status'] == 'FAILED'
 
 
+def test_cancelled_default_setup_preserves_unprocessed_component_results(tmp_path):
+    (tmp_path / "assets").mkdir()
+    (tmp_path / "assets/toolchain.json").write_text(
+        json.dumps(
+            {
+                "artifacts": [
+                    {"id": "first", "target": "runtime/tools/first"},
+                    {"id": "second", "target": "runtime/tools/second"},
+                ],
+                "sources": [],
+            }
+        )
+    )
+    runtime = tmp_path / "runtime"
+    runtime.mkdir(exist_ok=True)
+    results_path = runtime / "toolchain-results.json"
+    results_path.write_text(
+        json.dumps({"second": {"item_id": "second", "state": "failed", "detail": "previous failure", "path": ""}})
+    )
+    cancel = threading.Event()
+    manager = ToolchainManager(resource_root=tmp_path, portable_root=tmp_path, cancel_event=cancel)
+
+    def first_only(item):
+        cancel.set()
+        return tmp_path
+
+    with patch.object(manager, "_ensure_artifact", side_effect=first_only), patch.object(manager, "_ensure_npm_packages"):
+        manager.ensure_default()
+
+    payload = json.loads(results_path.read_text())
+    assert payload["first"]["state"] == "ready"
+    assert payload["second"]["detail"] == "previous failure"
+
+
 def test_toolchain_incremental_results_preserve_unprocessed_component_state(tmp_path):
     (tmp_path / 'assets').mkdir()
     (tmp_path / 'assets/toolchain.json').write_text(json.dumps({'artifacts': []}))
@@ -313,6 +347,30 @@ def test_toolchain_incremental_results_preserve_unprocessed_component_state(tmp_
     payload = json.loads(results_path.read_text())
     assert payload['rojo']['state'] == 'ready'
     assert payload['qwen3-4b']['detail'] == 'previous download error'
+
+
+def test_optional_local_ai_components_are_not_routable_until_verified(tmp_path):
+    runtime = tmp_path / "runtime"
+    models = runtime / "models"
+    models.mkdir(parents=True)
+    (models / "Qwen3-4B-Q4_K_M.gguf").write_bytes(b"unverified-model")
+    llama = runtime / "local-ai" / "llama-cpu"
+    llama.mkdir(parents=True)
+    (llama / "llama-server.exe").write_bytes(b"MZ")
+    (runtime / "toolchain-results.json").write_text(
+        json.dumps(
+            {
+                "qwen3-4b": {"state": "optional", "detail": "install on demand"},
+                "llama-cpu": {"state": "optional", "detail": "install on demand"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    service = LocalAIService(tmp_path)
+
+    assert service._portable_available() is False
+    assert service.model_status()[1]["installed"] is False
 
 
 def test_failed_local_ai_components_are_excluded_from_portable_routing(tmp_path):
