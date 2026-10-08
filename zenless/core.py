@@ -581,12 +581,21 @@ class ZenlessCore:
 
     def cancel_generation(self, job_id: str) -> bool:
         result = self.cancel_job(job_id)
-        for provider in ("chatgpt", "deepseek", "gemini", "hunyuan"):
+        cancel_task = getattr(self.bridge, "cancel_task", None)
+        if callable(cancel_task):
             try:
-                if self.bridge.wait_for_provider(provider, timeout=0.1):
-                    self.bridge.request(provider, "cancel", {}, task_id=job_id, timeout=5)
-            except BridgeError:
-                continue
+                cancel_task(job_id, timeout=3.0)
+            except BridgeError as exc:
+                self._report(
+                    "browser",
+                    "cancel-generation",
+                    exc,
+                    "The Rubra task was cancelled locally. Provider-side generation may finish in the saved session.",
+                    severity="WARNING",
+                    probable_cause="An active provider route did not accept the bounded cancel request.",
+                    impact="No unrelated provider session was opened or modified.",
+                    job_id=job_id,
+                )
         return result
 
     def _preflight_providers(self, options: TaskOptions) -> None:
