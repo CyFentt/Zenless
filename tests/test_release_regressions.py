@@ -49,6 +49,17 @@ def test_webview_busy_login_can_be_cancelled_out_of_band(tmp_path):
     assert payload["result"]["dismissed"] is True
 
 
+def test_webview_cancel_without_window_does_not_create_hidden_provider_window(tmp_path):
+    host = WebViewHost(profile_root=tmp_path, provider_specs=PROVIDERS, source=io.BytesIO(), target=io.BytesIO())
+
+    with patch.object(host, "_ensure_window") as ensure:
+        result = host._handle({"action": "dismiss_login", "provider": "deepseek"})
+
+    assert result["dismissed"] is False
+    assert host._dismissed["deepseek"].is_set()
+    ensure.assert_not_called()
+
+
 def test_webview_login_can_be_dismissed_without_destroying_saved_session(tmp_path):
     host = WebViewHost(profile_root=tmp_path, provider_specs=PROVIDERS, source=io.BytesIO(), target=io.BytesIO())
     window = Mock()
