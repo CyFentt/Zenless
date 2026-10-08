@@ -1697,8 +1697,24 @@ class ZenlessCore:
         stopped = self.qa.stop(job_id)
         cancelled = False if stopped else self.orchestrator.cancel(job_id)
         if stopped or cancelled:
+            shutdown_confirmed = True
             if stopped:
                 self.qa.wait_for_manual_tests(3.0)
+                shutdown_confirmed = not self.qa.running(job_id)
+            elif cancelled:
+                shutdown_confirmed = self.orchestrator.wait_for_idle(3.0)
+            if not shutdown_confirmed:
+                self.diagnostics.report(
+                    severity="WARNING",
+                    source="studio",
+                    component="play-stop",
+                    message="Play Test stop was requested, but the worker is still shutting down.",
+                    probable_cause="A Studio/MCP operation did not return within the bounded shutdown wait.",
+                    impact="Provider sessions were left untouched to avoid cross-lifecycle state corruption.",
+                    recovery_action="Wait for the Test status to leave RUNNING before opening Links or starting another Play Test.",
+                    job_id=job_id,
+                )
+                return True
             try:
                 self._refresh_provider_states()
             except Exception as exc:
