@@ -1900,6 +1900,7 @@ class ZenlessCore:
 
         self._tools_state = {"state": "INSTALLING", "detail": "Preparing pinned tools and local model"}
         try:
+            ollama_available = bool(self.local_ai.ollama_available)
             self.local_ai.close()
             manager = ToolchainManager(
                 resource_root=self.resource_root,
@@ -1907,7 +1908,7 @@ class ZenlessCore:
                 status_callback=progress,
                 cancel_event=self._closing,
             )
-            results = manager.ensure_default()
+            results = manager.ensure_default(skip_groups={"local-ai"} if ollama_available else None)
             os.environ.update(manager.environment())
             failures = [item.item_id for item in results if item.state == "failed"]
             self._tools_state = {
