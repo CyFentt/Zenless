@@ -239,6 +239,37 @@ def test_model_is_reapplied_to_selected_transport_before_each_prompt():
     assert not gateway._can_use_local('chatgpt')
 
 
+def test_tool_setup_can_skip_redundant_local_ai_group(tmp_path):
+    (tmp_path / "assets").mkdir()
+    (tmp_path / "assets/toolchain.json").write_text(
+        json.dumps(
+            {
+                "artifacts": [
+                    {"id": "rojo", "target": "runtime/tools/rojo"},
+                    {"id": "qwen3-4b", "group": "local-ai", "target": "runtime/models/qwen.gguf"},
+                    {"id": "llama-cpu", "group": "local-ai", "target": "runtime/local-ai/llama-cpu"},
+                ],
+                "sources": [],
+            }
+        )
+    )
+    manager = ToolchainManager(resource_root=tmp_path, portable_root=tmp_path)
+    installed = []
+
+    def ensure(item):
+        installed.append(item["id"])
+        return tmp_path
+
+    with patch.object(manager, "_ensure_artifact", side_effect=ensure), patch.object(manager, "_ensure_npm_packages"):
+        results = manager.ensure_default(skip_groups={"local-ai"})
+
+    assert installed == ["rojo"]
+    by_id = {item.item_id: item for item in results}
+    assert by_id["qwen3-4b"].state == "optional"
+    assert by_id["llama-cpu"].state == "optional"
+    assert "compatible local backend" in by_id["qwen3-4b"].detail
+
+
 def test_tool_setup_continues_after_failed_critical_and_prioritizes_sources(tmp_path):
     (tmp_path / 'assets').mkdir()
     (tmp_path / 'assets/toolchain.json').write_text(json.dumps({'artifacts': [
