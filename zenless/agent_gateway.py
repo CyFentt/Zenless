@@ -43,6 +43,7 @@ class AgentGateway:
         self.allow_extension_fallback = allow_extension_fallback
         self._routes: dict[str, str] = {}
         self._task_routes: dict[tuple[str, str], str] = {}
+        self._task_activity: set[tuple[str, str]] = set()
         self._route_lock = threading.Lock()
         self._stopping = threading.Event()
         self.local_available = local_available
@@ -161,6 +162,7 @@ class AgentGateway:
         with self._route_lock:
             self._routes.clear()
             self._task_routes.clear()
+            self._task_activity.clear()
         with self._health_lock:
             self._failure_times.clear()
             self._open_until.clear()
@@ -240,9 +242,44 @@ class AgentGateway:
     def release_task_route(self, task_id: str) -> None:
         with self._route_lock:
             self._task_routes = {key: value for key, value in self._task_routes.items() if key[1] != task_id}
+            self._task_activity = {key for key in self._task_activity if key[1] != task_id}
             self._local_attachments = {
                 key: value for key, value in self._local_attachments.items() if key[1] != task_id
             }
+
+    def cancel_task(self, task_id: str, *, timeout: float = 3.0) -> bool:
+        with self._route_lock:
+            providers = sorted(provider for provider, owner in self._task_activity if owner == task_id)
+            routes = {
+                provider: self._task_routes.get((provider, task_id)) or self._routes.get(provider, "")
+                for provider in providers
+            }
+        cancelled = False
+        local_cancelled = False
+        for provider in providers:
+            route = routes.get(provider, "")
+            if not route:
+                continue
+            if route == "local":
+                if self.local_cancel is not None and not local_cancelled:
+                    self.local_cancel()
+                    local_cancelled = True
+                    cancelled = True
+                continue
+            try:
+                result = self._request_via_route(
+                    route,
+                    provider,
+                    "cancel",
+                    {},
+                    task_id=task_id,
+                    timeout=max(0.1, timeout),
+                    stream_callback=None,
+                )
+                cancelled = bool(result.get("cancelled", result.get("status") in {"idle", "ok"})) or cancelled
+            except BridgeError:
+                continue
+        return cancelled
 
     def wait_for_provider(self, provider: str, timeout: float = 5.0) -> bool:
         return self._wait_for_provider(provider, timeout, allow_local=True)
@@ -389,6 +426,8 @@ class AgentGateway:
         stream_callback: Callable[[str], None] | None = None,
     ) -> str:
         route = self._selected_route(provider)
+        with self._route_lock:
+            self._task_activity.add((provider, task_id))
         if route != "local":
             self._apply_selected_model(route, provider, task_id)
         if route == "local":
@@ -453,7 +492,10 @@ class AgentGateway:
         timeout: float,
         stream_callback: Callable[[str], None] | None = None,
     ) -> dict[str, Any]:
-        if self._selected_route(provider) == "local":
+        selected_route = self._selected_route(provider)
+        with self._route_lock:
+            self._task_activity.add((provider, task_id))
+        if selected_route == "local":
             if action == "upload_files":
                 parts = []
                 for filename in payload.get("files", []):
