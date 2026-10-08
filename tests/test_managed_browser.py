@@ -208,6 +208,29 @@ class ManagedLoginStateTests(unittest.TestCase):
         failure = ManagedBrowserController._provider_failure(Page())
         self.assertEqual(failure, ("PROVIDER_RATE_LIMIT", "You have reached your limit. Try again later."))
 
+    def test_poll_login_headless_restore_failure_does_not_kill_browser_loop(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            controller = ManagedBrowserController(data_root=Path(folder))
+            controller._login_provider = "hunyuan"
+            controller._login_ready_at = time.monotonic() - 3.0
+            controller._context = object()
+            controller._headed = True
+            page = Mock()
+            page.is_closed.return_value = False
+            controller._pages["hunyuan"] = page
+
+            with (
+                patch.object(controller, "_authentication_state", return_value={"authenticated": True}),
+                patch.object(controller, "_ensure_context", side_effect=RuntimeError("headless restore failed")),
+                patch.object(controller, "_report") as report,
+            ):
+                controller._poll_login()
+
+            self.assertEqual(controller._login_provider, "")
+            self.assertEqual(controller.provider_status()["hunyuan"]["state"], "Degraded")
+            self.assertIn("headless restore failed", controller.provider_status()["hunyuan"]["detail"])
+            report.assert_called_once()
+
     def test_poll_login_keeps_challenge_recoverable(self) -> None:
         class Page:
             def is_closed(self) -> bool:
