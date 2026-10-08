@@ -3,10 +3,12 @@ from __future__ import annotations
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+from unittest.mock import Mock, patch
 
 from zenless.agent_gateway import AgentGateway
 from zenless.browser_bridge import BridgeError
