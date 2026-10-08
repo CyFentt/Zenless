@@ -16,6 +16,30 @@ from zenless.store import SQLiteStore
 
 
 class CoreTests(unittest.TestCase):
+    def test_local_ai_component_install_is_blocked_while_task_is_active(self) -> None:
+        core = object.__new__(ZenlessCore)
+        core.orchestrator = Mock()
+        core.orchestrator.current_task_id = "active-job"
+        core._provider_lock = threading.Lock()
+        core._tools_thread = None
+
+        with self.assertRaises(CoreError) as raised:
+            core.prepare_local_ai_item("qwen3-4b")
+
+        self.assertEqual(raised.exception.code, "TOOLS_BUSY")
+
+    def test_full_tool_prepare_is_blocked_while_task_is_active(self) -> None:
+        core = object.__new__(ZenlessCore)
+        core.orchestrator = Mock()
+        core.orchestrator.current_task_id = "active-job"
+        core._provider_lock = threading.Lock()
+        core._tools_thread = None
+
+        with self.assertRaises(CoreError) as raised:
+            core.prepare_tools()
+
+        self.assertEqual(raised.exception.code, "TOOLS_BUSY")
+
     def test_partial_legacy_model_settings_keep_defaults_and_new_providers(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             core = object.__new__(ZenlessCore)
