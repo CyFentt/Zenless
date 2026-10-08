@@ -181,10 +181,10 @@ class AgentGateway:
             route = "webview2"
         except BridgeError as embedded_error:
             message = str(embedded_error)
-            if "LOGIN_CANCELLED" in message or "LOGIN_CHALLENGE" in message:
-                # Anti-bot and user-cancelled login states are not transport failures.
-                # Preserve the WebView2 profile instead of reopening the same challenge
-                # inside an automated browser.
+            if provider == "deepseek" or "LOGIN_CANCELLED" in message or "LOGIN_CHALLENGE" in message:
+                # DeepSeek anti-bot checks and user-cancelled logins must stay in the
+                # persistent human-driven WebView2 profile. Reopening them in an
+                # automated browser creates challenge loops and can poison provider state.
                 raise
             if self._stopping.is_set():
                 raise BridgeError("Rubra is closing; provider login was cancelled.") from embedded_error
@@ -199,13 +199,13 @@ class AgentGateway:
         dismissed = False
         errors: list[str] = []
         cancel_embedded = getattr(self.embedded, "cancel_login", None)
-        if callable(cancel_embedded):
+        if bool(getattr(self.embedded, "running", False)) and callable(cancel_embedded):
             try:
                 dismissed = bool(cancel_embedded(provider, timeout=5.0)) or dismissed
             except Exception as exc:
                 errors.append(f"WebView2: {exc}")
         cancel_managed = getattr(self.managed, "cancel_login", None)
-        if callable(cancel_managed):
+        if bool(getattr(self.managed, "running", False)) and callable(cancel_managed):
             try:
                 dismissed = bool(cancel_managed(provider, timeout=5.0)) or dismissed
             except Exception as exc:
