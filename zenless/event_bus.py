@@ -20,11 +20,17 @@ EventSubscriber = Callable[[CoreEvent], None]
 
 
 class EventBus:
-    def __init__(self, *, history_limit: int = 500) -> None:
+    def __init__(
+        self,
+        *,
+        history_limit: int = 500,
+        error_callback: Callable[[BaseException], None] | None = None,
+    ) -> None:
         self._history: deque[CoreEvent] = deque(maxlen=max(20, history_limit))
         self._subscribers: dict[int, EventSubscriber] = {}
         self._lock = threading.RLock()
         self._next_id = 1
+        self._error_callback = error_callback
 
     def publish(self, event_type: str, data: dict[str, Any] | None = None) -> CoreEvent:
         event = CoreEvent(event_type, dict(data or {}))
@@ -34,7 +40,12 @@ class EventBus:
         for callback in subscribers:
             try:
                 callback(event)
-            except Exception:
+            except Exception as exc:
+                if self._error_callback is not None:
+                    try:
+                        self._error_callback(exc)
+                    except Exception:
+                        pass
                 continue
         return event
 
