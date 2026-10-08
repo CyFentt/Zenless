@@ -48,3 +48,17 @@ Official Qwen Hugging Face metadata was checked for the pinned local weights: Qw
 
 GitHub Actions remains an external validation blocker for this repository: current validate jobs still complete with runner_id 0, an empty runner name and zero executed steps, so no current-HEAD CI pass is claimed. Source regressions were added for the newly fixed state machines and validation paths, but a native Windows/package run is still required before calling the prerelease fully validated.
 
+### Final lifecycle/local-runtime pass
+
+The final continuation after the reproduced-bug closure found and corrected additional cross-layer race and recovery conditions:
+
+- Login cancellation is out-of-band and no longer creates a hidden provider window or starts an inactive Playwright transport merely to cancel it. DeepSeek generic WebView login failure remains human-driven instead of escalating into automated browser login.
+- A managed-browser failure while switching an authenticated visible login into a headless context is contained to that provider and reported; it no longer tears down the browser worker shared by other provider state.
+- Play Test Stop now confirms that the QA/orchestrator worker has actually exited before provider reconciliation. A slow shutdown reports a bounded diagnostic and deliberately leaves provider sessions untouched.
+- Generation cancellation tracks provider participation per task and sends cancel only to routes used by that task, avoiding unrelated provider startup and state mutation.
+- Local model availability now honors persisted component verification state. Failed, skipped or optional Qwen/llama.cpp artifacts are non-routable; corrupt raw models are deleted before retry; model/runtime maintenance is serialized against active jobs.
+- When a compatible Ollama model is already available, default preparation skips redundant portable local-AI downloads while retaining any already verified portable fallback. Cancelled setup merges partial results instead of erasing untouched component history.
+- Prompt-queue UI always keeps non-terminal work visible, and empty JSON chat requests can no longer create placeholder jobs without attachments.
+
+The latest checked workflow for this continuation still failed before execution: validate had runner_id 0, an empty runner name and no steps. Therefore this report intentionally does not claim a clean current-HEAD pytest, frontend, Playwright or Windows-package run.
+
