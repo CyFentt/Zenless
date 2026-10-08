@@ -93,7 +93,7 @@ class ToolchainManager:
                     self._ensure_npm_packages(results)
                 except Exception as exc:
                     results.append(InstallResult("npm", "failed", str(exc)))
-            self._save_results(results, merge=False)
+            self._save_results(results, merge=self.cancel_event.is_set())
             self._save_state()
             return results
 
