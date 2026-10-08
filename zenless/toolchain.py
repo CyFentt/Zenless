@@ -61,11 +61,20 @@ class ToolchainManager:
                 item_id = str(item["id"])
                 group = str(item.get("group") or "").strip().casefold()
                 if group and group in skipped_groups:
-                    result = InstallResult(
-                        item_id,
-                        "optional",
-                        "Skipped automatic installation because a compatible local backend is already available; install on demand for portable fallback.",
-                    )
+                    target = self.portable_root / str(item.get("target") or "")
+                    if not source and self._artifact_ready(item, target):
+                        result = InstallResult(
+                            item_id,
+                            "ready",
+                            "Verified portable fallback already installed; external local backend remains preferred.",
+                            str(target),
+                        )
+                    else:
+                        result = InstallResult(
+                            item_id,
+                            "optional",
+                            "Skipped automatic installation because a compatible local backend is already available; install on demand for portable fallback.",
+                        )
                 elif item.get("auto", True) is False:
                     result = InstallResult(item_id, "optional", "Available on demand")
                 elif not self._eligible(item):
