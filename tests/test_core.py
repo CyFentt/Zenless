@@ -656,6 +656,7 @@ class CoreTests(unittest.TestCase):
         core = object.__new__(ZenlessCore)
         core.qa = Mock()
         core.qa.stop.return_value = True
+        core.qa.running.return_value = False
         core.orchestrator = Mock()
         core._refresh_provider_states = Mock()
 
@@ -664,6 +665,22 @@ class CoreTests(unittest.TestCase):
         core.qa.wait_for_manual_tests.assert_called_once_with(3.0)
         core._refresh_provider_states.assert_called_once_with()
         core.orchestrator.cancel.assert_not_called()
+
+    def test_stop_test_does_not_refresh_providers_while_worker_is_still_running(self) -> None:
+        core = object.__new__(ZenlessCore)
+        core.qa = Mock()
+        core.qa.stop.return_value = True
+        core.qa.running.return_value = True
+        core.orchestrator = Mock()
+        core._refresh_provider_states = Mock()
+        core.diagnostics = Mock()
+
+        self.assertTrue(core.stop_test("job-slow"))
+
+        core.qa.wait_for_manual_tests.assert_called_once_with(3.0)
+        core._refresh_provider_states.assert_not_called()
+        core.diagnostics.report.assert_called_once()
+        self.assertEqual(core.diagnostics.report.call_args.kwargs["component"], "play-stop")
 
     def test_chat_rejects_empty_json_request_without_attachments(self) -> None:
         core = object.__new__(ZenlessCore)
