@@ -368,7 +368,7 @@ class ManagedBrowserController:
             try:
                 command = self._commands.get(timeout=0.5)
             except queue.Empty:
-                self._poll_login()
+                self._poll_login_safely()
                 continue
             if command.action == "stop":
                 command.result = {"stopped": True}
@@ -404,7 +404,7 @@ class ManagedBrowserController:
                 )
             finally:
                 command.event.set()
-            self._poll_login()
+            self._poll_login_safely()
 
     def _handle(self, command: _Command) -> Any:
         # Background probes must never replace the visible login context.
@@ -806,6 +806,21 @@ class ManagedBrowserController:
                 continue
         raise BridgeError("CAPABILITY_UNAVAILABLE: provider response exposed no generated image to capture.")
 
+    def _poll_login_safely(self) -> None:
+        try:
+            self._poll_login()
+        except Exception as exc:
+            provider = self._login_provider
+            self._login_provider = ""
+            self._login_ready_at = 0.0
+            if provider:
+                self._set_state(
+                    provider,
+                    "Degraded",
+                    "Login state was saved, but the managed browser could not finish its background transition: " + str(exc),
+                )
+            self._report(exc, "managed-login-transition", provider=provider, severity="WARNING")
+
     def _poll_login(self) -> None:
         provider = self._login_provider
         if not provider or self._context is None or not self._headed:
@@ -838,8 +853,20 @@ class ManagedBrowserController:
             return
         if time.monotonic() - self._login_ready_at < 2.0:
             return
+        try:
+            self._ensure_context(headed=False)
+        except Exception as exc:
+            self._login_provider = ""
+            self._login_ready_at = 0.0
+            self._set_state(
+                provider,
+                "Degraded",
+                "Login was detected and the profile was kept, but headless restore failed: " + str(exc),
+            )
+            self._report(exc, "managed-login-headless-restore", provider=provider, severity="WARNING")
+            return
         self._login_provider = ""
-        self._ensure_context(headed=False)
+        self._login_ready_at = 0.0
         self._set_state(provider, "Ready", "Authenticated managed session restored headlessly")
 
     def _close_context(self) -> None:
