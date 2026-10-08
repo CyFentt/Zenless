@@ -208,7 +208,13 @@ class ToolchainManager:
                 self._save_state()
                 self._status(item_id, f"Ready: {item.get('name', item_id)} (existing verified file)")
                 return target
-            self._status(item_id, f"Existing file failed verification; downloading a verified replacement")
+            self._status(item_id, "Existing file failed verification; removing the invalid local artifact")
+            try:
+                target.unlink()
+            except OSError as exc:
+                raise ToolchainError(
+                    f"Existing {item_id} failed SHA-256 verification and could not be removed: {exc}"
+                ) from exc
         self._status(item_id, f"Installing {item.get('name', item_id)}")
         parsed = urllib.parse.urlparse(url)
         suffix = ".tar.gz" if kind == "tar.gz" else Path(parsed.path).suffix
