@@ -542,6 +542,8 @@ class ZenlessCore:
                 status=413,
             )
         if not objective:
+            if not attachments:
+                raise CoreError("EMPTY_MESSAGE", "Message and attachments are empty.", status=400)
             objective = "Analyze the submitted attachments and implement the compatible Studio request."
         if job_id:
             existing = self.store.load_task(job_id)
