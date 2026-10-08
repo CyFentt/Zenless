@@ -16,6 +16,20 @@ from zenless.store import SQLiteStore
 
 
 class CoreTests(unittest.TestCase):
+    def test_event_bus_reports_subscriber_failure_without_breaking_publisher(self) -> None:
+        errors: list[str] = []
+        bus = EventBus(error_callback=lambda exc: errors.append(str(exc)))
+
+        def broken(_event) -> None:
+            raise RuntimeError("subscriber exploded")
+
+        bus.subscribe(broken)
+        event = bus.publish("TEST", {"ok": True})
+
+        self.assertEqual(event.type, "TEST")
+        self.assertEqual(errors, ["subscriber exploded"])
+        self.assertEqual(bus.recent()[-1].data, {"ok": True})
+
     def test_local_ai_component_install_is_blocked_while_task_is_active(self) -> None:
         core = object.__new__(ZenlessCore)
         core.orchestrator = Mock()
