@@ -254,6 +254,18 @@ class ManagedLoginStateTests(unittest.TestCase):
 
 
 class AgentGatewayCapabilityTests(unittest.TestCase):
+    def test_cancel_login_does_not_start_inactive_transports(self) -> None:
+        embedded = Mock()
+        managed = Mock()
+        embedded.running = False
+        managed.running = False
+        gateway = AgentGateway(managed=managed, embedded=embedded)
+
+        self.assertFalse(gateway.cancel_login("deepseek"))
+
+        embedded.cancel_login.assert_not_called()
+        managed.cancel_login.assert_not_called()
+
     def test_login_challenge_does_not_fallback_to_automated_browser(self) -> None:
         embedded = _CapabilityTransport({})
         managed = _CapabilityTransport({})
