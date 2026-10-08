@@ -51,11 +51,33 @@ class LocalAIService:
             self.runtime_root / "models" / "Qwen3-4B-Q4_K_M.gguf",
         )
 
+    def _tool_result_state(self, item_id: str) -> str:
+        target = self.runtime_root / "toolchain-results.json"
+        try:
+            payload = json.loads(target.read_text(encoding="utf-8")) if target.is_file() else {}
+        except (OSError, json.JSONDecodeError):
+            return ""
+        if not isinstance(payload, dict):
+            return ""
+        result = payload.get(item_id)
+        return str(result.get("state") or "").casefold() if isinstance(result, dict) else ""
+
+    def _component_usable(self, item_id: str, path: Path) -> bool:
+        return path.is_file() and self._tool_result_state(item_id) not in {"failed", "skipped"}
+
     def model_status(self) -> list[dict[str, object]]:
         coder, general = self._model_paths()
         result: list[dict[str, object]] = [
-            {"id": "qwen-coder-7b", "name": coder.stem, "installed": coder.is_file()},
-            {"id": "qwen3-4b", "name": general.stem, "installed": general.is_file()},
+            {
+                "id": "qwen-coder-7b",
+                "name": coder.stem,
+                "installed": self._component_usable("qwen-coder-7b", coder),
+            },
+            {
+                "id": "qwen3-4b",
+                "name": general.stem,
+                "installed": self._component_usable("qwen3-4b", general),
+            },
         ]
         builder_model = self._select_ollama_model("Role: Builder")
         reviewer_model = self._select_ollama_model("Role: Reviewer")
@@ -78,14 +100,22 @@ class LocalAIService:
         return result
 
     def _portable_available(self) -> bool:
-        return any(path.is_file() for path in self._model_paths()) and bool(self._server_candidates())
+        coder, general = self._model_paths()
+        model_ready = (
+            self._component_usable("qwen-coder-7b", coder)
+            or self._component_usable("qwen3-4b", general)
+        )
+        return model_ready and bool(self._server_candidates())
 
     def _select_model(self, prompt: str) -> None:
         coder, general = self._model_paths()
-        if not coder.is_file() and not general.is_file():
+        coder_ready = self._component_usable("qwen-coder-7b", coder)
+        general_ready = self._component_usable("qwen3-4b", general)
+        if not coder_ready and not general_ready:
             return
         preferred = general if prompt.startswith("Role: Reviewer") else coder
-        target = preferred if preferred.is_file() else general if general.is_file() else coder
+        preferred_ready = general_ready if preferred == general else coder_ready
+        target = preferred if preferred_ready else general if general_ready else coder
         if target != self.model_path:
             self._stop_process()
             self.model_path = target
@@ -459,12 +489,12 @@ class LocalAIService:
 
     def _server_candidates(self) -> list[tuple[Path, bool]]:
         roots = [
-            (self.runtime_root / "local-ai" / "llama-vulkan", True),
-            (self.runtime_root / "local-ai" / "llama-cpu", False),
+            ("llama-vulkan", self.runtime_root / "local-ai" / "llama-vulkan", True),
+            ("llama-cpu", self.runtime_root / "local-ai" / "llama-cpu", False),
         ]
         result: list[tuple[Path, bool]] = []
-        for root, use_gpu in roots:
-            if not root.exists():
+        for item_id, root, use_gpu in roots:
+            if not root.exists() or self._tool_result_state(item_id) in {"failed", "skipped"}:
                 continue
             direct = root / "llama-server.exe"
             executable = direct if direct.is_file() else next(root.rglob("llama-server.exe"), None)
