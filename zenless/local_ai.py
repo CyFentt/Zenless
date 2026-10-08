@@ -68,7 +68,7 @@ class LocalAIService:
         return str(result.get("state") or "").casefold() if isinstance(result, dict) else ""
 
     def _component_usable(self, item_id: str, path: Path) -> bool:
-        return path.is_file() and self._tool_result_state(item_id) not in {"failed", "skipped"}
+        return path.is_file() and self._tool_result_state(item_id) not in {"failed", "skipped", "optional"}
 
     def model_status(self) -> list[dict[str, object]]:
         coder, general = self._model_paths()
@@ -499,7 +499,7 @@ class LocalAIService:
         ]
         result: list[tuple[Path, bool]] = []
         for item_id, root, use_gpu in roots:
-            if not root.exists() or self._tool_result_state(item_id) in {"failed", "skipped"}:
+            if not root.exists() or self._tool_result_state(item_id) in {"failed", "skipped", "optional"}:
                 continue
             direct = root / "llama-server.exe"
             executable = direct if direct.is_file() else next(root.rglob("llama-server.exe"), None)
