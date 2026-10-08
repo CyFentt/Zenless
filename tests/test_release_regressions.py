@@ -522,6 +522,42 @@ def test_legacy_unverifiable_model_fields_are_not_restored():
     assert 'quality' not in merged['hunyuan']
 
 
+def test_gateway_cancel_task_touches_only_providers_used_by_that_job():
+    gateway = AgentGateway(managed=Mock(), embedded=Mock())
+    gateway._routes = {"chatgpt": "webview2", "deepseek": "playwright"}
+    gateway._task_activity = {("chatgpt", "job-a"), ("deepseek", "job-b")}
+
+    with patch.object(
+        gateway,
+        "_request_via_route",
+        return_value={"status": "idle", "cancelled": True},
+    ) as request:
+        assert gateway.cancel_task("job-a")
+
+    request.assert_called_once_with(
+        "webview2",
+        "chatgpt",
+        "cancel",
+        {},
+        task_id="job-a",
+        timeout=3.0,
+        stream_callback=None,
+    )
+
+
+def test_gateway_release_task_route_forgets_task_activity():
+    gateway = AgentGateway(managed=Mock(), embedded=Mock())
+    gateway._task_routes = {("hunyuan", "job-a"): "webview2", ("hunyuan", "job-b"): "playwright"}
+    gateway._task_activity = {("chatgpt", "job-a"), ("hunyuan", "job-a"), ("hunyuan", "job-b")}
+    gateway._local_attachments = {("chatgpt", "job-a"): "x", ("chatgpt", "job-b"): "y"}
+
+    gateway.release_task_route("job-a")
+
+    assert all(owner != "job-a" for _provider, owner in gateway._task_routes)
+    assert all(owner != "job-a" for _provider, owner in gateway._task_activity)
+    assert all(owner != "job-a" for _provider, owner in gateway._local_attachments)
+
+
 def test_gateway_rejects_provider_model_mismatch():
     transport = Mock()
     transport.request.return_value = {'status': 'ok', 'selected': 'different'}
