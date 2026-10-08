@@ -34,8 +34,13 @@ class LocalAIService:
 
     @property
     def available(self) -> bool:
-        return self._portable_available() or bool(
-            self._select_ollama_model("Role: Builder") or self._select_ollama_model("Role: Reviewer")
+        return self._portable_available() or self.ollama_available
+
+    @property
+    def ollama_available(self) -> bool:
+        return bool(
+            self._select_ollama_model("Role: Builder")
+            or self._select_ollama_model("Role: Reviewer")
         )
 
     @property
